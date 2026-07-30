@@ -452,7 +452,13 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         state = batch.get(OBS_STATE)
         if state is not None:
             if state.ndim > 2:
-                state = state[:, -1, :]
+                # `observation_delta_indices` is FORWARD-looking here (it feeds future frames to the
+                # world model), so a stacked state is [B, T_obs, dim] at deltas 0, +stride, ..., and
+                # index 0 — not -1 — is the CURRENT observation. Taking [:, -1] would condition the
+                # action head on the state at the END of the chunk during training while inference
+                # (single frame, ndim == 2) passes the current state, and the relative-action anchor
+                # in RelativeActionsProcessorStep also uses index 0. Matches the image slice above.
+                state = state[:, 0, :]
             inputs["state"] = (state.unsqueeze(1) if state.ndim == 2 else state).float()  # [B, 1, dim]
 
         return inputs
