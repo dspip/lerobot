@@ -44,8 +44,22 @@ def test_chunk_size_and_action_steps() -> None:
     assert cfg.chunk_size == 16
     assert cfg.n_action_steps == 16
     assert cfg.action_delta_indices == list(range(16))
-    assert cfg.observation_delta_indices == list(range(16))
+    # 4 * (frame_chunk_size - 1) + 1 frames: exactly what AutoencoderKLWan._encode consumes to
+    # produce frame_chunk_size latent frames. Loading 16 decoded 3 frames the VAE never read.
+    assert cfg.observation_delta_indices == list(range(13))
     assert cfg.reward_delta_indices is None
+
+
+def test_observation_delta_indices_are_all_consumed_by_the_vae() -> None:
+    """Every requested frame must survive ``iter_ = 1 + (n - 1) // 4``, and F must be preserved."""
+    for frame_chunk_size, action_per_frame in ((1, 4), (2, 16), (4, 4), (3, 8)):
+        cfg = make_config(frame_chunk_size=frame_chunk_size, action_per_frame=action_per_frame)
+        deltas = cfg.observation_delta_indices
+        num_latent_frames = 1 + (len(deltas) - 1) // 4
+        assert num_latent_frames == frame_chunk_size, (frame_chunk_size, deltas)
+        assert len(deltas) == 4 * (num_latent_frames - 1) + 1, (frame_chunk_size, deltas)
+        assert deltas[0] == 0
+        assert len(set(deltas)) == len(deltas)
 
 
 def test_optimizer_and_scheduler_presets() -> None:

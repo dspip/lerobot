@@ -215,6 +215,13 @@ class LingBotVAPolicy(PreTrainedPolicy):
         noisy_latents = scheduler.add_noise(latent, noise, timesteps, t_dim=2)
         targets = scheduler.training_target(latent, noise, timesteps)
 
+        # The clean copy below is the *conditioning* the model reads for earlier frames -- at
+        # inference it is what `_compute_kv_cache` caches. Convert it the same way there, so training
+        # and rollout agree. `noisy_latents` / `targets` are untouched: the model still predicts
+        # cumulative offsets, which is what the postprocessor knows how to invert.
+        if action_mode and self.config.use_relative_actions:
+            latent = self._to_action_increments(latent)
+
         grid_id = (
             get_mesh_id(
                 latent.shape[-3] // patch_f,
@@ -436,7 +443,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
             actions, predictions = unpack_action_output(
-                self.predict_action_chunk(batch, return_intermediate_predictions=return_intermediate_predictions)
+                self.predict_action_chunk(
+                    batch, return_intermediate_predictions=return_intermediate_predictions
+                )
             )  # [B, chunk_size, n_used]
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
@@ -743,13 +752,41 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return mask
 
     # Action conditioning (executed action history) (de)normalization
+    def _to_action_increments(self, action_norm: Tensor) -> Tensor:
+        """First-difference an action chunk along its horizon, for use as conditioning only.
+
+        ``action_norm`` is ``[B, action_dim, F, action_per_frame, 1]``; the horizon runs frame-major
+        across ``F * action_per_frame``. Element 0 is left as-is.
+
+        Under ``use_relative_actions`` the values are cumulative offsets from the chunk's own anchor,
+        so the same physical motion encodes differently depending on which chunk it landed in — and
+        the memory sawtooths back to zero at every boundary. An increment carries no anchor, so the
+        cached history stays consistent across chunks.
+
+        Applied ONLY to the conditioning: the predicted actions keep the cumulative-offset encoding
+        the processors expect. That matters, because normalization is affine with a non-zero constant
+        and ``cumsum`` does not commute with it — inverting an accumulated stream would drift by
+        ``(n - 1) * (q99 + q01) / 2``, which is 0 on a symmetric channel but 118 deg over one chunk
+        on ``right_joint_6``. Nothing inverts the conditioning, so the issue cannot arise here.
+        """
+        b, c, f, n, _ = action_norm.shape
+        flat = action_norm.reshape(b, c, f * n)
+        increments = torch.cat([flat[..., :1], flat[..., 1:] - flat[..., :-1]], dim=-1)
+        return increments.reshape(b, c, f, n, 1)
+
     def _preprocess_action_state(self, action_norm: Tensor) -> Tensor:
         """Build the action-conditioning tensor from the already-normalized executed actions.
 
         ``action_norm`` is the model-space action chunk ``[B, action_dim, F, action_per_frame, 1]``.
-        Upstream re-derives the conditioning from the raw executed action via quantile norm; here
-        the executed actions are already in the model-normalized space, so we pass them through.
+        Upstream re-derives the conditioning from the raw executed action via quantile norm; here the
+        executed actions are already in the model-normalized space, so only the optional increment
+        conversion is applied (mirrored on the training conditioning in ``_add_noise_stream``).
+
+        Absolute-action runs are left alone: their stream is already globally consistent, so
+        there is nothing to re-encode and existing checkpoints keep their exact behaviour.
         """
+        if self.config.use_relative_actions:
+            action_norm = self._to_action_increments(action_norm)
         return action_norm.to(self.config.device, self.dtype)
 
     def _compute_kv_cache(self, obs_buffer, executed_actions):

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from lerobot.policies.lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, UnnormalizerProcessorStep
@@ -31,8 +31,12 @@ from lerobot.utils.constants import (
 )
 
 
-def _make_config() -> LingBotVAConfig:
+def _make_config(*, action_norm: NormalizationMode = NormalizationMode.QUANTILES) -> LingBotVAConfig:
+    # LingBotVAConfig defaults ACTION to IDENTITY (the LIBERO delta-EEF recipe), so the quantile
+    # tests below have to set a stats-based mode explicitly -- relying on the default is what left
+    # test_postprocessor_quantile_unnormalization asserting against an identity unnormalizer.
     cfg = LingBotVAConfig(device="cpu")
+    cfg.normalization_mapping = {**cfg.normalization_mapping, "ACTION": action_norm}
     cfg.input_features = {f"{OBS_IMAGES}.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128))}
     cfg.output_features = {}
     cfg.validate_features()
