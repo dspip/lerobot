@@ -190,8 +190,13 @@ class LiberoEnv(gym.Env):
             if applied.overlay.language:
                 self.task_description = applied.overlay.language
 
-        if not hard_reset and not self.init_states:
-            raise ValueError("hard_reset=False requires init_states=True")
+        # Soft resets need fixed init states. Overlays that disable init_states
+        # must use hard resets (the default).
+        if not self.hard_reset and not self.init_states:
+            raise ValueError(
+                "hard_reset=False requires init_states=True "
+                "(overlays with mode='add' disable init_states; keep hard_reset=True)"
+            )
 
         # Load once and keep
         self._init_states = (

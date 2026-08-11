@@ -20,9 +20,6 @@ from typing import Iterable
 from .config import AddObjectSpec, LiberoOverlayConfig
 
 _LANGUAGE_RE = re.compile(r"(\(:language\s+)(.*?)(\s*\))", re.DOTALL)
-_OBJECTS_BLOCK_RE = re.compile(r"(\(:objects\s*)(.*?)(\n\s*\))", re.DOTALL)
-_REGIONS_BLOCK_RE = re.compile(r"(\(:regions\s*)(.*?)(\n\s*\))", re.DOTALL)
-_INIT_BLOCK_RE = re.compile(r"(\(:init\s*)(.*?)(\n\s*\))", re.DOTALL)
 
 
 def _replace_category_tokens(text: str, mapping: dict[str, str]) -> str:
@@ -67,13 +64,37 @@ def _format_region(spec: AddObjectSpec) -> str:
     return "\n".join(lines)
 
 
-def _append_inside_block(bddl: str, pattern: re.Pattern[str], insertion: str, block_name: str) -> str:
-    match = pattern.search(bddl)
-    if match is None:
-        raise ValueError(f"BDDL is missing a {block_name} block")
-    body = match.group(2).rstrip("\n")
+def _find_top_level_block(bddl: str, block_name: str) -> tuple[int, int, int]:
+    """Return ``(header_end, body_start, close_paren_index)`` for ``(:block_name ...)``.
+
+    Uses parenthesis depth so nested ``(:ranges (...))`` inside ``:regions`` does
+    not terminate the outer block early.
+    """
+    marker = f"(:{block_name}"
+    start = bddl.find(marker)
+    if start < 0:
+        raise ValueError(f"BDDL is missing a :{block_name} block")
+
+    # Skip the opening '(' of the block, then scan until depth returns to 0.
+    depth = 0
+    header_end = start + len(marker)
+    body_start = header_end
+    for i in range(start, len(bddl)):
+        ch = bddl[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return header_end, body_start, i
+    raise ValueError(f"BDDL :{block_name} block is unclosed")
+
+
+def _append_inside_named_block(bddl: str, block_name: str, insertion: str) -> str:
+    _header_end, body_start, close_idx = _find_top_level_block(bddl, block_name)
+    body = bddl[body_start:close_idx].rstrip("\n")
     new_body = f"{body}\n{insertion}\n  "
-    return bddl[: match.start()] + match.group(1) + new_body + match.group(3) + bddl[match.end() :]
+    return bddl[:body_start] + new_body + bddl[close_idx:]
 
 
 def _set_language(bddl: str, language: str) -> str:
@@ -113,9 +134,9 @@ def apply_add_objects(
         # LIBERO names composed regions as ``{target}_{region_name}``.
         init_lines.append(f"    (On {instance} {spec.target}_{region})")
 
-    patched = _append_inside_block(patched, _OBJECTS_BLOCK_RE, "\n".join(object_lines), ":objects")
-    patched = _append_inside_block(patched, _REGIONS_BLOCK_RE, "\n".join(region_blocks), ":regions")
-    patched = _append_inside_block(patched, _INIT_BLOCK_RE, "\n".join(init_lines), ":init")
+    patched = _append_inside_named_block(patched, "objects", "\n".join(object_lines))
+    patched = _append_inside_named_block(patched, "regions", "\n".join(region_blocks))
+    patched = _append_inside_named_block(patched, "init", "\n".join(init_lines))
 
     if language is not None:
         patched = _set_language(patched, language)
@@ -134,8 +155,25 @@ def assert_categories_present(bddl: str, categories: Iterable[str]) -> None:
     """Raise if any category token is missing from the BDDL (pre-replace check)."""
     missing = []
     for category in categories:
-        pattern = rf"(?<![A-Za-z0-9_]){re.escape(category)}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_]){re.escape(category)}_\d"
+        pattern = (
+            rf"(?<![A-Za-z0-9_]){re.escape(category)}(?![A-Za-z0-9_])|"
+            rf"(?<![A-Za-z0-9_]){re.escape(category)}_\d"
+        )
         if not re.search(pattern, bddl):
             missing.append(category)
     if missing:
         raise ValueError(f"BDDL does not contain categories to replace: {missing}")
+
+
+def assert_balanced_parens(bddl: str) -> None:
+    """Raise if parentheses are unbalanced."""
+    depth = 0
+    for ch in bddl:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("BDDL has a closing ')' before any matching '('")
+    if depth != 0:
+        raise ValueError(f"BDDL has unbalanced parentheses (depth={depth})")

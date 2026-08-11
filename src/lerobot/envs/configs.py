@@ -360,9 +360,9 @@ class LiberoEnv(EnvConfig):
     def __post_init__(self):
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
-        # Soft-reset still requires init_states for the default (no-overlay) path.
-        # Overlays that force init_states=False will harden this at env construction time.
-        if not self.hard_reset and not self.init_states and self.overlay is None:
+        # Soft-reset still requires init_states. Overlay mode=add disables init_states
+        # at env construction and therefore requires hard_reset=True (the default).
+        if not self.hard_reset and not self.init_states:
             raise ValueError("hard_reset=False requires init_states=True")
 
         if self.obs_type == "pixels":

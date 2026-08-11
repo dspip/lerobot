@@ -102,6 +102,38 @@ def test_add_injects_object_region_and_init(tmp_path: Path):
     assert "(On red_cube_1 floor_red_cube_init_region)" in patched
     # Original objects remain.
     assert "tomato_sauce_1 - tomato_sauce" in patched
+    from lerobot.envs.libero_overlays.bddl import assert_balanced_parens
+
+    assert_balanced_parens(patched)
+
+
+def test_add_on_real_libero_bddl_keeps_region_structure():
+    """Regression: nested (:ranges ...) must not truncate the :regions block."""
+    from lerobot.envs.libero_overlays.bddl import assert_balanced_parens, patch_bddl
+
+    real = Path(
+        "/home/aviya/miniconda3/envs/smolvla_libero/lib/python3.12/site-packages/"
+        "libero/libero/bddl_files/libero_object/"
+        "pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl"
+    )
+    if not real.is_file():
+        pytest.skip("stock LIBERO BDDL not installed")
+
+    original = real.read_text(encoding="utf-8")
+    cfg = LiberoOverlayConfig(
+        mode="add",
+        add_objects=(AddObjectSpec(category="red_cube", ranges=(0.05, 0.10, 0.10, 0.15), target="floor"),),
+    )
+    patched = patch_bddl(original, cfg)
+    assert_balanced_parens(patched)
+    # New region must appear as its own top-level region entry, not inside bin_region ranges.
+    assert "(red_cube_init_region" in patched
+    bin_idx = patched.index("(bin_region")
+    cube_idx = patched.index("(red_cube_init_region")
+    fixtures_idx = patched.index("(:fixtures")
+    assert bin_idx < cube_idx < fixtures_idx
+    # Stock file untouched.
+    assert real.read_text(encoding="utf-8") == original
 
 
 def test_load_overlay_yaml_replace(tmp_path: Path):
