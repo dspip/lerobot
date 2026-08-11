@@ -19,9 +19,8 @@ from __future__ import annotations
 import os
 import re
 
-from robosuite.models.objects import MujocoXMLObject
-
 from libero.libero.envs.base_object import register_object
+from robosuite.models.objects import MujocoXMLObject
 
 _XML_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "assets", "blue_cube", "blue_cube.xml")
@@ -35,13 +34,11 @@ class BlueCube(MujocoXMLObject):
         super().__init__(
             _XML_PATH,
             name=name,
-            joints=[dict(type="free", damping="0.0005")],
+            joints=[{"type": "free", "damping": "0.0005"}],
             obj_type="all",
             duplicate_collision_geoms=False,
         )
-        self.category_name = "_".join(
-            re.sub(r"([A-Z])", r" \1", self.__class__.__name__).split()
-        ).lower()
+        self.category_name = "_".join(re.sub(r"([A-Z])", r" \1", self.__class__.__name__).split()).lower()
         self.rotation = (0.0, 0.0)
         self.rotation_axis = "x"
         self.object_properties = {"vis_site_names": {}}

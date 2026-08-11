@@ -28,11 +28,11 @@ headers unchanged on files you only modify.
 
 ## Modes
 
-| Mode | YAML | Effect | Init states |
-|------|------|--------|-------------|
-| default | none | Stock BDDL | unchanged |
-| replace | `mode: replace` + `replacements` | Swap category tokens (e.g. `tomato_sauce` → `red_cube`) | kept unless `keep_init_states: false` |
-| add | `mode: add` + `add_objects` | Inject object + region + `(On ...)` | disabled unless `keep_init_states: true` |
+| Mode    | YAML                             | Effect                                                  | Init states                              |
+| ------- | -------------------------------- | ------------------------------------------------------- | ---------------------------------------- |
+| default | none                             | Stock BDDL                                              | unchanged                                |
+| replace | `mode: replace` + `replacements` | Swap category tokens (e.g. `tomato_sauce` → `red_cube`) | kept unless `keep_init_states: false`    |
+| add     | `mode: add` + `add_objects`      | Inject object + region + `(On ...)`                     | disabled unless `keep_init_states: true` |
 
 ## Find the BDDL category name (replace keys)
 
@@ -42,7 +42,7 @@ BDDL:
 
 ```text
 (:objects
-  tomato_sauce_1 - tomato_sauce    # instance - category
+  tomato_sauce_1 - tomato_sauce # instance - category
   basket_1 - basket
 )
 ```
@@ -55,7 +55,7 @@ BDDL:
 Resolve the stock file and list categories:
 
 ```bash
-uv sync --locked --extra libero   # once
+uv sync --locked --extra libero # once
 
 uv run python - <<'PY'
 from pathlib import Path
@@ -79,7 +79,7 @@ Then in YAML:
 
 ```yaml
 replacements:
-  tomato_sauce: red_cube   # category → custom category
+  tomato_sauce: red_cube # category → custom category
 ```
 
 ## Add custom object(s)
@@ -107,17 +107,17 @@ language: Pick the red cube and place it in the basket
 mode: add
 suite: libero_object
 task_id: 5
-objects_module: ./objects          # package that registers red_cube + blue_cube
+objects_module: ./objects # package that registers red_cube + blue_cube
 add_objects:
   - category: red_cube
     target: floor
-    ranges: [0.05, 0.10, 0.10, 0.15]   # xmin ymin xmax ymax
+    ranges: [0.05, 0.10, 0.10, 0.15] # xmin ymin xmax ymax
 
   - category: blue_cube
     target: floor
     ranges: [-0.18, 0.05, -0.13, 0.10]
 
-  # Same category twice → unique instance + region_name required
+ # Same category twice → unique instance + region_name required
   - category: red_cube
     instance: red_cube_2
     region_name: red_cube_2_init_region

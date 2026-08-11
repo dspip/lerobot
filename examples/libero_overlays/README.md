@@ -4,12 +4,12 @@ Non-destructive scene edits for LeRobot + LIBERO. Stock LIBERO `assets/` and
 `bddl_files/` are **never** modified; overlays write a patched BDDL under
 `$TMPDIR/lerobot_libero_overlays/`.
 
-| File | Purpose |
-|------|---------|
-| `replace_tomato_with_red_cube.yaml` | Swap `tomato_sauce` → `red_cube` on task 5 |
-| `add_red_cube.yaml` | Add several distractors (`red_cube`, `blue_cube`, second `red_cube`) |
-| `assets/red_cube/`, `assets/blue_cube/` | MuJoCo XML for the cubes |
-| `objects/` | Package registering `RedCube` + `BlueCube` via `@register_object` |
+| File                                    | Purpose                                                              |
+| --------------------------------------- | -------------------------------------------------------------------- |
+| `replace_tomato_with_red_cube.yaml`     | Swap `tomato_sauce` → `red_cube` on task 5                           |
+| `add_red_cube.yaml`                     | Add several distractors (`red_cube`, `blue_cube`, second `red_cube`) |
+| `assets/red_cube/`, `assets/blue_cube/` | MuJoCo XML for the cubes                                             |
+| `objects/`                              | Package registering `RedCube` + `BlueCube` via `@register_object`    |
 
 Also see `.cursor/skills/libero-object-overlays/SKILL.md` and
 `docs/source/libero.mdx`.
@@ -40,7 +40,7 @@ In BDDL:
 
 ```text
 (:objects
-  tomato_sauce_1 - tomato_sauce    # instance - category
+  tomato_sauce_1 - tomato_sauce # instance - category
   basket_1 - basket
 )
 ```
@@ -67,7 +67,7 @@ print("bddl:    ", bddl)
 print()
 text = bddl.read_text()
 start = text.find("(:objects")
-print(text[start : text.find(")", start + 1) + 200])  # objects block (approx)
+print(text[start : text.find(")", start + 1) + 200]) # objects block (approx)
 PY
 ```
 
@@ -170,11 +170,11 @@ the state vector still matches.
 `--env.camera_name_mapping` renames at the environment; `--rename_map` renames
 between environment and policy. Pick whichever the policy documents:
 
-| Policy | Extra flags |
-|--------|-------------|
-| `lerobot/smolvla_libero` | `--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}` + `--policy.empty_cameras=1` |
-| `lerobot/pi0fast-libero` | `--rename_map={"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}` |
-| policy already using `image` / `image2` | no extra flags |
+| Policy                                  | Extra flags                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lerobot/smolvla_libero`                | `--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}` + `--policy.empty_cameras=1`                   |
+| `lerobot/pi0fast-libero`                | `--rename_map={"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}` |
+| policy already using `image` / `image2` | no extra flags                                                                                                                                   |
 
 See [`docs/source/rename_map.mdx`](../../docs/source/rename_map.mdx).
 

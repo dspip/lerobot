@@ -32,7 +32,7 @@ pip install -e ".[libero]"
 LIBERO requires Linux (`sys_platform == 'linux'`). LeRobot uses MuJoCo for simulation — set the rendering backend before training or evaluation:
 
 ```bash
-export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+export MUJOCO_GL=egl # for headless servers (HPC, cloud)
 ```
 
 </Tip>
@@ -89,7 +89,7 @@ lerobot-eval \
 LIBERO supports two control modes — `relative` (default) and `absolute`. Different VLA checkpoints are trained with different action parameterizations, so make sure the mode matches your policy:
 
 ```bash
---env.control_mode=relative   # or "absolute"
+--env.control_mode=relative # or "absolute"
 ```
 
 ### Reset performance
