@@ -129,6 +129,7 @@ class LiberoEnv(gym.Env):
         control_mode: str = "relative",
         is_libero_plus: bool = False,
         hard_reset: bool = True,
+        overlay: str | None = None,
     ):
         super().__init__()
         if control_freq <= 0:
@@ -164,6 +165,39 @@ class LiberoEnv(gym.Env):
         self.hard_reset = hard_reset
         self.episode_index = episode_index
         self.episode_length = episode_length
+        self.overlay = overlay
+
+        # Extract task metadata without allocating GPU resources (safe before fork).
+        task = task_suite.get_task(task_id)
+        self.task = task.name
+        self.task_description = task.language
+        base_bddl = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+        self._task_bddl_file = base_bddl
+
+        # Optional non-destructive overlay (replace/add objects). Stock BDDL is never edited.
+        if overlay:
+            from .libero_overlays import apply_overlay
+
+            applied = apply_overlay(
+                base_bddl,
+                overlay,
+                suite_name=task_suite_name,
+                task_id=task_id,
+            )
+            self._task_bddl_file = str(applied.bddl_path)
+            if applied.disable_init_states and self.init_states:
+                self.init_states = False
+            if applied.overlay.language:
+                self.task_description = applied.overlay.language
+
+        # Soft resets need fixed init states. Overlays that disable init_states
+        # must use hard resets (the default).
+        if not self.hard_reset and not self.init_states:
+            raise ValueError(
+                "hard_reset=False requires init_states=True "
+                "(overlays with mode='add' disable init_states; keep hard_reset=True)"
+            )
+
         # Load once and keep
         self._init_states = (
             get_task_init_states(task_suite, self.task_id, is_libero_plus=self.is_libero_plus)
@@ -173,14 +207,6 @@ class LiberoEnv(gym.Env):
         self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
 
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
-
-        # Extract task metadata without allocating GPU resources (safe before fork).
-        task = task_suite.get_task(task_id)
-        self.task = task.name
-        self.task_description = task.language
-        self._task_bddl_file = os.path.join(
-            get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-        )
         self._env: OffScreenRenderEnv | None = (
             None  # deferred — created on first reset() inside the worker subprocess
         )
@@ -413,6 +439,7 @@ def _make_env_fns(
     control_mode: str,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
+    overlay: str | None = None,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -430,6 +457,7 @@ def _make_env_fns(
             control_mode=control_mode,
             camera_name_mapping=camera_name_mapping,
             is_libero_plus=is_libero_plus,
+            overlay=overlay,
             **local_kwargs,
         )
 
@@ -453,6 +481,7 @@ def create_libero_envs(
     episode_length: int | None = None,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
+    overlay: str | None = None,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -513,6 +542,7 @@ def create_libero_envs(
                 control_mode=control_mode,
                 camera_name_mapping=camera_name_mapping,
                 is_libero_plus=is_libero_plus,
+                overlay=overlay,
             )
             if is_async:
                 lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)

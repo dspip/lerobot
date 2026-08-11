@@ -333,6 +333,9 @@ class LiberoEnv(EnvConfig):
     observation_height: int = 360
     observation_width: int = 360
     is_libero_plus: bool = False
+    # Optional path to a YAML overlay that replaces/adds objects without editing stock LIBERO.
+    # When None (default), env creation is identical to vanilla LIBERO.
+    overlay: str | None = None
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -357,6 +360,8 @@ class LiberoEnv(EnvConfig):
     def __post_init__(self):
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
+        # Soft-reset still requires init_states. Overlay mode=add disables init_states
+        # at env construction and therefore requires hard_reset=True (the default).
         if not self.hard_reset and not self.init_states:
             raise ValueError("hard_reset=False requires init_states=True")
 
@@ -442,6 +447,7 @@ class LiberoEnv(EnvConfig):
             episode_length=self.episode_length,
             camera_name_mapping=self.camera_name_mapping,
             is_libero_plus=self.is_libero_plus,
+            overlay=self.overlay,
         )
 
     def get_env_processors(self):

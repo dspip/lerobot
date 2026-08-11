@@ -1,0 +1,40 @@
+# Add several distractors beside the stock tomato-sauce task layout.
+# `add_objects` is a list — append as many entries as you need.
+# Adding objects changes the MuJoCo free-joint layout, so init_states are
+# disabled automatically unless you set keep_init_states: true.
+#
+# Usage (smolvla_libero needs camera1/camera2 + one padded slot):
+#   uv run lerobot-eval \
+#     --policy.path=lerobot/smolvla_libero \
+#     --env.type=libero \
+#     --env.task=libero_object \
+#     --env.task_ids="[5]" \
+#     --env.overlay=examples/libero_overlays/add_red_cube.yaml \
+#     --eval.batch_size=1 \
+#     --eval.n_episodes=1 \
+#     --eval.use_async_envs=false \
+#     --policy.device=cuda \
+#     '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+#     --policy.empty_cameras=1
+
+mode: add
+suite: libero_object
+task_id: 5
+# Package import registers every custom category used below (red_cube + blue_cube).
+objects_module: ./objects
+add_objects:
+ # Different categories — default instance is {category}_1
+  - category: red_cube
+    target: floor
+    ranges: [0.05, 0.10, 0.10, 0.15] # xmin ymin xmax ymax
+
+  - category: blue_cube
+    target: floor
+    ranges: [-0.18, 0.05, -0.13, 0.10]
+
+ # Second object of the same category — set unique instance + region_name
+  - category: red_cube
+    instance: red_cube_2
+    region_name: red_cube_2_init_region
+    target: floor
+    ranges: [0.12, -0.12, 0.17, -0.07]

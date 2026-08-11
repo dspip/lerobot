@@ -1,0 +1,26 @@
+# Replace tomato_sauce with a custom red_cube on LIBERO-Object task 5.
+# Stock LIBERO assets/BDDL are never modified.
+#
+# Usage (smolvla_libero needs camera1/camera2 + one padded slot):
+#   uv run lerobot-eval \
+#     --policy.path=lerobot/smolvla_libero \
+#     --env.type=libero \
+#     --env.task=libero_object \
+#     --env.task_ids="[5]" \
+#     --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
+#     --eval.batch_size=1 \
+#     --eval.n_episodes=1 \
+#     --eval.use_async_envs=false \
+#     --policy.device=cuda \
+#     '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+#     --policy.empty_cameras=1
+
+mode: replace
+suite: libero_object
+task_id: 5
+replacements:
+  tomato_sauce: red_cube
+language: Pick the red cube and place it in the basket
+objects_module: ./objects/red_cube.py
+# Same object count as stock task → fixed init states usually still load.
+# keep_init_states: true

@@ -1,0 +1,19 @@
+---
+description: Use Gangelia copyright on new source files in this fork
+alwaysApply: true
+---
+
+# Gangelia copyright for new files
+
+When creating **new** source files on this fork (`dspip/lerobot` / Gangelia work):
+
+```python
+# Copyright 2026 Gangelia. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# ...
+```
+
+- Do **not** use `The HuggingFace Inc. team` on newly authored files.
+- Do **not** rewrite copyright headers on existing upstream HuggingFace files you only edit.
+- Apply the same header style (year + `Gangelia`) to new tests and examples as well.

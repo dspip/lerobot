@@ -50,6 +50,11 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 
 ## Notes
 
+- **Copyright (Gangelia fork):** New source files authored on this fork must use
+  `Copyright 2026 Gangelia. All rights reserved.` — **not** HuggingFace. Keep
+  existing HuggingFace headers on files you only edit; do not rewrite upstream
+  copyrights. See `.cursor/skills/libero-object-overlays/SKILL.md` and
+  `.cursor/rules/gangelia-copyright.mdc`.
 - **Mypy is gradual**: strict only for `lerobot.envs`, `lerobot.configs`, `lerobot.optim`, `lerobot.model`, `lerobot.cameras`, `lerobot.motors`, `lerobot.transport`. Add type annotations when modifying these modules.
 - **Imports**: prefer top-level imports; relative (`from .sibling import X`) across sibling files within a module, absolute (`from lerobot.module import X`) across modules.
 - **Optional dependencies**: many policies, envs, and robots are behind extras (e.g., `lerobot[aloha]`, see `pyproject.toml`). Guard optional imports with `TYPE_CHECKING or _foo_available` at module top + a `require_package(...)` check at use time. Reuse the `_foo_available` flags in `utils/import_utils.py`; don't call `is_package_available`.
