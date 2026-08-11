@@ -127,9 +127,18 @@ add_objects:
 
 ## How to run (real commands)
 
-From repo root. Needs `uv sync --locked --extra libero` (and policy extras for eval).
+From repo root. Needs `uv sync --locked --extra libero --extra smolvla`.
+If `egl-probe` fails to build under CMake 4, prefix with
+`CMAKE_POLICY_VERSION_MINIMUM=3.5`.
+
+`smolvla_libero` expects `camera1`/`camera2` + one padded slot, so every command
+needs `--env.camera_name_mapping` and `--policy.empty_cameras=1` (same as
+`.github/workflows/benchmark_tests.yml`). Omitting them raises
+`Feature mismatch between dataset/environment and policy config`.
 
 ```bash
+CAM='--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
+
 # Unchanged default (baseline)
 uv run lerobot-eval \
   --policy.path=lerobot/smolvla_libero \
@@ -137,7 +146,11 @@ uv run lerobot-eval \
   --env.task=libero_object \
   --env.task_ids="[5]" \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  "$CAM" \
+  --policy.empty_cameras=1
 
 # Replace tomato_sauce → red_cube
 uv run lerobot-eval \
@@ -147,7 +160,11 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  "$CAM" \
+  --policy.empty_cameras=1
 
 # Add distractors (red_cube + blue_cube + second red_cube)
 uv run lerobot-eval \
@@ -157,8 +174,15 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/add_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  "$CAM" \
+  --policy.empty_cameras=1
 ```
+
+Other policies map keys differently — e.g. `pi0fast-libero` uses
+`--rename_map={"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}`.
 
 Dry-run patch only (print temp BDDL, never touch stock files):
 

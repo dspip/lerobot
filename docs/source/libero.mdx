@@ -132,6 +132,10 @@ for m in re.finditer(r"(\w+)\s+-\s+(\w+)", block):
 PY
 ```
 
+`lerobot/smolvla_libero` expects `camera1` / `camera2` plus a padded slot, so the
+commands below pass `--env.camera_name_mapping` and `--policy.empty_cameras=1`
+(see [Rename Map and Empty Cameras](./rename_map)).
+
 ```bash
 # Stock scene (identical command as before — no overlay)
 uv run lerobot-eval \
@@ -140,7 +144,11 @@ uv run lerobot-eval \
   --env.task=libero_object \
   --env.task_ids="[5]" \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 
 # Replace tomato_sauce with a red cube
 uv run lerobot-eval \
@@ -150,7 +158,11 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 
 # Add several distractors (red_cube + blue_cube + a second red_cube)
 uv run lerobot-eval \
@@ -160,7 +172,11 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/add_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 ```
 
 Overlays copy the stock BDDL, patch a temp file, and optionally register custom

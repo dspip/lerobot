@@ -19,10 +19,18 @@ Also see `.cursor/skills/libero-object-overlays/SKILL.md` and
 From the repo root (Linux):
 
 ```bash
-uv sync --locked --extra libero
-# optional: policy deps for the smolvla eval below
 uv sync --locked --extra libero --extra smolvla
 ```
+
+LIBERO pulls in `egl-probe`, which builds native code with CMake. On CMake 4.x
+the build fails with `Compatibility with CMake < 3.5 has been removed`; retry as:
+
+```bash
+CMAKE_POLICY_VERSION_MINIMUM=3.5 uv sync --locked --extra libero --extra smolvla
+```
+
+Run everything through `uv run` (or activate `.venv`) so you use the project
+environment rather than system Python.
 
 ## Find the BDDL category name (what to put in `replacements`)
 
@@ -96,6 +104,13 @@ PY
 
 Run from the **repo root**. Paths below are relative to that root.
 
+`lerobot/smolvla_libero` expects camera keys `camera1` / `camera2` (plus one
+padded slot), while LIBERO emits `agentview_image` / `robot0_eye_in_hand_image`.
+Every command below therefore passes `--env.camera_name_mapping` and
+`--policy.empty_cameras=1`, matching `.github/workflows/benchmark_tests.yml`.
+Without them eval fails with `Feature mismatch between dataset/environment and
+policy config`.
+
 ### 1) Stock scene (no overlay — baseline)
 
 ```bash
@@ -105,7 +120,11 @@ uv run lerobot-eval \
   --env.task=libero_object \
   --env.task_ids="[5]" \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 ```
 
 ### 2) Replace tomato sauce with a red cube
@@ -118,7 +137,11 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 ```
 
 ### 3) Add several distractors (keep stock objects)
@@ -131,12 +154,29 @@ uv run lerobot-eval \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/add_red_cube.yaml \
   --eval.batch_size=1 \
-  --eval.n_episodes=1
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --policy.empty_cameras=1
 ```
 
 `mode: add` disables fixed init states by default (MuJoCo free-joint layout
 changes). Override with `keep_init_states: true` in the YAML only if you know
 the state vector still matches.
+
+### Camera keys for other policies
+
+`--env.camera_name_mapping` renames at the environment; `--rename_map` renames
+between environment and policy. Pick whichever the policy documents:
+
+| Policy | Extra flags |
+|--------|-------------|
+| `lerobot/smolvla_libero` | `--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}` + `--policy.empty_cameras=1` |
+| `lerobot/pi0fast-libero` | `--rename_map={"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}` |
+| policy already using `image` / `image2` | no extra flags |
+
+See [`docs/source/rename_map.mdx`](../../docs/source/rename_map.mdx).
 
 ## Quick sanity checks (no full eval)
 

@@ -3,15 +3,19 @@
 # Adding objects changes the MuJoCo free-joint layout, so init_states are
 # disabled automatically unless you set keep_init_states: true.
 #
-# Usage:
-#   lerobot-eval \
+# Usage (smolvla_libero needs camera1/camera2 + one padded slot):
+#   uv run lerobot-eval \
 #     --policy.path=lerobot/smolvla_libero \
 #     --env.type=libero \
 #     --env.task=libero_object \
 #     --env.task_ids="[5]" \
 #     --env.overlay=examples/libero_overlays/add_red_cube.yaml \
 #     --eval.batch_size=1 \
-#     --eval.n_episodes=1
+#     --eval.n_episodes=1 \
+#     --eval.use_async_envs=false \
+#     --policy.device=cuda \
+#     '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+#     --policy.empty_cameras=1
 
 mode: add
 suite: libero_object
