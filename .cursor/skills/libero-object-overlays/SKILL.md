@@ -117,7 +117,7 @@ add_objects:
     target: floor
     ranges: [-0.18, 0.05, -0.13, 0.10]
 
- # Same category twice → unique instance + region_name required
+  # Same category twice → unique instance + region_name required
   - category: red_cube
     instance: red_cube_2
     region_name: red_cube_2_init_region
