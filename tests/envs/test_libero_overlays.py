@@ -213,7 +213,24 @@ def test_example_overlay_yamls_load():
     assert replace_cfg.mode == "replace"
     assert replace_cfg.replacements["tomato_sauce"] == "red_cube"
     assert add_cfg.mode == "add"
+    assert len(add_cfg.add_objects) == 3
     assert add_cfg.add_objects[0].category == "red_cube"
+    assert add_cfg.add_objects[1].category == "blue_cube"
+    assert add_cfg.add_objects[2].resolved_instance() == "red_cube_2"
+    assert add_cfg.objects_module == "./objects"
+    assert (root / "assets" / "blue_cube" / "blue_cube.xml").is_file()
+    assert (root / "objects" / "__init__.py").is_file()
+
+
+def test_example_objects_package_imports():
+    """`objects_module: ./objects` must load as a package (relative imports)."""
+    pytest.importorskip("libero")
+    pytest.importorskip("robosuite")
+    from lerobot.envs.libero_overlays.objects import import_objects_module
+
+    root = Path(__file__).resolve().parents[2] / "examples" / "libero_overlays"
+    imported = import_objects_module("./objects", relative_to=root)
+    assert imported.name == "__init__.py"
 
 
 def test_libero_env_config_default_has_no_overlay():

@@ -22,7 +22,11 @@ from pathlib import Path
 def import_objects_module(module_path: str | Path, *, relative_to: Path | None = None) -> Path:
     """Import a user module that registers custom LIBERO objects via ``@register_object``.
 
-    Returns the resolved path that was imported.
+    ``module_path`` may be a ``.py`` file or a package directory containing
+    ``__init__.py`` (relative imports inside the package are supported).
+
+    Returns the resolved path that was imported (the ``.py`` file or package
+    ``__init__.py``).
     """
     path = Path(module_path).expanduser()
     if not path.is_absolute():
@@ -35,13 +39,17 @@ def import_objects_module(module_path: str | Path, *, relative_to: Path | None =
     else:
         path = path.resolve()
 
+    package_dir: Path | None = None
     if path.is_dir():
         init_py = path / "__init__.py"
         if not init_py.is_file():
             raise FileNotFoundError(
                 f"objects_module directory {path} must contain __init__.py (or point to a .py file)"
             )
+        package_dir = path
         path = init_py
+    elif path.name == "__init__.py":
+        package_dir = path.parent
     elif not path.is_file():
         raise FileNotFoundError(f"objects_module not found: {path}")
 
@@ -49,10 +57,21 @@ def import_objects_module(module_path: str | Path, *, relative_to: Path | None =
     if module_name in sys.modules:
         return path
 
-    spec = importlib.util.spec_from_file_location(module_name, path)
+    if package_dir is not None:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            path,
+            submodule_search_locations=[str(package_dir)],
+        )
+    else:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+
     if spec is None or spec.loader is None:
         raise ImportError(f"could not load objects_module from {path}")
     module = importlib.util.module_from_spec(spec)
+    if package_dir is not None:
+        module.__path__ = [str(package_dir)]  # type: ignore[attr-defined]
+        module.__package__ = module_name
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return path

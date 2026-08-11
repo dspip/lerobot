@@ -1,4 +1,5 @@
-# Add a red cube distractor beside the stock tomato-sauce task layout.
+# Add several distractors beside the stock tomato-sauce task layout.
+# `add_objects` is a list — append as many entries as you need.
 # Adding objects changes the MuJoCo free-joint layout, so init_states are
 # disabled automatically unless you set keep_init_states: true.
 #
@@ -15,9 +16,21 @@
 mode: add
 suite: libero_object
 task_id: 5
-objects_module: ./objects/red_cube.py
+# Package import registers every custom category used below (red_cube + blue_cube).
+objects_module: ./objects
 add_objects:
+  # Different categories — default instance is {category}_1
   - category: red_cube
     target: floor
-    # (xmin, ymin, xmax, ymax) on the floor workspace
-    ranges: [0.05, 0.10, 0.10, 0.15]
+    ranges: [0.05, 0.10, 0.10, 0.15]   # xmin ymin xmax ymax
+
+  - category: blue_cube
+    target: floor
+    ranges: [-0.18, 0.05, -0.13, 0.10]
+
+  # Second object of the same category — set unique instance + region_name
+  - category: red_cube
+    instance: red_cube_2
+    region_name: red_cube_2_init_region
+    target: floor
+    ranges: [0.12, -0.12, 0.17, -0.07]
