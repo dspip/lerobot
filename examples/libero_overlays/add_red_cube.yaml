@@ -1,0 +1,23 @@
+# Add a red cube distractor beside the stock tomato-sauce task layout.
+# Adding objects changes the MuJoCo free-joint layout, so init_states are
+# disabled automatically unless you set keep_init_states: true.
+#
+# Usage:
+#   lerobot-eval \
+#     --policy.path=lerobot/smolvla_libero \
+#     --env.type=libero \
+#     --env.task=libero_object \
+#     --env.task_ids="[5]" \
+#     --env.overlay=examples/libero_overlays/add_red_cube.yaml \
+#     --eval.batch_size=1 \
+#     --eval.n_episodes=1
+
+mode: add
+suite: libero_object
+task_id: 5
+objects_module: ./objects/red_cube.py
+add_objects:
+  - category: red_cube
+    target: floor
+    # (xmin, ymin, xmax, ymax) on the floor workspace
+    ranges: [0.05, 0.10, 0.10, 0.15]

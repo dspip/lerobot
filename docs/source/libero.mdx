@@ -106,6 +106,37 @@ Soft resets are faster but are not bit-identical to hard resets after the
 environment's settling steps, so camera observations and policy results may
 differ slightly. Use hard resets when reproducing benchmark results.
 
+### Object overlays (replace / add without editing stock LIBERO)
+
+By default, LIBERO evaluation is unchanged. To **replace** or **add** objects
+without modifying the installed LIBERO assets/BDDL, pass `--env.overlay` to a
+YAML file. Examples live in [`examples/libero_overlays/`](https://github.com/huggingface/lerobot/tree/main/examples/libero_overlays).
+
+```bash
+# Stock scene (identical command as before — no overlay)
+lerobot-eval \
+  --policy.path=lerobot/smolvla_libero \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.task_ids="[5]" \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+
+# Replace tomato_sauce with a red cube
+lerobot-eval \
+  --policy.path=lerobot/smolvla_libero \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.task_ids="[5]" \
+  --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
+
+Overlays copy the stock BDDL, patch a temp file, and optionally register custom
+object classes. `mode: add` disables fixed init states by default (MuJoCo state
+layout changes). Never edit files under the LIBERO package install.
+
 ### Policy inputs and outputs
 
 **Observations:**
