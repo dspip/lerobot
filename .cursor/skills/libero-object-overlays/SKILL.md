@@ -8,6 +8,17 @@ description: >-
 
 # LIBERO object overlays
 
+## Copyright (required)
+
+New files created for this work (and any new Gangelia fork code) must use:
+
+```text
+# Copyright 2026 Gangelia. All rights reserved.
+```
+
+Do **not** use `The HuggingFace Inc. team` on new files. Leave existing HuggingFace
+headers unchanged on files you only modify.
+
 ## Rules
 
 - Never edit installed LIBERO `assets/` or `bddl_files/`.
@@ -27,6 +38,7 @@ description: >-
 1. Create MuJoCo XML with `object` body + `bottom_site` / `top_site` / `horizontal_radius_site` (see `examples/libero_overlays/assets/red_cube/red_cube.xml`).
 2. Register with `@register_object` CamelCase class → snake_case category (`RedCube` → `red_cube`). Do not redefine stock classes.
 3. Point `objects_module` in the overlay YAML at that Python file (path relative to the YAML).
+4. Put the Gangelia copyright header on every new `.py` file.
 
 ## Overlay YAML sketch
 
