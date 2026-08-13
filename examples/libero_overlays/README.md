@@ -11,8 +11,8 @@ Non-destructive scene edits for LeRobot + LIBERO. Stock LIBERO `assets/` and
 | `assets/red_cube/`, `assets/blue_cube/` | MuJoCo XML for the cubes                                             |
 | `objects/`                              | Package registering `RedCube` + `BlueCube` via `@register_object`    |
 
-Also see `.cursor/skills/libero-object-overlays/SKILL.md` and
-`docs/source/libero.mdx`.
+Agents implementing a new overlay: `.cursor/skills/libero-object-overlays/SKILL.md`.
+User docs: `docs/source/libero.mdx`. This README is how to run the examples.
 
 ## Prerequisites
 
