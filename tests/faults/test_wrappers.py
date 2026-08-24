@@ -110,3 +110,106 @@ def test_wrap_tree_handles_vector_env(tmp_path):
     wrapped.step(np.array([[9.0, 9.0]], dtype=np.float32))
     np.testing.assert_array_equal(wrapped.unwrapped.envs[0].last_action, [1.0, 1.0])
     wrapped.close()
+
+
+class _ImageEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self):
+        super().__init__()
+        self.observation_space = spaces.Dict(
+            {
+                "pixels": spaces.Box(low=0, high=255, shape=(8, 8, 3), dtype=np.uint8),
+                "state": spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32),
+            }
+        )
+        self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        self.last_action = None
+        self.t = 0
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        self.t = 0
+        self.last_action = None
+        return {
+            "pixels": np.full((8, 8, 3), 120, dtype=np.uint8),
+            "state": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+        }, {}
+
+    def step(self, action):
+        self.last_action = np.asarray(action, dtype=np.float32).copy()
+        self.t += 1
+        terminated = self.t >= 10
+        return (
+            {
+                "pixels": np.full((8, 8, 3), 120 + self.t, dtype=np.uint8),
+                "state": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            },
+            0.0,
+            terminated,
+            False,
+            {},
+        )
+
+
+def test_wrapper_jitters_action(tmp_path):
+    cfg = FaultInjectionConfig(
+        enabled=True,
+        type="action_jitter",
+        noise_std=0.1,
+        seed=0,
+        log_path=tmp_path / "jitter_events.jsonl",
+    )
+    env = FaultEnvWrapper(_DummyEnv(), cfg)
+    env.reset()
+    proposed = np.array([1.0, 1.0], dtype=np.float32)
+    env.step(proposed)
+    assert not np.allclose(env.unwrapped.last_action, proposed)
+    env.close()
+    assert (tmp_path / "jitter_events.jsonl").exists()
+
+
+def test_wrapper_delays_action(tmp_path):
+    cfg = FaultInjectionConfig(
+        enabled=True,
+        type="action_delay",
+        delay_steps=2,
+        log_path=tmp_path / "delay_events.jsonl",
+    )
+    env = FaultEnvWrapper(_DummyEnv(), cfg)
+    env.reset()
+    env.step(np.array([1.0, 1.0], dtype=np.float32))
+    np.testing.assert_array_equal(env.unwrapped.last_action, [1.0, 1.0])
+    env.step(np.array([2.0, 2.0], dtype=np.float32))
+    np.testing.assert_array_equal(env.unwrapped.last_action, [2.0, 2.0])
+    env.step(np.array([3.0, 3.0], dtype=np.float32))
+    np.testing.assert_array_equal(env.unwrapped.last_action, [1.0, 1.0])
+    env.step(np.array([4.0, 4.0], dtype=np.float32))
+    np.testing.assert_array_equal(env.unwrapped.last_action, [2.0, 2.0])
+    env.close()
+    assert (tmp_path / "delay_events.jsonl").exists()
+
+
+def test_wrapper_sensor_dropout_blackens_obs(tmp_path):
+    cfg = FaultInjectionConfig(
+        enabled=True,
+        type="sensor_dropout",
+        trigger_step=0,
+        duration=2,
+        log_path=tmp_path / "sensor_events.jsonl",
+        diag_dir=tmp_path / "diag",
+    )
+    env = FaultEnvWrapper(_ImageEnv(), cfg)
+    obs, _ = env.reset()
+    assert obs["pixels"].max() == 120
+    obs, *_ = env.step(np.array([1.0, 1.0], dtype=np.float32))
+    assert obs["pixels"].max() == 0
+    np.testing.assert_array_equal(obs["state"], [1.0, 2.0, 3.0])
+    obs, *_ = env.step(np.array([2.0, 2.0], dtype=np.float32))
+    assert obs["pixels"].max() == 0
+    obs, *_ = env.step(np.array([3.0, 3.0], dtype=np.float32))
+    assert obs["pixels"].max() > 0
+    env.close()
+    assert (tmp_path / "sensor_events.jsonl").exists()
+    if __import__("importlib").util.find_spec("PIL") is not None:
+        assert list((tmp_path / "diag").glob("*.png"))

@@ -23,7 +23,12 @@ import numpy as np
 from gymnasium.vector import VectorEnv
 
 from lerobot.faults.config import FaultInjectionConfig
-from lerobot.faults.factory import ActionFaultInjector, make_action_fault_injector
+from lerobot.faults.factory import (
+    ActionFaultInjector,
+    ObsFaultInjector,
+    make_action_fault_injector,
+    make_obs_fault_injector,
+)
 
 
 def _num_envs(env: Any) -> int:
@@ -60,16 +65,18 @@ def _extract_dones(result: tuple) -> np.ndarray | None:
 
 
 class FaultEnvWrapper:
-    """Apply optional action fault injectors around the env API."""
+    """Apply optional action and/or observation fault injectors around the env API."""
 
     def __init__(self, env: Any, config: FaultInjectionConfig):
         num_envs = _num_envs(env)
         action_injector = make_action_fault_injector(config, num_envs=num_envs)
-        if action_injector is None:
-            raise ValueError("FaultEnvWrapper requires an enabled action fault injector.")
+        obs_injector = make_obs_fault_injector(config, num_envs=num_envs)
+        if action_injector is None and obs_injector is None:
+            raise ValueError("FaultEnvWrapper requires at least one enabled fault injector.")
         self.env = env
         self.fault_config = config
-        self.action_injector: ActionFaultInjector = action_injector
+        self.action_injector: ActionFaultInjector | None = action_injector
+        self.obs_injector: ObsFaultInjector | None = obs_injector
         self.num_envs = num_envs
 
     @property
@@ -79,28 +86,51 @@ class FaultEnvWrapper:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.env, name)
 
+    def _apply_obs(self, obs: Any, *, from_reset: bool) -> Any:
+        if self.obs_injector is None:
+            return obs
+        return self.obs_injector.apply_obs(obs, from_reset=from_reset)
+
+    def _apply_obs_to_result(self, result: Any, *, from_reset: bool) -> Any:
+        if isinstance(result, tuple) and len(result) >= 1:
+            obs = self._apply_obs(result[0], from_reset=from_reset)
+            return (obs, *result[1:])
+        return self._apply_obs(result, from_reset=from_reset)
+
     def _notify_dones(self, dones: np.ndarray) -> None:
-        self.action_injector.notify_dones(dones.reshape(self.num_envs))
+        if self.action_injector is not None:
+            self.action_injector.notify_dones(dones.reshape(self.num_envs))
+        if self.obs_injector is not None:
+            self.obs_injector.notify_dones(dones.reshape(self.num_envs))
 
     def _close_loggers(self) -> None:
-        closer = getattr(self.action_injector, "close", None)
-        if callable(closer):
-            closer()
-            return
-        if self.action_injector.event_logger is not None:
-            self.action_injector.event_logger.close()
+        for injector in (self.action_injector, self.obs_injector):
+            if injector is None:
+                continue
+            closer = getattr(injector, "close", None)
+            if callable(closer):
+                closer()
+                continue
+            if injector.event_logger is not None:
+                injector.event_logger.close()
 
     def reset(self, **kwargs):
         result = self.env.reset(**kwargs)
-        self.action_injector.reset()
-        return result
+        if self.action_injector is not None:
+            self.action_injector.reset()
+        if self.obs_injector is not None:
+            self.obs_injector.reset()
+        return self._apply_obs_to_result(result, from_reset=True)
 
     def step(self, action):
-        batch, was_single = _as_batch(np.asarray(action), self.num_envs)
-        executed = self.action_injector.apply(batch)
-        step_action = _from_batch(executed, was_single)
+        step_action = action
+        if self.action_injector is not None:
+            batch, was_single = _as_batch(np.asarray(action), self.num_envs)
+            executed = self.action_injector.apply(batch)
+            step_action = _from_batch(executed, was_single)
 
         result = self.env.step(step_action)
+        result = self._apply_obs_to_result(result, from_reset=False)
 
         dones = _extract_dones(result) if isinstance(result, tuple) else None
         if dones is not None:
@@ -122,11 +152,7 @@ def maybe_wrap_env(env: Any, config: FaultInjectionConfig | None) -> Any:
 
 
 def maybe_wrap_env_tree(envs: Any, config: FaultInjectionConfig | None) -> Any:
-    """Wrap Gym envs inside LeRobot's nested ``make_env`` return structure.
-
-    LeRobot returns ``dict[task_group, dict[task_id, vec_env]]``. Non-env leaves
-    are returned unchanged.
-    """
+    """Wrap Gym envs inside LeRobot's nested ``make_env`` return structure."""
     if config is None or not config.enabled:
         return envs
     if isinstance(envs, dict):

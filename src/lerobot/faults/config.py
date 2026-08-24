@@ -19,6 +19,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+_SUPPORTED_TYPES = (
+    "action_hold",
+    "action_delay",
+    "action_jitter",
+    "sensor_dropout",
+    "visual_occlusion",
+    "visual_blur",
+    "brightness_drop",
+    "obs_latency",
+)
+
+_BURST_VISUAL_TYPES = frozenset({"visual_occlusion", "visual_blur", "brightness_drop"})
+
 
 @dataclass
 class FaultInjectionConfig:
@@ -27,50 +40,101 @@ class FaultInjectionConfig:
     When ``enabled`` is False (the default), evaluation behavior is unchanged:
     proposed actions reach ``env.step`` without modification and no fault events
     are logged.
-
-    Supported ``type`` values:
-        - ``action_hold``: at ``trigger_step``, repeat the previous valid action
-          for ``duration`` environment steps, then resume policy actions.
     """
 
     enabled: bool = False
     type: str = "action_hold"
-    # Episode step (0-indexed) at which the fault begins. Must be >= 1 so a
-    # previous valid executed action exists to hold.
+    # Episode step (0-indexed) at which the fault begins. Must be >= 1 for
+    # action_hold. Ignored for action_delay / action_jitter.
     trigger_step: int = 55
-    # Number of environment steps to hold the previous action.
+    # Number of environment steps to hold the previous action (action_hold) or
+    # burst length for observation faults.
     duration: int = 8
     # Probability in [0, 1] that the fault activates when the trigger is reached.
     probability: float = 1.0
-    # Dedicated RNG seed for activation decisions. Independent of eval seed.
+    # RNG seed for activation / jitter draws. Independent of eval seed.
     seed: int | None = 42
+    # FIFO depth for action_delay: execute the action from delay_steps ago.
+    delay_steps: int = 3
+    # Gaussian std for action_jitter: N(0, noise_std) per action dim. 0 = identity.
+    noise_std: float = 0.05
     # Vector-env indices to apply the fault to. None means all environments.
     env_ids: list[int] | None = None
     # JSONL path for fault events. Relative paths are resolved against the eval
     # ``output_dir`` in ``eval_main`` / :func:`resolve_fault_log_path`.
     log_path: Path | None = None
+    # Optional directory for sensor/visual diagnostic PNG frames.
+    diag_dir: Path | None = None
+    # Optional directory for wrist (camera2) policy GIFs (clean + faulted).
+    policy_video_dir: Path | None = None
+    # visual_occlusion: random box size as fraction of image H/W.
+    occlusion_h_frac_min: float = 0.25
+    occlusion_h_frac_max: float = 0.45
+    occlusion_w_frac_min: float = 0.25
+    occlusion_w_frac_max: float = 0.45
+    # visual_blur: box-blur radius (pixels); mapped from blur_sigma.
+    blur_sigma: float = 3.0
+    # brightness_drop: multiplicative scale applied to image intensities.
+    brightness_scale: float = 0.25
+    # obs_latency: serve observation from this many steps ago.
+    latency_steps: int = 3
 
     def __post_init__(self) -> None:
         if isinstance(self.log_path, str):
             self.log_path = Path(self.log_path)
+        if isinstance(self.diag_dir, str):
+            self.diag_dir = Path(self.diag_dir)
+        if isinstance(self.policy_video_dir, str):
+            self.policy_video_dir = Path(self.policy_video_dir)
         if self.env_ids is not None:
             self.env_ids = list(self.env_ids)
-        # Always validate fields so misconfiguration is caught even before enable.
         self.validate()
 
     def validate(self, num_envs: int | None = None) -> None:
         """Raise ``ValueError`` if configuration fields are invalid."""
-        if self.type != "action_hold":
-            raise ValueError(f"Unsupported fault type {self.type!r}. Currently supported: 'action_hold'.")
-        if self.trigger_step < 1:
+        if self.type not in _SUPPORTED_TYPES:
             raise ValueError(
-                f"trigger_step must be >= 1 so a previous valid action exists to hold "
-                f"(got {self.trigger_step})."
+                f"Unsupported fault type {self.type!r}. Currently supported: {list(_SUPPORTED_TYPES)}."
             )
-        if self.duration < 1:
-            raise ValueError(f"duration must be >= 1 (got {self.duration}).")
-        if not (0.0 <= self.probability <= 1.0):
-            raise ValueError(f"probability must be in [0.0, 1.0] (got {self.probability}).")
+        if self.type == "action_hold":
+            if self.trigger_step < 1:
+                raise ValueError(
+                    f"trigger_step must be >= 1 so a previous valid action exists to hold "
+                    f"(got {self.trigger_step})."
+                )
+            if self.duration < 1:
+                raise ValueError(f"duration must be >= 1 (got {self.duration}).")
+            if not (0.0 <= self.probability <= 1.0):
+                raise ValueError(f"probability must be in [0.0, 1.0] (got {self.probability}).")
+        elif self.type == "action_delay":
+            if self.delay_steps < 1:
+                raise ValueError(f"delay_steps must be >= 1 (got {self.delay_steps}).")
+        elif self.type == "action_jitter":
+            if self.noise_std < 0:
+                raise ValueError(f"noise_std must be >= 0 (got {self.noise_std}).")
+        elif self.type == "sensor_dropout" or self.type in _BURST_VISUAL_TYPES:
+            if self.trigger_step < 0:
+                raise ValueError(f"trigger_step must be >= 0 (got {self.trigger_step}).")
+            if self.duration < 1:
+                raise ValueError(f"duration must be >= 1 (got {self.duration}).")
+            if not (0.0 <= self.probability <= 1.0):
+                raise ValueError(f"probability must be in [0.0, 1.0] (got {self.probability}).")
+            if self.type == "visual_occlusion":
+                for name, lo, hi in (
+                    ("occlusion_h", self.occlusion_h_frac_min, self.occlusion_h_frac_max),
+                    ("occlusion_w", self.occlusion_w_frac_min, self.occlusion_w_frac_max),
+                ):
+                    if not (0.0 < lo <= hi <= 1.0):
+                        raise ValueError(f"{name} frac range invalid: [{lo}, {hi}].")
+            if self.type == "visual_blur" and self.blur_sigma <= 0:
+                raise ValueError(f"blur_sigma must be > 0 (got {self.blur_sigma}).")
+            if self.type == "brightness_drop" and not (0.0 <= self.brightness_scale <= 1.0):
+                raise ValueError(
+                    f"brightness_scale must be in [0.0, 1.0] (got {self.brightness_scale})."
+                )
+        elif self.type == "obs_latency":
+            if self.latency_steps < 1:
+                raise ValueError(f"latency_steps must be >= 1 (got {self.latency_steps}).")
         if self.env_ids is not None:
             if len(self.env_ids) == 0:
                 raise ValueError("env_ids must be non-empty when provided (or leave as None for all).")

@@ -12,30 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evaluation-time fault injection for LeRobot policies.
+"""Evaluation-time fault injection for LeRobot policies."""
 
-This package provides a configurable layer that can interrupt postprocessed
-actions immediately before ``env.step`` during ``lerobot-eval``. It does not
-train policies or demonstrate learned recovery.
-
-Fault injection is **disabled by default**. When ``fault.enabled=false``, no
-injector is constructed and evaluation behavior is unchanged.
-"""
-
+from lerobot.faults.action.delay import ActionDelayFault
 from lerobot.faults.action.hold import ActionHoldFault
+from lerobot.faults.action.jitter import ActionJitterFault
 from lerobot.faults.config import FaultInjectionConfig, default_fault_config, resolve_fault_log_path
-from lerobot.faults.factory import make_action_fault_injector, make_fault_injector
+from lerobot.faults.factory import (
+    make_action_fault_injector,
+    make_fault_injector,
+    make_obs_fault_injector,
+)
 from lerobot.faults.logging import FaultEventLogger
+from lerobot.faults.observation.brightness_drop import BrightnessDropFault
+from lerobot.faults.observation.obs_latency import ObsLatencyFault
+from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
+from lerobot.faults.observation.visual_blur import VisualBlurFault
+from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
 from lerobot.faults.wrappers import FaultEnvWrapper, maybe_wrap_env, maybe_wrap_env_tree
 
 __all__ = [
+    "ActionDelayFault",
     "ActionHoldFault",
+    "ActionJitterFault",
+    "BrightnessDropFault",
     "FaultEnvWrapper",
     "FaultEventLogger",
     "FaultInjectionConfig",
+    "ObsLatencyFault",
+    "SensorDropoutFault",
+    "VisualBlurFault",
+    "VisualOcclusionFault",
     "default_fault_config",
     "make_action_fault_injector",
     "make_fault_injector",
+    "make_obs_fault_injector",
     "maybe_wrap_env",
     "maybe_wrap_env_tree",
     "resolve_fault_log_path",

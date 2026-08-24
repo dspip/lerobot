@@ -12,8 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.faults.action.delay import ActionDelayFault
-from lerobot.faults.action.hold import ActionHoldFault
-from lerobot.faults.action.jitter import ActionJitterFault
+from lerobot.faults.observation.brightness_drop import BrightnessDropFault
+from lerobot.faults.observation.obs_latency import ObsLatencyFault
+from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
+from lerobot.faults.observation.visual_blur import VisualBlurFault
+from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
 
-__all__ = ["ActionDelayFault", "ActionHoldFault", "ActionJitterFault"]
+__all__ = [
+    "BrightnessDropFault",
+    "ObsLatencyFault",
+    "SensorDropoutFault",
+    "VisualBlurFault",
+    "VisualOcclusionFault",
+]
