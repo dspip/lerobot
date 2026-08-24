@@ -83,6 +83,7 @@ from lerobot.envs import (
     preprocess_observation,
 )
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.faults import maybe_wrap_env_tree, resolve_fault_log_path
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -756,6 +757,18 @@ def eval_main(cfg: EvalPipelineConfig):
         use_async_envs=cfg.eval.use_async_envs,
         trust_remote_code=cfg.trust_remote_code,
     )
+
+    fault_cfg = cfg.fault
+    if fault_cfg.enabled:
+        if cfg.env.max_parallel_tasks > 1:
+            raise ValueError(
+                "Fault injection currently requires --env.max_parallel_tasks=1 so "
+                "fault event logs stay consistent across tasks."
+            )
+        fault_cfg.log_path = resolve_fault_log_path(fault_cfg.log_path, cfg.output_dir)
+        fault_cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
+        fault_cfg.log_path.write_text("", encoding="utf-8")
+    envs = maybe_wrap_env_tree(envs, fault_cfg)
 
     logging.info("Making policy.")
 
