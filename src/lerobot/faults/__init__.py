@@ -21,6 +21,7 @@ from lerobot.faults.config import FaultInjectionConfig, default_fault_config, re
 from lerobot.faults.factory import (
     make_action_fault_injector,
     make_fault_injector,
+    make_midair_drop_fault,
     make_obs_fault_injector,
     make_sim_inject_fault,
 )
@@ -30,28 +31,44 @@ from lerobot.faults.observation.obs_latency import ObsLatencyFault
 from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
 from lerobot.faults.observation.visual_blur import VisualBlurFault
 from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
+from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
+from lerobot.faults.recovery.evaluation import evaluate_recovery_episode
+from lerobot.faults.recovery.midair_drop import MidAirDropFault
+from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 from lerobot.faults.sim.eef_bump import EefBumpFault
 from lerobot.faults.sim.object_slip import ObjectSlipFault
-from lerobot.faults.wrappers import FaultEnvWrapper, SimFaultEnvWrapper, maybe_wrap_env, maybe_wrap_env_tree
+from lerobot.faults.wrappers import (
+    DropRecoveryEnvWrapper,
+    FaultEnvWrapper,
+    SimFaultEnvWrapper,
+    maybe_wrap_env,
+    maybe_wrap_env_tree,
+)
 
 __all__ = [
     "ActionDelayFault",
     "ActionHoldFault",
     "ActionJitterFault",
     "BrightnessDropFault",
+    "DropRecoveryEnvWrapper",
     "EefBumpFault",
     "FaultEnvWrapper",
     "FaultEventLogger",
     "FaultInjectionConfig",
+    "FaultRecoveryDatasetLogger",
+    "MidAirDropFault",
     "ObjectSlipFault",
     "ObsLatencyFault",
     "SensorDropoutFault",
+    "SimpleIKRecoveryPlanner",
     "SimFaultEnvWrapper",
     "VisualBlurFault",
     "VisualOcclusionFault",
     "default_fault_config",
+    "evaluate_recovery_episode",
     "make_action_fault_injector",
     "make_fault_injector",
+    "make_midair_drop_fault",
     "make_obs_fault_injector",
     "make_sim_inject_fault",
     "maybe_wrap_env",

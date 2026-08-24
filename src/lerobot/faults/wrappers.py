@@ -26,8 +26,10 @@ from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.factory import (
     ActionFaultInjector,
     ObsFaultInjector,
+    RecoveryFaultInjector,
     SimInjectFaultInjector,
     make_action_fault_injector,
+    make_midair_drop_fault,
     make_obs_fault_injector,
     make_sim_inject_fault,
 )
@@ -198,12 +200,162 @@ class SimFaultEnvWrapper:
         return self.env.close()
 
 
+class DropRecoveryEnvWrapper:
+    """Wrap env for mid-air drop faults that need sim access and recovery control."""
+
+    def __init__(self, env: Any, config: FaultInjectionConfig):
+        if type(env).__name__ == "AsyncVectorEnv":
+            raise TypeError(
+                "DropRecoveryEnvWrapper does not support AsyncVectorEnv "
+                "(no per-sub-env sim access). Use SyncVectorEnv or a single LiberoEnv."
+            )
+        num_envs = _num_envs(env)
+        fault = make_midair_drop_fault(config, num_envs=num_envs)
+        if fault is None:
+            raise ValueError("DropRecoveryEnvWrapper requires enabled type='midair_drop'.")
+        self.env = env
+        self.fault_config = config
+        self.fault: RecoveryFaultInjector = fault
+        self.num_envs = num_envs
+        self.last_executed_action: np.ndarray | None = None
+
+    @property
+    def unwrapped(self) -> Any:
+        return getattr(self.env, "unwrapped", self.env)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.env, name)
+
+    def _notify_dones(self, dones: np.ndarray) -> None:
+        self.fault.notify_dones(dones.reshape(self.num_envs))
+
+    def _close_logger(self) -> None:
+        if self.fault.event_logger is not None:
+            self.fault.event_logger.close()
+
+    def reset(self, **kwargs):
+        result = self.env.reset(**kwargs)
+        self.fault.reset()
+        self._install_libero_no_reset_hook()
+        return result
+
+    def _install_libero_no_reset_hook(self) -> None:
+        """Prevent LeRobot LiberoEnv from reset()-on-success during recovery."""
+        try:
+            from lerobot.faults.sim.libero import unwrap_libero_env
+
+            target = self.env
+            if hasattr(target, "envs"):
+                target = target.envs[0]
+            libero = unwrap_libero_env(target)
+        except Exception:
+            return
+        if getattr(libero, "_faults_no_reset_hook", False):
+            return
+        fault = self.fault
+
+        def step_without_success_reset(action):
+            libero._ensure_env()
+            assert libero._env is not None
+            raw_obs, reward, done, info = libero._env.step(action)
+            is_success = libero._env.check_success()
+            terminated = bool(done or is_success)
+            info = dict(info) if info is not None else {}
+            info.update(
+                {
+                    "task": getattr(libero, "task", None),
+                    "task_id": getattr(libero, "task_id", None),
+                    "done": done,
+                    "is_success": is_success,
+                }
+            )
+            observation = libero._format_raw_obs(raw_obs)
+            recovering = any(s.recovery_active for s in fault._states)
+            if terminated and not recovering:
+                libero.reset()
+            truncated = False
+            return observation, reward, terminated, truncated, info
+
+        libero.step = step_without_success_reset  # type: ignore[method-assign]
+        libero._faults_no_reset_hook = True
+
+    def step(self, action):
+        batch, was_single = _as_batch(np.asarray(action), self.num_envs)
+        executed = self.fault.on_step(self.env, batch)
+        step_action = _from_batch(executed, was_single)
+        self.last_executed_action = np.asarray(step_action, dtype=np.float32).copy()
+        result = self.env.step(step_action)
+        self.fault.after_physics_step(self.env)
+
+        recovery_mask = [bool(s.recovery_active) for s in self.fault._states]
+        if isinstance(result, tuple) and len(result) == 5:
+            obs, reward, terminated, truncated, info = result
+            term = np.atleast_1d(np.asarray(terminated)).copy()
+            trunc = np.atleast_1d(np.asarray(truncated)).copy()
+            for i, active in enumerate(recovery_mask):
+                if i < len(term) and active:
+                    term[i] = False
+                    trunc[i] = False
+            if np.asarray(terminated).ndim == 0:
+                terminated = bool(term[0])
+                truncated = bool(trunc[0])
+            else:
+                terminated = term.reshape(np.asarray(terminated).shape)
+                truncated = trunc.reshape(np.asarray(truncated).shape)
+            result = (obs, reward, terminated, truncated, info)
+
+        self._clear_autoreset_latch(recovery_mask)
+
+        dones = _extract_dones(result) if isinstance(result, tuple) else None
+        if dones is not None:
+            self._notify_dones(dones)
+        return result
+
+    def _clear_autoreset_latch(self, recovery_mask: list[bool]) -> None:
+        env: Any = self.env
+        seen: set[int] = set()
+        while env is not None and id(env) not in seen:
+            seen.add(id(env))
+            flags = getattr(env, "_autoreset_envs", None)
+            if flags is not None:
+                arr = np.asarray(flags)
+                for i, active in enumerate(recovery_mask):
+                    if active and i < arr.shape[0]:
+                        arr[i] = False
+                try:
+                    env._autoreset_envs = arr
+                except Exception:
+                    pass
+                for attr in ("_terminations", "_truncations"):
+                    buf = getattr(env, attr, None)
+                    if buf is not None:
+                        b = np.asarray(buf)
+                        for i, active in enumerate(recovery_mask):
+                            if active and i < b.shape[0]:
+                                b[i] = False
+                        try:
+                            setattr(env, attr, b)
+                        except Exception:
+                            pass
+                return
+            env = getattr(env, "env", None)
+
+    def loss_mask(self, env_idx: int = 0) -> float:
+        return self.fault.loss_mask_for_env(env_idx)
+
+    def close(self):
+        self._close_logger()
+        return self.env.close()
+
+
 def maybe_wrap_env(env: Any, config: FaultInjectionConfig | None) -> Any:
     """Wrap ``env`` when fault config is enabled; otherwise return ``env`` unchanged."""
     if config is None or not config.enabled:
         return env
     if not _is_wrappable_env(env):
         return env
+    if config.type == "midair_drop":
+        return DropRecoveryEnvWrapper(env, config)
     if config.type in {"object_slip", "eef_bump"}:
         return SimFaultEnvWrapper(env, config)
     return FaultEnvWrapper(env, config)

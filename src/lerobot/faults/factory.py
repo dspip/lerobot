@@ -28,6 +28,7 @@ from lerobot.faults.observation.obs_latency import ObsLatencyFault
 from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
 from lerobot.faults.observation.visual_blur import VisualBlurFault
 from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
+from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.sim.eef_bump import EefBumpFault
 from lerobot.faults.sim.object_slip import ObjectSlipFault
 
@@ -40,6 +41,7 @@ ObsFaultInjector = (
     | ObsLatencyFault
 )
 SimInjectFaultInjector = ObjectSlipFault | EefBumpFault
+RecoveryFaultInjector = MidAirDropFault
 
 _ACTION_TYPES = frozenset({"action_hold", "action_delay", "action_jitter"})
 _OBS_TYPES = frozenset(
@@ -52,6 +54,7 @@ _OBS_TYPES = frozenset(
     }
 )
 _SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
+_RECOVERY_TYPES = frozenset({"midair_drop"})
 
 
 def _build_logger(config: FaultInjectionConfig, log_path: str | Path | None) -> FaultEventLogger | None:
@@ -116,6 +119,19 @@ def make_sim_inject_fault(
     if config.type == "eef_bump":
         return EefBumpFault(config=config, num_envs=num_envs, event_logger=logger)
     return None
+
+
+def make_midair_drop_fault(
+    config: FaultInjectionConfig | None,
+    num_envs: int,
+    log_path: str | Path | None = None,
+) -> RecoveryFaultInjector | None:
+    """Build a mid-air drop recovery fault, or ``None`` when disabled."""
+    if config is None or not config.enabled or config.type not in _RECOVERY_TYPES:
+        return None
+    config.validate(num_envs=num_envs)
+    logger = _build_logger(config, log_path)
+    return MidAirDropFault(config=config, num_envs=num_envs, event_logger=logger)
 
 
 def make_fault_injector(
