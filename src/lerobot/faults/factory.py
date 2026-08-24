@@ -28,6 +28,8 @@ from lerobot.faults.observation.obs_latency import ObsLatencyFault
 from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
 from lerobot.faults.observation.visual_blur import VisualBlurFault
 from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
+from lerobot.faults.sim.eef_bump import EefBumpFault
+from lerobot.faults.sim.object_slip import ObjectSlipFault
 
 ActionFaultInjector = ActionHoldFault | ActionDelayFault | ActionJitterFault
 ObsFaultInjector = (
@@ -37,6 +39,7 @@ ObsFaultInjector = (
     | BrightnessDropFault
     | ObsLatencyFault
 )
+SimInjectFaultInjector = ObjectSlipFault | EefBumpFault
 
 _ACTION_TYPES = frozenset({"action_hold", "action_delay", "action_jitter"})
 _OBS_TYPES = frozenset(
@@ -48,6 +51,7 @@ _OBS_TYPES = frozenset(
         "obs_latency",
     }
 )
+_SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
 
 
 def _build_logger(config: FaultInjectionConfig, log_path: str | Path | None) -> FaultEventLogger | None:
@@ -94,6 +98,23 @@ def make_obs_fault_injector(
         return BrightnessDropFault(config=config, num_envs=num_envs, event_logger=logger)
     if config.type == "obs_latency":
         return ObsLatencyFault(config=config, num_envs=num_envs, event_logger=logger)
+    return None
+
+
+def make_sim_inject_fault(
+    config: FaultInjectionConfig | None,
+    num_envs: int,
+    log_path: str | Path | None = None,
+) -> SimInjectFaultInjector | None:
+    """Build an inject-only sim-state fault, or ``None`` when disabled."""
+    if config is None or not config.enabled or config.type not in _SIM_INJECT_TYPES:
+        return None
+    config.validate(num_envs=num_envs)
+    logger = _build_logger(config, log_path)
+    if config.type == "object_slip":
+        return ObjectSlipFault(config=config, num_envs=num_envs, event_logger=logger)
+    if config.type == "eef_bump":
+        return EefBumpFault(config=config, num_envs=num_envs, event_logger=logger)
     return None
 
 

@@ -26,8 +26,10 @@ from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.factory import (
     ActionFaultInjector,
     ObsFaultInjector,
+    SimInjectFaultInjector,
     make_action_fault_injector,
     make_obs_fault_injector,
+    make_sim_inject_fault,
 )
 
 
@@ -142,12 +144,68 @@ class FaultEnvWrapper:
         return self.env.close()
 
 
+class SimFaultEnvWrapper:
+    """Wrap env for inject-only sim-state faults (object slip, EEF bump)."""
+
+    def __init__(self, env: Any, config: FaultInjectionConfig):
+        if type(env).__name__ == "AsyncVectorEnv":
+            raise TypeError(
+                "SimFaultEnvWrapper does not support AsyncVectorEnv "
+                "(no per-sub-env sim access). Use SyncVectorEnv or a single LiberoEnv."
+            )
+        num_envs = _num_envs(env)
+        fault = make_sim_inject_fault(config, num_envs=num_envs)
+        if fault is None:
+            raise ValueError(
+                "SimFaultEnvWrapper requires enabled type in {'object_slip', 'eef_bump'}."
+            )
+        self.env = env
+        self.fault_config = config
+        self.fault: SimInjectFaultInjector = fault
+        self.num_envs = num_envs
+
+    @property
+    def unwrapped(self) -> Any:
+        return getattr(self.env, "unwrapped", self.env)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.env, name)
+
+    def _notify_dones(self, dones: np.ndarray) -> None:
+        self.fault.notify_dones(dones.reshape(self.num_envs))
+
+    def _close_logger(self) -> None:
+        if self.fault.event_logger is not None:
+            self.fault.event_logger.close()
+
+    def reset(self, **kwargs):
+        result = self.env.reset(**kwargs)
+        self.fault.reset()
+        return result
+
+    def step(self, action):
+        batch, was_single = _as_batch(np.asarray(action), self.num_envs)
+        executed = self.fault.on_step(self.env, batch)
+        step_action = _from_batch(executed, was_single)
+        result = self.env.step(step_action)
+        dones = _extract_dones(result) if isinstance(result, tuple) else None
+        if dones is not None:
+            self._notify_dones(dones)
+        return result
+
+    def close(self):
+        self._close_logger()
+        return self.env.close()
+
+
 def maybe_wrap_env(env: Any, config: FaultInjectionConfig | None) -> Any:
     """Wrap ``env`` when fault config is enabled; otherwise return ``env`` unchanged."""
     if config is None or not config.enabled:
         return env
     if not _is_wrappable_env(env):
         return env
+    if config.type in {"object_slip", "eef_bump"}:
+        return SimFaultEnvWrapper(env, config)
     return FaultEnvWrapper(env, config)
 
 

@@ -28,9 +28,12 @@ _SUPPORTED_TYPES = (
     "visual_blur",
     "brightness_drop",
     "obs_latency",
+    "object_slip",
+    "eef_bump",
 )
 
 _BURST_VISUAL_TYPES = frozenset({"visual_occlusion", "visual_blur", "brightness_drop"})
+_SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
 
 
 @dataclass
@@ -78,6 +81,22 @@ class FaultInjectionConfig:
     brightness_scale: float = 0.25
     # obs_latency: serve observation from this many steps ago.
     latency_steps: int = 3
+    # object_slip / eef_bump: inclusive episode-step window (0-indexed).
+    t_min: int = 10
+    t_max: int = 30
+    # object_slip: LIBERO object body name.
+    object_name: str = "alphabet_soup_1"
+    # object_slip: Gaussian std for position / yaw (rad) nudge.
+    slip_pos_std: float = 0.02
+    slip_yaw_std: float = 0.15
+    # eef_bump: Gaussian std for external force components (sim units).
+    bump_force_std: float = 40.0
+    # Physics substeps after a sim-state disturbance.
+    settle_steps: int = 5
+    # object_slip: only trigger when the object is grasped.
+    require_grasp: bool = True
+    # object_slip: require object world-z at/above this height (meters). <= 0 disables.
+    min_object_z: float = 0.12
 
     def __post_init__(self) -> None:
         if isinstance(self.log_path, str):
@@ -135,6 +154,27 @@ class FaultInjectionConfig:
         elif self.type == "obs_latency":
             if self.latency_steps < 1:
                 raise ValueError(f"latency_steps must be >= 1 (got {self.latency_steps}).")
+        elif self.type in _SIM_INJECT_TYPES:
+            if self.t_min < 0:
+                raise ValueError(f"t_min must be >= 0 (got {self.t_min}).")
+            if self.t_max < self.t_min:
+                raise ValueError(f"t_max must be >= t_min (got t_max={self.t_max}, t_min={self.t_min}).")
+            if self.settle_steps < 0:
+                raise ValueError(f"settle_steps must be >= 0 (got {self.settle_steps}).")
+            if not (0.0 <= self.probability <= 1.0):
+                raise ValueError(f"probability must be in [0.0, 1.0] (got {self.probability}).")
+            if self.type == "object_slip":
+                if self.slip_pos_std < 0:
+                    raise ValueError(f"slip_pos_std must be >= 0 (got {self.slip_pos_std}).")
+                if self.slip_yaw_std < 0:
+                    raise ValueError(f"slip_yaw_std must be >= 0 (got {self.slip_yaw_std}).")
+                if self.min_object_z < 0:
+                    raise ValueError(f"min_object_z must be >= 0 (got {self.min_object_z}).")
+                if not self.object_name:
+                    raise ValueError("object_name must be non-empty.")
+            elif self.type == "eef_bump":
+                if self.bump_force_std < 0:
+                    raise ValueError(f"bump_force_std must be >= 0 (got {self.bump_force_std}).")
         if self.env_ids is not None:
             if len(self.env_ids) == 0:
                 raise ValueError("env_ids must be non-empty when provided (or leave as None for all).")
