@@ -1,0 +1,54 @@
+---
+description: Implementation patterns for in-tree fault injectors and eval integration
+globs: src/lerobot/faults/**/*.py
+alwaysApply: false
+---
+
+# Fault implementation patterns
+
+Faults live under `src/lerobot/faults/`. Eval integration is **wrap-only**: `eval_main`
+calls `maybe_wrap_env_tree(envs, cfg.fault)` once after `make_env`. Do not add a second
+hook or monkey-patch `make_env`.
+
+## Adding or changing a fault
+
+1. Implement injector with `apply` / `apply_obs` / `on_step` as appropriate, plus
+   `reset` / `notify_dones` when state is episode-scoped.
+2. Extend `FaultInjectionConfig` in `config.py` (fields + `validate()`).
+3. Register in `factory.py` (`_ACTION_TYPES`, `_OBS_TYPES`, `_SIM_INJECT_TYPES`, or
+   `_RECOVERY_TYPES`).
+4. Dispatch in `maybe_wrap_env` (`wrappers.py`):
+   - `FaultEnvWrapper` — action + observation faults
+   - `SimFaultEnvWrapper` — `object_slip`, `eef_bump`
+   - `DropRecoveryEnvWrapper` — `midair_drop`
+5. Log structured events through `FaultEventLogger` (JSONL).
+6. Add unit tests under `tests/faults/`.
+7. Update `docs/source/fault_injection.mdx` and `.cursor/skills/` tables.
+
+CLI: `lerobot-eval --fault.*` (draccus nested config). No sidecar CLI.
+
+## Defaults
+
+- `FaultInjectionConfig.enabled = False` — eval unchanged when disabled.
+- `--env.max_parallel_tasks=1` required when faults are enabled.
+
+## Action faults
+
+- Operate on numpy batches shaped `(num_envs, action_dim)`.
+- Never mutate the input action array; return a copy.
+- Keep `proposed_*` vs `executed_*` in logs for proof.
+
+## Observation faults
+
+- Prefer `observation/utils.py` and `observation/burst.py` helpers.
+- Do not zero proprio/state unless the fault type explicitly requires it.
+
+## Sim / recovery faults
+
+- LIBERO helpers: `sim/libero.py`.
+- Recovery planner: `recovery/planner.py`; FPS alignment: `recovery/fps.py`.
+- `DropRecoveryEnvWrapper` suppresses autoreset during active recovery.
+
+## Copyright
+
+New files in this package: `Copyright 2026 Gangelia. All rights reserved.` — not HuggingFace.

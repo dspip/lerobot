@@ -2,44 +2,88 @@
 
 Optional, **disabled-by-default** fault injection for `lerobot-eval`.
 
-Use it to measure whether a trained policy still succeeds when actions are interrupted
-in a controlled, reproducible way. This does **not** train policies and does **not**
-implement recovery behaviors.
+Use it to measure whether a trained policy still succeeds when actions, observations,
+or (for LIBERO) simulation state are perturbed in a controlled, reproducible way.
+Recovery behaviors (mid-air drop + IK replan) are available for dataset collection
+via `examples/faults/` — they do not run unless explicitly enabled.
+
+## Disabled by default
+
+With `--fault.enabled=false` (the default), evaluation behavior is **unchanged**:
+
+- Environments are not wrapped
+- No `fault_events.jsonl` is written
+- Policy actions reach `env.step` without modification
+
+Enable faults only when you intend to test or record failure modes.
 
 ## What it does
 
-When enabled, LeRobot wraps evaluation environments after `make_env` so fault
-transforms apply to the final action batch immediately before `env.step(...)`.
+When enabled, LeRobot wraps evaluation environments **once** after `make_env` via
+`maybe_wrap_env_tree`, so fault transforms apply immediately before `env.step(...)`.
 
 - Policy weights, action-chunk queues, and processors are untouched
-- With `--fault.enabled=false` (default), evaluation behavior is unchanged: no wrap,
-  no log file, identity action path
+- Requires `--env.max_parallel_tasks=1` while faults are enabled
+- One fault type per eval run
+- CLI: nested draccus flags `--fault.*` on `lerobot-eval` (not a separate package)
 
-## Supported fault: `action_hold`
+## Supported fault types
 
-At `trigger_step` (0-indexed episode step, must be `>= 1`), repeat the previous
-valid executed action for `duration` environment steps, then resume policy actions.
+| Type | Kind | Summary |
+| ---- | ---- | ------- |
+| `action_hold` | action | Repeat previous action for `duration` steps starting at `trigger_step` |
+| `action_delay` | action | Execute action from `delay_steps` ago (FIFO) |
+| `action_jitter` | action | Add Gaussian noise (`noise_std`) to each action dim |
+| `sensor_dropout` | observation | Zero policy-facing camera images for a burst |
+| `visual_occlusion` | observation | Random rectangular occlusion on images |
+| `visual_blur` | observation | Box blur on images (`blur_sigma`) |
+| `brightness_drop` | observation | Scale image intensities (`brightness_scale`) |
+| `obs_latency` | observation | Serve observation from `latency_steps` ago |
+| `object_slip` | sim-inject | Grasp-gated object pose nudge (LIBERO) |
+| `eef_bump` | sim-inject | External force impulse on end-effector (LIBERO) |
+| `midair_drop` | recovery | Mid-air drop + IK recovery planner (LIBERO) |
 
-| Flag                   | Meaning                                                      | Default                           |
-| ---------------------- | ------------------------------------------------------------ | --------------------------------- |
-| `--fault.enabled`      | Master switch                                                | `false`                           |
-| `--fault.type`         | Fault implementation                                         | `action_hold`                     |
-| `--fault.trigger_step` | Step where hold begins (`>= 1`)                              | `55`                              |
-| `--fault.duration`     | Hold length in env steps                                     | `8`                               |
-| `--fault.probability`  | Activation probability at trigger                            | `1.0`                             |
-| `--fault.seed`         | RNG seed for activation decisions                            | `42`                              |
-| `--fault.env_ids`      | Vector-env indices (`null` = all)                            | `null`                            |
-| `--fault.log_path`     | JSONL event log path (relative paths are under `output_dir`) | `<output_dir>/fault_events.jsonl` |
+### Action faults
 
-Fault injection is **policy-agnostic**: it runs after action postprocessing and before
-`env.step`, so any LeRobot policy that works with `lerobot-eval` can be tested
-(SmolVLA, π₀, ACT, …).
+| Flag | Meaning | Default |
+| ---- | ------- | ------- |
+| `--fault.enabled` | Master switch | `false` |
+| `--fault.type` | Fault implementation | `action_hold` |
+| `--fault.trigger_step` | Hold/burst start step (`>= 1` for hold) | `55` |
+| `--fault.duration` | Hold or burst length (steps) | `8` |
+| `--fault.probability` | Activation probability at trigger | `1.0` |
+| `--fault.seed` | RNG seed | `42` |
+| `--fault.delay_steps` | FIFO depth (`action_delay`) | `3` |
+| `--fault.noise_std` | Jitter std (`action_jitter`) | `0.05` |
+| `--fault.env_ids` | Vector-env indices (`null` = all) | `null` |
+| `--fault.log_path` | JSONL log (relative → under `output_dir`) | `<output_dir>/fault_events.jsonl` |
 
-## Example
+### Observation faults
+
+Additional flags: `--fault.diag_dir`, `--fault.policy_video_dir`,
+`--fault.occlusion_*`, `--fault.blur_sigma`, `--fault.brightness_scale`,
+`--fault.latency_steps`.
+
+### Sim-inject faults (`object_slip`, `eef_bump`)
+
+Window: `--fault.t_min`, `--fault.t_max`. Object: `--fault.object_name`.
+Slip: `--fault.slip_pos_std`, `--fault.slip_yaw_std`. Bump: `--fault.bump_force_std`.
+Shared: `--fault.settle_steps`, `--fault.require_grasp`, `--fault.min_object_z`.
+
+### Recovery fault (`midair_drop`)
+
+Impulse: `--fault.impulse_lin_std`, `--fault.impulse_ang_std`, `--fault.impulse_lin_bias`.
+Timing: `--fault.post_grasp_delay_steps`, `--fault.min_drop_distance_from_basket_m`.
+Recovery: `--fault.recovery_fps`, `--fault.basket_name`, `--fault.side_grasp_enabled`,
+`--fault.seat_assist_enabled`, `--fault.waypoint_noise_m`, etc.
+
+See `src/lerobot/faults/config.py` for the full schema.
+
+## Example: action hold
 
 ```bash
 lerobot-eval \
-  --policy.path=<your_policy> \
+  --policy.path=lerobot/smolvla_libero \
   --env.type=libero \
   --env.task=libero_object \
   --env.task_ids="[0]" \
@@ -52,18 +96,45 @@ lerobot-eval \
   --output_dir=outputs/eval/fault_hold
 ```
 
+## Drop recovery pipelines (examples)
+
+Mid-air drop + recovery is **not** covered by LIBERO smoke scripts. Use teammate demos:
+
+```bash
+# CI-safe dry-run (no LIBERO)
+uv run python examples/faults/run_drop_recovery_demo.py --dry-run
+
+# Full SmolVLA → grasp → drop → recovery → video (GPU + LIBERO)
+export MUJOCO_GL=egl
+uv run python examples/faults/run_full_drop_recovery_pipeline.py \
+  --output-dir outputs/full_pipeline_demo \
+  --policy-path lerobot/smolvla_libero \
+  --device cuda
+```
+
+Pass criteria: `fault_events.jsonl` contains `"event": "midair_drop"`; `pipeline_log.json`
+reports behavioral success (grasp, drop, object in view, recovery place).
+
 ## Evidence of injection
 
 A faulted eval is only trustworthy if `fault_events.jsonl` exists and contains
-lifecycle events (`activated` → `active` → `completed`) with both
-`proposed_action` and `executed_held_action`.
+lifecycle events with both proposed and executed fields where applicable.
 
 Compare task success via LeRobot's usual `eval_info.json` (`overall.pc_success`).
-Rendered rollout videos are written under `output_dir/videos/` by default (unless
-you enable dataset recording instead).
+Videos are under `output_dir/videos/` unless dataset recording is enabled.
+
+## Smoke script
+
+```bash
+bash scripts/run_fault_smoke.sh baseline    # no fault log
+bash scripts/run_fault_smoke.sh injected    # action_hold
+```
+
+Modes: `baseline`, `injected`, `delay`, `jitter`, `sensor`. Does **not** include `midair_drop`.
 
 ## Constraints
 
-- Requires `--env.max_parallel_tasks=1` while faults are enabled (keeps event logs consistent)
-- One fault type per eval run in this PR (`action_hold`)
-- Unit tests live under `tests/faults/` and do not require a simulator or GPU
+- `--env.max_parallel_tasks=1` while faults are enabled
+- One fault type per eval run
+- Unit tests: `tests/faults/` (no simulator or GPU required)
+- In-tree package: `src/lerobot/faults/` — not the old `lerobot_faults` sidecar
