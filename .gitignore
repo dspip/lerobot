@@ -165,6 +165,13 @@ wandb/
 # Data folders
 data/
 outputs/
+ft_inventory/
+
+# Local dev tooling
+.pre-commit-cache/
+.uv-cache/
+.uv-tools/
+.worktrees/
 
 # Translations
 *.mo
