@@ -98,7 +98,9 @@ class FaultInjectionConfig:
     gripper_settle_steps: int = 5
     # After grasp+height gates pass, wait this many env steps before dropping.
     post_grasp_delay_steps: int = 0
-    # Drop while object is still this far (XY, meters) from the basket. <= 0 disables.
+    # Do not drop closer than this XY distance to the basket (meters). Inside
+    # the radius the drop is skipped. At the boundary, drop early so recovery
+    # still has workspace. <= 0 disables the keep-out.
     min_drop_distance_from_basket_m: float = 0.18
     # midair_drop: recovery planner output FPS.
     recovery_fps: int = 10

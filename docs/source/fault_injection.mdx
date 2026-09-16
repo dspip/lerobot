@@ -73,7 +73,8 @@ Shared: `--fault.settle_steps`, `--fault.require_grasp`, `--fault.min_object_z`.
 ### Recovery fault (`midair_drop`)
 
 Impulse: `--fault.impulse_lin_std`, `--fault.impulse_ang_std`, `--fault.impulse_lin_bias`.
-Timing: `--fault.post_grasp_delay_steps`, `--fault.min_drop_distance_from_basket_m`.
+Timing: `--fault.post_grasp_delay_steps`, `--fault.min_drop_distance_from_basket_m`
+(keep-out: do not drop closer than this XY distance to the basket).
 Recovery: `--fault.recovery_fps`, `--fault.basket_name`, `--fault.side_grasp_enabled`,
 `--fault.seat_assist_enabled`, `--fault.waypoint_noise_m`, etc.
 
@@ -104,7 +105,7 @@ Mid-air drop + recovery is **not** covered by LIBERO smoke scripts. Use teammate
 # CI-safe dry-run (no LIBERO)
 uv run python examples/faults/run_drop_recovery_demo.py --dry-run
 
-# Full SmolVLA → grasp → drop → recovery → video (GPU + LIBERO)
+# Full SmolVLA → grasp → **carry** → drop → recovery → video (GPU + LIBERO)
 export MUJOCO_GL=egl
 uv run python examples/faults/run_full_drop_recovery_pipeline.py \
   --output-dir outputs/full_pipeline_demo \
@@ -112,8 +113,12 @@ uv run python examples/faults/run_full_drop_recovery_pipeline.py \
   --device cuda
 ```
 
+Training-grade defaults: sampled `post_grasp_delay_steps` in `[20, 60]` (1–3 s of
+mid-air carry at 20 Hz), `seat_assist_enabled=false`, post-release settle frames
+written to Parquet. Demo-only teleport: `--allow-seat-assist`.
+
 Pass criteria: `fault_events.jsonl` contains `"event": "midair_drop"`; `pipeline_log.json`
-reports behavioral success (grasp, drop, object in view, recovery place).
+reports behavioral success (grasp, **carry before drop**, drop, unaided in-basket).
 
 ## Evidence of injection
 

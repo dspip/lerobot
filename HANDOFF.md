@@ -1,36 +1,56 @@
-# HANDOFF — Frame-level failure annotations (LeRobot Parquet)
+# HANDOFF — Failure-annotated LIBERO datasets (LeRobot Parquet)
 
 Single source of truth for this workstream.
 
-## 1. Project goal & current context
+## 1. Goal
 
-**Goal:** LIBERO / MuJoCo episodes recorded as LeRobot datasets (`data/**/*.parquet` + `videos/` + `meta/`) must carry **per-frame failure labels** from live simulator ground truth, not from a sidecar JSONL join.
+Record LIBERO / MuJoCo episodes as LeRobot datasets (`data/**/*.parquet` + `videos/` + `meta/`) with **per-frame failure labels** from live simulator GT (not a JSONL join), then **fine-tune SmolVLA** so it can recover from drops without cloning the injector.
 
 | Column | Meaning |
 | ------ | ------- |
-| `is_failure` | Physical failure this frame (object was held mid-air, now ungrasped, not in the basket). |
+| `is_failure` | Physical failure this frame (held mid-air, now ungrasped, not in the basket). |
 | `failure_onset` | Rising edge of `is_failure`. |
-| `failure_type` | Category id (`0` none, `1` midair drop, `2` slip, …). Sticky after injector fire or spontaneous drop. |
+| `failure_type` | Category id (`0` none, `1` midair drop, …). Sticky after injector fire or spontaneous drop. |
 | `injection_active` | Injector glitched **this** frame (independent of physics). |
 | `phase` | `0` nominal, `1` injection, `2` post-fault, `3` recovery. Injection pulse wins over recovery on the glitch frame. |
 
-SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the policy preprocessor.
+SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the policy preprocessor until training uses `loss_mask` / `is_failure`.
+
+**Hardware / extra sensors (depth, F/T, `lerobot-record`) are out of scope until sim labels + recovery recipe are honest.**
 
 ## 2. Architecture
 
 **Recorders**
 
-1. Eval: `src/lerobot/scripts/lerobot_eval.py` `rollout()` when `--eval.recording=true`. Features include the five label columns (zeros if no wrapper).
-2. Drop-recovery: `FaultRecoveryDatasetLogger` (`src/lerobot/faults/recovery/dataset_logger.py`) used by `examples/faults/run_full_drop_recovery_pipeline.py`.
-3. Hardware `lerobot-record`: still out of scope (faults attach only in `eval_main`).
+1. Eval: `lerobot_eval.py` `rollout()` when `--eval.recording=true` (pre-step images, post-step labels — same as `next.reward`).
+2. Drop-recovery: `FaultRecoveryDatasetLogger` used by `examples/faults/run_full_drop_recovery_pipeline.py` (**post-step** obs + labels).
+3. Hardware `lerobot-record`: not wired.
 
-**Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`, merging arrays into Gym `info`.
+**Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`.
 
-**Physics:** `src/lerobot/faults/annotation.py` + `sim/libero.py` (`is_object_held_midair`, `is_object_grasped`, `is_object_in_basket`).
+**Physics:** `src/lerobot/faults/annotation.py` + `sim/libero.py`.
 
-## 3. What shipped (this branch)
+**Training-grade recipe (not the library FaultInjectionConfig defaults):** `src/lerobot/faults/recovery/recording_recipe.py`.
+
+## 3. Plan (do not skip)
+
+| Step | Status | What |
+| ---- | ------ | ---- |
+| A. Frame-level Parquet labels | **Done** | Five columns from live GT; `loss_mask=0` only on injection frame |
+| B. Training-grade **data recipe** | **Done (this change)** | Carry delay, no seat teleport, settle in Parquet |
+| C. Re-verify **one** CUDA episode with the new recipe | **You run** | Must show carry_steps ≥ ~10, `seat_assisted=false`, settle rows in parquet |
+| D. Small mixed set (tens of episodes) | **Next after C** | Mix no-fault success + drop+recovery; several seeds |
+| E. Smoke fine-tune | After D | Short SmolVLA run using `loss_mask`; eval with faults off then on |
+| F. Scale | After E | Only if unaided recoveries look right on video **and** parquet |
+| G. Jetson / extra sensors | After F | New schema; not a missing column in current verify |
+
+**Do not scale** from `outputs/failure_annotation_verify/` (delay=0, seat assist, settle not in parquet).
+
+## 4. What shipped
 
 Branch: `feature/failure-annotation-parquet`
+
+### A — labels
 
 | File | Role |
 | ---- | ---- |
@@ -38,22 +58,60 @@ Branch: `feature/failure-annotation-parquet`
 | `src/lerobot/faults/wrappers.py` | All three wrappers stamp `info` |
 | `src/lerobot/faults/recovery/dataset_logger.py` | Writes label columns |
 | `src/lerobot/scripts/lerobot_eval.py` | Eval recording includes labels |
-| `src/lerobot/faults/action/hold.py`, `observation/burst.py`, `observation/sensor_dropout.py`, `sim/object_slip.py`, `sim/eef_bump.py` | `just_injected` pulse so duration=1 is labeled |
+| injectors (`hold`, `burst`, `sensor_dropout`, `object_slip`, `eef_bump`) | `just_injected` pulse |
 | `tests/faults/test_failure_annotation.py` | Latch / wrapper tests (no GPU) |
-| `examples/faults/verify_failure_parquet.py` | Opens real Parquet and asserts |
+| `examples/faults/verify_failure_parquet.py` | Opens real Parquet |
 
-## 4. Test results (2026-09-16)
+### B — recording recipe
 
-- `uv run pytest tests/faults -q` → **207 passed**
-- Dry-run dataset: `/tmp/lerobot_fail_ann_dry` (schema + nonzero flags)
-- **Real LIBERO + SmolVLA + midair_drop** (CUDA, `MUJOCO_GL=egl`):
-  - Command: `uv run python examples/faults/run_full_drop_recovery_pipeline.py --output-dir outputs/failure_annotation_verify --policy-path lerobot/smolvla_libero --device cuda`
-  - `pipeline_log.json` `"success": true`, drop at sim step 63
-  - Parquet `outputs/failure_annotation_verify/dataset`: **105 frames**, **14 `is_failure`**, **1 `failure_onset`**, **1 `injection_active`**, `failure_type=1`, injection frame **phase=1**, later failure frames **phase=3** (recovery planner running while the can is on the table)
+| File | Role |
+| ---- | ---- |
+| `src/lerobot/faults/recovery/recording_recipe.py` | Sample delay `[20,60]`, `seat_assist_enabled=False` |
+| `examples/faults/run_full_drop_recovery_pipeline.py` | Uses recipe; logs settle; fails if seat assist or no carry |
+| `tests/faults/test_recording_recipe.py` | No-sim tests |
 
-## 5. Risks / follow-ups
+Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and `seat_assist_enabled=True` so injector unit tests stay valid. **Training datasets must go through the pipeline recipe (or equivalent kwargs).**
 
-- Eval recording still stores **pre-step** images with **post-step** labels (same convention as `next.reward`). The drop-recovery logger uses post-step obs, so labels match the cameras there.
-- `midair_drop` starts recovery on the same env step as the drop, so you rarely see `phase=2` on that fault type; `object_slip` / `eef_bump` will.
-- Jetson / RealSense depth and `lerobot-record` hardware faults are not in this branch.
-- Dataset root must be fresh (`LeRobotDataset.create` refuses an existing directory unless `append=True`).
+## 5. Results so far
+
+### Labels (2026-09-16) — `outputs/failure_annotation_verify/`
+
+- `uv run pytest tests/faults -q` → 207 passed (before recipe tests).
+- Real LIBERO + SmolVLA + midair_drop (CUDA): 105 frames, 14 `is_failure`, 1 injection frame, cameras match drop.
+- **Recipe problems (why we do not train on it):** drop on first grasp (`post_grasp_delay_steps=0`), `seat_assisted=true`, settle overlay frames not in Parquet.
+
+### Recipe (2026-09-16)
+
+- Pipeline defaults: delay sampled in `[20, 60]` env steps (1–3 s at 20 Hz), `--allow-seat-assist` opt-in, settle steps recorded at the same stride.
+- Success now requires `dropped_after_carry` and `seat_assist_ok`.
+- CUDA re-run is **required** before any mix/scale (planner may fail more often without seat assist — that is honest).
+
+## 6. Risks / known mismatches
+
+- Pipeline `grasp_flags` in `pipeline_log.json` are **pre-step**; annotator / parquet labels are **post-step**. Shift by one when joining.
+- `midair_drop` starts recovery on the drop step → rarely `phase=2`.
+- Image `stats.json` count may be 100 on a ~105-frame episode (LeRobot subsample).
+- `evaluation_episode_id` in JSONL can be null.
+- Basket keep-out: early-drop radius `min_drop_distance_from_basket_m=0.30` on the training recipe (drop when the carry reaches it). Hard pocket 22 cm — never inject inside that. `<= 0` disables.
+- Dataset root must be fresh unless `append=True`.
+
+## 7. Commands
+
+```bash
+# Unit tests (no GPU)
+uv run pytest tests/faults/test_failure_annotation.py tests/faults/test_recording_recipe.py -q
+
+# Training-grade one-episode verify (GPU + LIBERO). Use a NEW output dir.
+export MUJOCO_GL=egl
+uv run python examples/faults/run_full_drop_recovery_pipeline.py \
+  --output-dir outputs/failure_annotation_recipe \
+  --policy-path lerobot/smolvla_libero \
+  --device cuda \
+  --seed 1000
+
+# Schema + nonzero failure columns
+uv run python examples/faults/verify_failure_parquet.py \
+  --root outputs/failure_annotation_recipe/dataset
+```
+
+Fixed delay (no sample): `--post-grasp-delay-steps 40`. Old demo teleport: `--allow-seat-assist` (do not train on that).

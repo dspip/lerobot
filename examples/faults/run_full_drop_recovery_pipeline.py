@@ -18,7 +18,9 @@
 Important:
   - LIBERO control stays at the default **20 Hz** (same as successful baseline eval).
   - Dataset / recovery planner target remains **10 FPS** (stride=2 recording).
-  - Drop only fires when the object is actually grasped (no teleport hacks).
+  - Drop only after a real mid-air **carry** (sampled ``post_grasp_delay_steps``), not on first lift.
+  - Seat-assist teleport is **off** for training-grade runs; unaided place or the episode fails.
+  - Release settle steps are written to Parquet (same stride as the control loop).
   - ``success`` means behavioral checks passed, not merely \"fault triggered\".
 """
 
@@ -156,6 +158,7 @@ def _settle_after_release(
     last_frame: np.ndarray | None,
     *,
     max_steps: int = 40,
+    on_physics_step: Any | None = None,
 ) -> tuple[list[np.ndarray], list[str]]:
     """Hold the arm still with the gripper open until the released can settles.
 
@@ -163,6 +166,9 @@ def _settle_after_release(
     on a can frozen in mid-air. Stops early once the can is resting (z stops
     changing), and bails out if the vec env auto-resets, since a reset would
     teleport the can and fake either outcome.
+
+    ``on_physics_step(settle_index, observation, action)`` runs after each
+    wrapped ``env.step`` so callers can append traj / Parquet frames.
     """
     from lerobot.faults.sim.libero import get_object_pose
 
@@ -175,9 +181,9 @@ def _settle_after_release(
 
     prev_z = float(get_object_pose(rs, "alphabet_soup_1")["pos"][2])
     still = 0
-    for _ in range(max_steps):
+    for settle_index in range(max_steps):
         try:
-            _obs, _r, terminated, truncated, _info = env.step(hold)
+            observation, _r, terminated, truncated, _info = env.step(hold)
         except Exception as exc:  # noqa: BLE001
             print(f"[pipeline] settle step failed: {exc}", flush=True)
             break
@@ -190,6 +196,8 @@ def _settle_after_release(
             if last_frame is not None:
                 frames.append(last_frame.copy())
                 phases.append("recovery")
+        if on_physics_step is not None:
+            on_physics_step(settle_index, observation, hold)
         still = still + 1 if abs(z - prev_z) < 1e-4 else 0
         prev_z = z
         if still >= 5:
@@ -257,6 +265,11 @@ def run_pipeline(
     max_steps: int = 500,
     seed: int = 1000,
     recovery_horizon: int = 450,
+    post_grasp_delay_min: int = 20,
+    post_grasp_delay_max: int = 60,
+    post_grasp_delay_steps: int | None = None,
+    seat_assist_enabled: bool = False,
+    forbid_seat_assist: bool = True,
     fault_overrides: dict | None = None,
     post_drop_hook: Any | None = None,
 ) -> dict:
@@ -297,6 +310,10 @@ def run_pipeline(
         seat_object_in_basket_if_above,
     )
     from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
+    from lerobot.faults.recovery.recording_recipe import (
+        sample_post_grasp_delay_steps,
+        training_midair_drop_kwargs,
+    )
     from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
     if output_dir.exists():
@@ -349,24 +366,27 @@ def run_pipeline(
 
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
     vec = envs["libero_object"][0]
-    fault_kwargs: dict = {
-        "enabled": True,
-        "type": "midair_drop",
-        "t_min": t_min,
-        "t_max": t_max,
-        "require_grasp": True,  # ONLY after real grasp — no teleport
-        "min_object_z": 0.12,  # must be lifted mid-air, not table-contact
-        # Downward-biased mild impulse: visible fall, stay in camera.
-        "impulse_lin_std": 0.05,
-        "impulse_ang_std": 0.05,
-        "impulse_lin_bias": (0.0, 0.0, -0.55),
-        "post_grasp_delay_steps": 0,
-        "settle_steps": 100,  # MuJoCo substeps (~0.2s) so the fall is visible
-        "gripper_settle_steps": 25,
-        "recovery_fps": policy_fps,
-        "seed": seed,
-        "log_path": output_dir / "fault_events.jsonl",
-    }
+    delay_rng = np.random.default_rng(seed)
+    delay_steps = (
+        int(post_grasp_delay_steps)
+        if post_grasp_delay_steps is not None
+        else sample_post_grasp_delay_steps(delay_rng, post_grasp_delay_min, post_grasp_delay_max)
+    )
+    print(
+        f"[pipeline] training recipe: post_grasp_delay_steps={delay_steps} "
+        f"(range [{post_grasp_delay_min},{post_grasp_delay_max}]) "
+        f"seat_assist_enabled={seat_assist_enabled} forbid_seat_assist={forbid_seat_assist}",
+        flush=True,
+    )
+    fault_kwargs: dict = training_midair_drop_kwargs(
+        t_min=t_min,
+        t_max=t_max,
+        seed=seed,
+        post_grasp_delay_steps=delay_steps,
+        log_path=output_dir / "fault_events.jsonl",
+        policy_fps=policy_fps,
+        seat_assist_enabled=seat_assist_enabled,
+    )
     if fault_overrides:
         fault_kwargs.update(fault_overrides)
     fault_cfg = FaultInjectionConfig(**fault_kwargs)
@@ -414,6 +434,28 @@ def run_pipeline(
         f"t_window=[{t_min},{t_max}]",
         flush=True,
     )
+
+    def _log_dataset_step(sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str) -> None:
+        executed = executed_action
+        if np.asarray(executed).ndim == 2:
+            executed = np.asarray(executed)[0]
+        mask = float(env.loss_mask())
+        try:
+            from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
+
+            frame = libero_obs_to_frame(preprocess_observation(observation_t))
+            ds_logger.log_step(
+                frame,
+                executed,
+                task,
+                mask,
+                phase=phase_name,
+                annotation=env.failure_annotation(0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[pipeline] dataset log warning at step={sim_step}: {exc}", flush=True)
+
+    n_settle_logged = 0
 
     for step in range(max_steps):
         st = env.fault._states[0]
@@ -588,23 +630,7 @@ def run_pipeline(
             executed = env.last_executed_action
             if executed is None:
                 executed = action_numpy
-            if np.asarray(executed).ndim == 2:
-                executed = np.asarray(executed)[0]
-            mask = float(env.loss_mask())
-            try:
-                from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
-
-                frame = libero_obs_to_frame(preprocess_observation(observation))
-                ds_logger.log_step(
-                    frame,
-                    executed,
-                    task,
-                    mask,
-                    phase=phase,
-                    annotation=env.failure_annotation(0),
-                )
-            except Exception as exc:
-                print(f"[pipeline] dataset log warning at step={step}: {exc}", flush=True)
+            _log_dataset_step(step, observation, executed, phase)
 
         done = bool(np.asarray(terminated).any() or np.asarray(truncated).any())
         planner_done = bool(
@@ -618,8 +644,23 @@ def run_pipeline(
             # it has to fall the ~13 cm from the release hover into the basket.
             # Measuring here scores a successful place as a miss, so hold the arm
             # still (zero delta, gripper open) and let physics finish.
+
+            def _on_settle(settle_index: int, settle_obs: Any, hold_action: np.ndarray) -> None:
+                nonlocal n_settle_logged
+                sim_step = step + 1 + settle_index
+                pose_s = get_object_pose(rs, "alphabet_soup_1")
+                object_traj.append(pose_s["pos"].astype(float).tolist())
+                grasp_flags.append(bool(is_object_grasped(rs, "alphabet_soup_1")))
+                if sim_step % stride == 0:
+                    _log_dataset_step(sim_step, settle_obs, hold_action, "recovery")
+                    n_settle_logged += 1
+
             settle_frames, settle_phases = _settle_after_release(
-                env, rs, action_numpy, frames[-1] if frames else None
+                env,
+                rs,
+                action_numpy,
+                frames[-1] if frames else None,
+                on_physics_step=_on_settle,
             )
             frames.extend(settle_frames)
             phases.extend(settle_phases)
@@ -745,6 +786,15 @@ def run_pipeline(
     else:
         summary_drop_metrics = {}
 
+    carry_steps = (
+        int(triggered_at - first_grasp_step)
+        if first_grasp_step is not None and triggered_at is not None
+        else None
+    )
+    min_carry = 0 if int(fault_cfg.post_grasp_delay_steps) == 0 else min(10, int(fault_cfg.post_grasp_delay_steps))
+    dropped_after_carry = carry_steps is not None and carry_steps >= min_carry
+    seat_assist_ok = (not seat_assisted) if forbid_seat_assist else True
+
     behavioral_success = bool(
         grasped_before_drop
         and was_midair_at_drop
@@ -753,6 +803,8 @@ def run_pipeline(
         and object_visible_after_drop
         and phases.count("recovery") > 10
         and basket_place_ok
+        and seat_assist_ok
+        and dropped_after_carry
     )
 
     # Yaw-convention diagnostic: |yaw_error| should shrink when side-grasp is on.
@@ -780,6 +832,8 @@ def run_pipeline(
             "regrasped_after_drop": regrasped_after_drop,
             "object_in_basket": basket_place_ok,
             "seat_assisted": seat_assisted,
+            "seat_assist_ok": seat_assist_ok,
+            "dropped_after_carry": dropped_after_carry,
         },
         "regrasped_after_drop": regrasped_after_drop,
         "closing_axis_at_recovery": closing_axis_at_recovery,
@@ -798,6 +852,9 @@ def run_pipeline(
         "seed": seed,
         "fault_config": {
             "post_grasp_delay_steps": int(fault_cfg.post_grasp_delay_steps),
+            "seat_assist_enabled": bool(fault_cfg.seat_assist_enabled),
+            "forbid_seat_assist": bool(forbid_seat_assist),
+            "min_drop_distance_from_basket_m": float(fault_cfg.min_drop_distance_from_basket_m),
             "impulse_lin_std": float(fault_cfg.impulse_lin_std),
             "impulse_ang_std": float(fault_cfg.impulse_ang_std),
             "impulse_lin_bias": list(fault_cfg.impulse_lin_bias),
@@ -809,6 +866,8 @@ def run_pipeline(
         },
         "first_grasp_step": first_grasp_step,
         "triggered_at": triggered_at,
+        "carry_steps": carry_steps,
+        "n_settle_logged": n_settle_logged,
         "object_traj": object_traj,
         "grasp_flags": [bool(g) for g in grasp_flags],
         "carry_evidence": _carry_evidence(object_traj, grasp_flags, triggered_at),
@@ -834,8 +893,9 @@ def run_pipeline(
         "seat_assisted": seat_assisted,
         "note": (
             "control_freq=20 (LIBERO default, same as baseline success). "
-            "Dataset recorded at 10 FPS via stride=2. "
-            "Basket success requires live in-basket or fault place_succeeded proof; "
+            "Dataset recorded at 10 FPS via stride=2 including post-release settle. "
+            "Training recipe: sampled post_grasp_delay_steps, seat_assist_enabled=False. "
+            "Basket success requires live in-basket without seat teleport; "
             "post-hoc seat_object_in_basket_if_above is diagnostic only."
         ),
     }
@@ -843,7 +903,21 @@ def run_pipeline(
     print(json.dumps(summary, indent=2), flush=True)
 
     if not behavioral_success:
-        failed = [k for k, v in summary["checks"].items() if not v]
+        failed = [
+            k
+            for k in (
+                "grasped_before_drop",
+                "was_midair_at_drop",
+                "fault_triggered",
+                "drop_moved_object",
+                "object_in_view_after_drop",
+                "regrasped_after_drop",
+                "object_in_basket",
+                "seat_assist_ok",
+                "dropped_after_carry",
+            )
+            if not summary["checks"].get(k)
+        ]
         raise SystemExit(f"FAIL: behavioral checks failed: {failed}")
     print("SUCCESS: grasp → midair drop → recovery place into basket", flush=True)
     return summary
@@ -859,6 +933,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-steps", type=int, default=750)
     parser.add_argument("--recovery-horizon", type=int, default=450)
     parser.add_argument("--seed", type=int, default=1000)
+    parser.add_argument(
+        "--post-grasp-delay-min",
+        type=int,
+        default=20,
+        help="Min env steps of mid-air carry before drop (sampled with --seed)",
+    )
+    parser.add_argument(
+        "--post-grasp-delay-max",
+        type=int,
+        default=60,
+        help="Max env steps of mid-air carry before drop",
+    )
+    parser.add_argument(
+        "--post-grasp-delay-steps",
+        type=int,
+        default=None,
+        help="If set, use this delay instead of sampling [min, max]",
+    )
+    parser.add_argument(
+        "--allow-seat-assist",
+        action="store_true",
+        help="Enable rim teleport (demo only; not for training-grade datasets)",
+    )
     args = parser.parse_args(argv)
     run_pipeline(
         args.output_dir,
@@ -869,6 +966,11 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=args.max_steps,
         seed=args.seed,
         recovery_horizon=args.recovery_horizon,
+        post_grasp_delay_min=args.post_grasp_delay_min,
+        post_grasp_delay_max=args.post_grasp_delay_max,
+        post_grasp_delay_steps=args.post_grasp_delay_steps,
+        seat_assist_enabled=bool(args.allow_seat_assist),
+        forbid_seat_assist=not bool(args.allow_seat_assist),
     )
     return 0
 

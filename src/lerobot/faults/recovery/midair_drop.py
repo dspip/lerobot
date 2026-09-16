@@ -31,6 +31,12 @@ from lerobot.faults.sim.libero import (
 from lerobot.faults.logging import FaultEventLogger
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 
+# Never inject a drop closer than this XY distance to the basket (meters).
+# ``min_drop_distance_from_basket_m`` is the *early-drop* radius (drop when the
+# carry reaches it). Inside ``HARD_BASKET_KEEPOUT_M`` we skip so the can is not
+# parked against the rim. The two are equal when the config radius is smaller.
+HARD_BASKET_KEEPOUT_M = 0.22
+
 
 def _body_xpos_safe(rs_env: Any, name: str) -> np.ndarray | None:
     try:
@@ -70,7 +76,7 @@ class _EnvDropState:
     last_impulse_lin: np.ndarray | None = None
     last_impulse_ang: np.ndarray | None = None
     # Planar object→basket distance at the moment of the drop, and why it fired
-    # ("delay_elapsed" or "basket_deadline").
+    # ("delay_elapsed" or "basket_keepout_edge").
     drop_basket_xy_dist: float | None = None
     drop_trigger_reason: str | None = None
 
@@ -232,10 +238,18 @@ class MidAirDropFault:
             rs_env, self.config.object_name, basket_name=self.config.basket_name
         )
         min_dist = float(self.config.min_drop_distance_from_basket_m)
-        at_deadline = min_dist > 0.0 and basket_dist is not None and basket_dist <= min_dist
+        at_keepout_edge = False
+        if min_dist > 0.0 and basket_dist is not None:
+            hard = min(min_dist, HARD_BASKET_KEEPOUT_M)
+            # Inside the hard pocket: too late, skip (do not dump on the rim).
+            if basket_dist < hard:
+                return False
+            # Reached the early-drop radius during carry (may be before delay).
+            at_keepout_edge = basket_dist <= min_dist
 
         delay = int(self.config.post_grasp_delay_steps)
-        if state.episode_step < state.eligible_since + delay and not at_deadline:
+        delay_ok = state.episode_step >= state.eligible_since + delay
+        if not delay_ok and not at_keepout_edge:
             return False
         if state.will_activate is None:
             state.will_activate = bool(self._rng.random() < self.config.probability)
@@ -244,7 +258,9 @@ class MidAirDropFault:
         # Record where/why only for the step that actually drops, so the logs
         # never describe a drop that did not happen.
         state.drop_basket_xy_dist = basket_dist
-        state.drop_trigger_reason = "basket_deadline" if at_deadline else "delay_elapsed"
+        state.drop_trigger_reason = (
+            "basket_keepout_edge" if (at_keepout_edge and not delay_ok) else "delay_elapsed"
+        )
         return True
 
     def _trigger_drop(

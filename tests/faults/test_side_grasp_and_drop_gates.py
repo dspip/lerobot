@@ -455,7 +455,7 @@ def test_closing_axis_none_without_fingers():
 
 
 # --------------------------------------------------------------------------
-# Drop must fire before the can reaches the basket
+# Drop must stay outside the basket keep-out (not fire *into* the rim)
 # --------------------------------------------------------------------------
 
 
@@ -508,13 +508,24 @@ def test_drop_waits_for_the_random_delay_while_far_from_the_basket():
     assert _patched_trigger(0.50, cfg, steps=80) == 50
 
 
-def test_drop_fires_early_when_the_carry_reaches_the_basket():
+def test_drop_does_not_fire_inside_the_basket_keepout():
     cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.18)
-    # Already inside the deadline radius → drop now, not over the basket.
-    assert _patched_trigger(0.10, cfg, steps=80) == 0
+    # 10 cm from the rim is the collision pocket — skip the drop entirely.
+    assert _patched_trigger(0.10, cfg, steps=80) is None
 
 
-def test_basket_deadline_can_be_disabled():
+def test_drop_fires_when_carry_reaches_early_radius_before_delay():
+    """0.30 m recipe radius: drop at ~30 cm, not after waiting until the rim."""
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
+    assert _patched_trigger(0.297, cfg, steps=80) == 0
+
+
+def test_drop_still_skipped_in_the_hard_rim_pocket():
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
+    assert _patched_trigger(0.15, cfg, steps=80) is None
+
+
+def test_keepout_can_be_disabled():
     cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.0)
     assert _patched_trigger(0.01, cfg, steps=80) == 50
 
@@ -546,12 +557,39 @@ def test_trigger_records_distance_and_reason():
         ),
         patch(
             "lerobot.faults.recovery.midair_drop.object_basket_xy_distance",
-            return_value=0.12,
+            return_value=0.50,
+        ),
+    ):
+        assert inj._should_trigger(MagicMock(), 0, state) is False
+        state.episode_step = 50
+        assert inj._should_trigger(MagicMock(), 0, state)
+    assert state.drop_basket_xy_dist == pytest.approx(0.50)
+    assert state.drop_trigger_reason == "delay_elapsed"
+
+
+def test_trigger_records_keepout_edge_reason():
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.18)
+    inj = MidAirDropFault(cfg, num_envs=1)
+    state = inj._states[0]
+    with (
+        patch("lerobot.faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("lerobot.faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_object_pose",
+            return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_eef_pose",
+            return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.object_basket_xy_distance",
+            return_value=0.18,
         ),
     ):
         assert inj._should_trigger(MagicMock(), 0, state)
-    assert state.drop_basket_xy_dist == pytest.approx(0.12)
-    assert state.drop_trigger_reason == "basket_deadline"
+    assert state.drop_basket_xy_dist == pytest.approx(0.18)
+    assert state.drop_trigger_reason == "basket_keepout_edge"
 
 
 # --------------------------------------------------------------------------

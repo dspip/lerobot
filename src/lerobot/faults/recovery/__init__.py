@@ -29,6 +29,10 @@ from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
 from lerobot.faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from_fault
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
+from lerobot.faults.recovery.recording_recipe import (
+    sample_post_grasp_delay_steps,
+    training_midair_drop_kwargs,
+)
 
 __all__ = [
     "DEFAULT_LIBERO_CONTROL_FREQ",
@@ -45,4 +49,6 @@ __all__ = [
     "loss_mask_from_fault",
     "recording_stride",
     "resolve_target_fps",
+    "sample_post_grasp_delay_steps",
+    "training_midair_drop_kwargs",
 ]
