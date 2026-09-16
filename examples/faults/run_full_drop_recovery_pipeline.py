@@ -595,7 +595,14 @@ def run_pipeline(
                 from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
 
                 frame = libero_obs_to_frame(preprocess_observation(observation))
-                ds_logger.log_step(frame, executed, task, mask, phase=phase)
+                ds_logger.log_step(
+                    frame,
+                    executed,
+                    task,
+                    mask,
+                    phase=phase,
+                    annotation=env.failure_annotation(0),
+                )
             except Exception as exc:
                 print(f"[pipeline] dataset log warning at step={step}: {exc}", flush=True)
 

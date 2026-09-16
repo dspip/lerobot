@@ -39,6 +39,7 @@ class _EnvSlipState:
     will_activate: bool | None = None
     episode_id: int | None = None
     finished: bool = False
+    just_injected: bool = False
 
 
 class ObjectSlipFault:
@@ -114,10 +115,12 @@ class ObjectSlipFault:
             if episode_ids is not None:
                 self._states[env_idx].episode_id = episode_ids[env_idx]
             state = self._states[env_idx]
+            state.just_injected = False
             if env_idx not in self._selected or state.finished:
                 continue
             if self._should_trigger(env, env_idx, state):
                 self._trigger(env, env_idx, state)
+                state.just_injected = True
             state.episode_step += 1
         return executed
 

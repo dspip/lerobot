@@ -49,6 +49,7 @@ class _EnvBurstState:
     episode_id: int | None = None
     finished: bool = False
     box: tuple[int, int, int, int] | None = None
+    just_injected: bool = False
 
 
 MutateFn = Callable[[Any, int, int, _EnvBurstState], None]
@@ -159,6 +160,9 @@ class VisualBurstFault:
         if from_reset:
             return obs
 
+        for state in self._states:
+            state.just_injected = False
+
         active_envs = self._active_envs(obs, from_reset=False)
         if not active_envs:
             self._maybe_record_video(obs, obs, fault_active=False, env_idx=0)
@@ -169,6 +173,7 @@ class VisualBurstFault:
         for env_idx in active_envs:
             self._mutate_tree(mutated, env_idx)
             self._maybe_dump_diag(mutated, env_idx)
+            self._states[env_idx].just_injected = True
 
         if 0 in active_envs or 0 in self._selected:
             self._maybe_record_video(obs, mutated, fault_active=True, env_idx=0)

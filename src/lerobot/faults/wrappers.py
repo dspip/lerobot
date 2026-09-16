@@ -22,6 +22,13 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.vector import VectorEnv
 
+from lerobot.faults.annotation import (
+    FailureAnnotator,
+    failure_type_id,
+    frames_to_info_arrays,
+    injector_injection_active,
+    merge_annotation_into_info,
+)
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.factory import (
     ActionFaultInjector,
@@ -58,6 +65,33 @@ def _from_batch(action: np.ndarray, was_single: bool) -> np.ndarray:
     return action[0] if was_single else action
 
 
+def _make_annotator(config: FaultInjectionConfig, num_envs: int) -> FailureAnnotator:
+    return FailureAnnotator(
+        num_envs=num_envs,
+        object_name=str(getattr(config, "object_name", "alphabet_soup_1") or "alphabet_soup_1"),
+        basket_name=str(getattr(config, "basket_name", "basket_1") or "basket_1"),
+        min_object_z=float(getattr(config, "min_object_z", 0.12) or 0.0),
+        injector_type_id=failure_type_id(config.type),
+    )
+
+
+def _annotate_result(
+    annotator: FailureAnnotator,
+    env: Any,
+    result: Any,
+    *,
+    injection_active: np.ndarray,
+    recovery_active: np.ndarray | None = None,
+) -> Any:
+    """Stamp Gym ``info`` with per-env annotation arrays after physics."""
+    annotator.update(env, injection_active=injection_active, recovery_active=recovery_active)
+    arrays = frames_to_info_arrays(annotator.last_frames)
+    if isinstance(result, tuple) and len(result) == 5:
+        obs, reward, terminated, truncated, info = result
+        return (obs, reward, terminated, truncated, merge_annotation_into_info(info, arrays))
+    return result
+
+
 def _extract_dones(result: tuple) -> np.ndarray | None:
     if not isinstance(result, tuple) or len(result) != 5:
         return None
@@ -82,6 +116,10 @@ class FaultEnvWrapper:
         self.action_injector: ActionFaultInjector | None = action_injector
         self.obs_injector: ObsFaultInjector | None = obs_injector
         self.num_envs = num_envs
+        self._annotator = _make_annotator(config, num_envs)
+
+    def failure_annotation(self, env_idx: int = 0) -> dict:
+        return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
@@ -124,6 +162,7 @@ class FaultEnvWrapper:
             self.action_injector.reset()
         if self.obs_injector is not None:
             self.obs_injector.reset()
+        self._annotator.reset()
         return self._apply_obs_to_result(result, from_reset=True)
 
     def step(self, action):
@@ -135,6 +174,16 @@ class FaultEnvWrapper:
 
         result = self.env.step(step_action)
         result = self._apply_obs_to_result(result, from_reset=False)
+
+        injection = np.array(
+            [
+                injector_injection_active(self.action_injector, i)
+                or injector_injection_active(self.obs_injector, i)
+                for i in range(self.num_envs)
+            ],
+            dtype=bool,
+        )
+        result = _annotate_result(self._annotator, self.env, result, injection_active=injection)
 
         dones = _extract_dones(result) if isinstance(result, tuple) else None
         if dones is not None:
@@ -165,6 +214,10 @@ class SimFaultEnvWrapper:
         self.fault_config = config
         self.fault: SimInjectFaultInjector = fault
         self.num_envs = num_envs
+        self._annotator = _make_annotator(config, num_envs)
+
+    def failure_annotation(self, env_idx: int = 0) -> dict:
+        return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
@@ -183,6 +236,7 @@ class SimFaultEnvWrapper:
     def reset(self, **kwargs):
         result = self.env.reset(**kwargs)
         self.fault.reset()
+        self._annotator.reset()
         return result
 
     def step(self, action):
@@ -190,6 +244,11 @@ class SimFaultEnvWrapper:
         executed = self.fault.on_step(self.env, batch)
         step_action = _from_batch(executed, was_single)
         result = self.env.step(step_action)
+        injection = np.array(
+            [injector_injection_active(self.fault, i) for i in range(self.num_envs)],
+            dtype=bool,
+        )
+        result = _annotate_result(self._annotator, self.env, result, injection_active=injection)
         dones = _extract_dones(result) if isinstance(result, tuple) else None
         if dones is not None:
             self._notify_dones(dones)
@@ -218,6 +277,10 @@ class DropRecoveryEnvWrapper:
         self.fault: RecoveryFaultInjector = fault
         self.num_envs = num_envs
         self.last_executed_action: np.ndarray | None = None
+        self._annotator = _make_annotator(config, num_envs)
+
+    def failure_annotation(self, env_idx: int = 0) -> dict:
+        return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
@@ -236,6 +299,7 @@ class DropRecoveryEnvWrapper:
     def reset(self, **kwargs):
         result = self.env.reset(**kwargs)
         self.fault.reset()
+        self._annotator.reset()
         self._install_libero_no_reset_hook()
         return result
 
@@ -305,6 +369,19 @@ class DropRecoveryEnvWrapper:
             result = (obs, reward, terminated, truncated, info)
 
         self._clear_autoreset_latch(recovery_mask)
+
+        injection = np.array(
+            [injector_injection_active(self.fault, i) for i in range(self.num_envs)],
+            dtype=bool,
+        )
+        recovery = np.array(recovery_mask, dtype=bool)
+        result = _annotate_result(
+            self._annotator,
+            self.env,
+            result,
+            injection_active=injection,
+            recovery_active=recovery,
+        )
 
         dones = _extract_dones(result) if isinstance(result, tuple) else None
         if dones is not None:

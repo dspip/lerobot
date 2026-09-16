@@ -35,6 +35,7 @@ class _EnvFaultState:
     episode_id: int | None = None
     # Sticky done within a vec-env batch: pass through only (no re-trigger).
     finished: bool = False
+    just_injected: bool = False
 
 
 class ActionHoldFault:
@@ -145,6 +146,7 @@ class ActionHoldFault:
                 continue
 
             state = self._states[env_idx]
+            state.just_injected = False
             if state.finished:
                 executed[env_idx] = actions[env_idx]
                 continue
@@ -158,6 +160,7 @@ class ActionHoldFault:
                 proposed = actions[env_idx].copy()
                 executed[env_idx] = held
                 state.remaining -= 1
+                state.just_injected = True
                 status = "active" if state.remaining > 0 else "completed"
                 self._log_event(
                     env_idx=env_idx,
@@ -189,6 +192,7 @@ class ActionHoldFault:
                 proposed = actions[env_idx].copy()
                 executed[env_idx] = held
                 state.remaining -= 1
+                state.just_injected = True
                 status = "activated" if state.remaining > 0 else "completed"
                 self._log_event(
                     env_idx=env_idx,

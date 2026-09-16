@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.faults.annotation import annotation_from_scripted_phase
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.recovery.fps import assert_control_rate_aligned, recording_stride, resolve_target_fps
 from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
@@ -180,7 +181,7 @@ def run_scripted_episode(
             phase = "vla"
         elif step < t_recovery:
             action = np.zeros(7, dtype=np.float32)
-            phase = "drop"
+            phase = "drop" if step == t_fault else "post_fault"
         else:
             rec_idx = step - t_recovery
             if rec_idx < len(recovery_actions):
@@ -192,7 +193,14 @@ def run_scripted_episode(
                 action[:6] = np.clip(action[:6], -1.0, 1.0)
             phase = "recovery"
 
-        ds_logger.log_step(_synthetic_obs(step), action, task, mask, phase=phase)
+        ds_logger.log_step(
+            _synthetic_obs(step),
+            action,
+            task,
+            mask,
+            phase=phase,
+            annotation=annotation_from_scripted_phase(phase, onset=(step == t_fault)),
+        )
 
     ds_logger.end_episode()
     ds_logger.finalize()
@@ -339,7 +347,7 @@ def _run_live_episode(
         executed = env.last_executed_action
         if executed is None:
             executed = action
-        ds_logger.log_step(obs, executed, task, mask)
+        ds_logger.log_step(obs, executed, task, mask, annotation=env.failure_annotation(0))
         if bool(np.asarray(terminated).any() or np.asarray(truncated).any()):
             break
 

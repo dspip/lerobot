@@ -123,6 +123,29 @@ lifecycle events with both proposed and executed fields where applicable.
 Compare task success via LeRobot's usual `eval_info.json` (`overall.pc_success`).
 Videos are under `output_dir/videos/` unless dataset recording is enabled.
 
+## Frame-level failure labels (Parquet)
+
+When a fault-wrapped env is recorded (`FaultRecoveryDatasetLogger` or
+`--eval.recording=true`), every frame includes:
+
+| Column | Meaning |
+| ------ | ------- |
+| `is_failure` | Physical failure this frame (held mid-air, now ungrasped, not in basket) |
+| `failure_onset` | First frame of that physical failure |
+| `failure_type` | Category id (`0` = none, `1` = midair drop, …) |
+| `injection_active` | Injector glitched **this** frame |
+| `phase` | `0` nominal, `1` injection, `2` post-fault, `3` recovery |
+
+`is_failure` comes from MuJoCo/robosuite ground truth. `injection_active` comes
+from the injector. They are intentionally independent.
+
+Verify a recorded dataset:
+
+```bash
+uv run python examples/faults/verify_failure_parquet.py \
+  --root outputs/full_pipeline_demo/dataset
+```
+
 ## Smoke script
 
 ```bash

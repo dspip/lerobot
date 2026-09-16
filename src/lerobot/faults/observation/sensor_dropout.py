@@ -47,6 +47,7 @@ class _EnvDropoutState:
     blackout_steps: int = 0
     episode_id: int | None = None
     finished: bool = False
+    just_injected: bool = False
 
 
 class SensorDropoutFault:
@@ -120,6 +121,9 @@ class SensorDropoutFault:
             for env_idx, episode_id in enumerate(episode_ids):
                 self._states[env_idx].episode_id = episode_id
 
+        for state in self._states:
+            state.just_injected = False
+
         active_envs = self._active_envs(from_reset=from_reset)
         if not active_envs:
             if not from_reset:
@@ -130,6 +134,7 @@ class SensorDropoutFault:
         for env_idx in active_envs:
             self._blackout_tree(mutated, env_idx)
             self._maybe_dump_diag(mutated, env_idx)
+            self._states[env_idx].just_injected = True
 
         if not from_reset:
             for env_idx in active_envs:

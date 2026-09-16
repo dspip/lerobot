@@ -31,6 +31,13 @@ from lerobot.faults.observation.obs_latency import ObsLatencyFault
 from lerobot.faults.observation.sensor_dropout import SensorDropoutFault
 from lerobot.faults.observation.visual_blur import VisualBlurFault
 from lerobot.faults.observation.visual_occlusion import VisualOcclusionFault
+from lerobot.faults.annotation import (
+    FAILURE_ANNOTATION_FEATURES,
+    FailureAnnotator,
+    default_failure_frame,
+    failure_frame_from_info,
+    failure_type_id,
+)
 from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
 from lerobot.faults.recovery.evaluation import evaluate_recovery_episode
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
@@ -52,6 +59,8 @@ __all__ = [
     "BrightnessDropFault",
     "DropRecoveryEnvWrapper",
     "EefBumpFault",
+    "FAILURE_ANNOTATION_FEATURES",
+    "FailureAnnotator",
     "FaultEnvWrapper",
     "FaultEventLogger",
     "FaultInjectionConfig",
@@ -65,7 +74,10 @@ __all__ = [
     "VisualBlurFault",
     "VisualOcclusionFault",
     "default_fault_config",
+    "default_failure_frame",
     "evaluate_recovery_episode",
+    "failure_frame_from_info",
+    "failure_type_id",
     "make_action_fault_injector",
     "make_fault_injector",
     "make_midair_drop_fault",

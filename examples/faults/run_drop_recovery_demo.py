@@ -39,6 +39,7 @@ from lerobot.faults.recovery.fps import (
 )
 from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
 from lerobot.faults.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
+from lerobot.faults.annotation import annotation_from_scripted_phase
 from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 
@@ -109,7 +110,14 @@ def run_dry_run(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS
             action = plan[rec_i].copy()
             phase = "recovery"
 
-        ds_logger.log_step(_synthetic_frame(step), action, "libero_object task 0", mask, phase=phase)
+        ds_logger.log_step(
+            _synthetic_frame(step),
+            action,
+            "libero_object task 0",
+            mask,
+            phase=phase,
+            annotation=annotation_from_scripted_phase(phase, onset=(step == t_injection)),
+        )
 
     ds_logger.end_episode()
     ds_logger.finalize()
@@ -194,7 +202,7 @@ def run_live(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS) -
         executed = env.last_executed_action
         if executed is None:
             executed = action
-        ds_logger.log_step(obs, executed, task, mask)
+        ds_logger.log_step(obs, executed, task, mask, annotation=env.failure_annotation(0))
         if bool(np.asarray(terminated).any() or np.asarray(truncated).any()):
             break
 

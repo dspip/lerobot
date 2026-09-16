@@ -84,6 +84,11 @@ from lerobot.envs import (
 )
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.faults import maybe_wrap_env_tree, resolve_fault_log_path
+from lerobot.faults.annotation import (
+    FAILURE_ANNOTATION_FEATURES,
+    default_failure_frame,
+    failure_frame_from_info,
+)
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -118,6 +123,7 @@ def _env_features_to_dataset_features(env_features: dict) -> dict:
     features["next.reward"] = {"dtype": "float32", "shape": (1,), "names": None}
     features["next.success"] = {"dtype": "bool", "shape": (1,), "names": None}
     features["next.done"] = {"dtype": "bool", "shape": (1,), "names": None}
+    features.update(FAILURE_ANNOTATION_FEATURES)
     return features
 
 
@@ -130,6 +136,7 @@ def _build_raw_frame(
     done: bool,
     task: str,
     env_features: dict,
+    info: dict | None = None,
 ) -> dict:
     """Build a dataset frame from raw env observations for one env index.
 
@@ -141,6 +148,8 @@ def _build_raw_frame(
         if key == ACTION:
             continue
         if key.startswith("next."):
+            continue
+        if key in FAILURE_ANNOTATION_FEATURES:
             continue
         if "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict):
             for cam_name, img in raw_obs["pixels"].items():
@@ -161,6 +170,7 @@ def _build_raw_frame(
     frame["next.reward"] = np.atleast_1d(np.float32(reward))
     frame["next.success"] = np.atleast_1d(np.bool_(success))
     frame["next.done"] = np.atleast_1d(np.bool_(done))
+    frame.update(failure_frame_from_info(info, env_idx) if info is not None else default_failure_frame())
     frame["task"] = task
     return frame
 
@@ -353,6 +363,7 @@ def rollout(
                         bool(terminated[env_idx] | truncated[env_idx]),
                         task_desc,
                         recording_datasets[env_idx].features,
+                        info=info,
                     )
                     recording_datasets[env_idx].add_frame(frame)
                     if terminated[env_idx] or truncated[env_idx]:

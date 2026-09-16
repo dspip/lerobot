@@ -10,6 +10,10 @@ from typing import Any
 import numpy as np
 
 from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
+from lerobot.faults.annotation import (
+    FAILURE_ANNOTATION_FEATURES,
+    default_failure_frame,
+)
 
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -30,6 +34,7 @@ LIBERO_DATASET_FEATURES: dict[str, dict[str, Any]] = {
     "observation.state": {"dtype": "float32", "shape": (8,), "names": None},
     "action": {"dtype": "float32", "shape": (7,), "names": None},
     "loss_mask": {"dtype": "float32", "shape": (1,), "names": None},
+    **FAILURE_ANNOTATION_FEATURES,
 }
 
 
@@ -206,8 +211,14 @@ class FaultRecoveryDatasetLogger:
         task: str,
         loss_mask: float,
         phase: str | None = None,
+        annotation: dict[str, Any] | None = None,
     ) -> None:
-        """Append one frame. ``observation_dict`` may be LIBERO raw or LeRobot-processed."""
+        """Append one frame. ``observation_dict`` may be LIBERO raw or LeRobot-processed.
+
+        ``annotation`` should be the arrays from :class:`FailureAnnotator` /
+        ``wrapper.failure_annotation()``. Missing keys default to a successful
+        (all-false) frame so SmolVLA camera/state schema stays valid.
+        """
         if not self._episode_open:
             self._episode_open = True
 
@@ -222,14 +233,24 @@ class FaultRecoveryDatasetLogger:
 
         action_arr = np.asarray(action, dtype=np.float32).reshape(7)
         mask_arr = np.array([mask_val], dtype=np.float32)
+        labels = default_failure_frame()
+        if annotation:
+            for key in FAILURE_ANNOTATION_FEATURES:
+                if key in annotation:
+                    labels[key] = np.asarray(annotation[key]).reshape(FAILURE_ANNOTATION_FEATURES[key]["shape"])
+                    if FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "int64":
+                        labels[key] = labels[key].astype(np.int64, copy=False)
+                    elif FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "bool":
+                        labels[key] = labels[key].astype(bool, copy=False)
 
         frame: dict[str, Any] = {
             **frame_fields,
             "action": action_arr,
             "loss_mask": mask_arr,
+            **labels,
             "task": task,
         }
-        # ``phase`` is optional caller metadata; not stored in LeRobot feature schema.
+        # ``phase`` string is optional caller metadata; integer ``phase`` lives in labels.
 
         self.dataset.add_frame(frame)
         key = 1.0 if mask_val >= 0.5 else 0.0
