@@ -27,6 +27,7 @@ from lerobot.faults.recovery.xy_band_checkpoint import (
     is_blocked_checkpoint_seed,
     is_near_duplicate_drop,
     landing_on_table_not_basket,
+    used_checkpoint_seeds,
     rejection_reason,
     should_keep_checkpoint_drop,
     should_keep_checkpoint_nominal,
@@ -87,6 +88,8 @@ def test_reject_near_duplicate() -> None:
         }
     ]
     assert is_near_duplicate_drop(summary, existing)
+    far = [{**existing[0], "landing_xy": [0.20, 0.18]}]
+    assert not is_near_duplicate_drop(summary, far)
     assert not should_keep_checkpoint_drop(
         summary, band_lo=0.34, band_hi=0.38, existing_kept=existing
     )
@@ -156,3 +159,24 @@ def test_copy_pilot_into_checkpoint(tmp_path: Path) -> None:
     assert (out / "episodes" / "seed_5100" / "pipeline_log.json").is_file()
     assert (out / "kept_registry.json").is_file()
     assert len(registry) == 1
+
+
+def test_unwrap_libero_env_accepts_vector_env_with_envs() -> None:
+    from types import SimpleNamespace
+
+    from lerobot.faults.sim.libero import unwrap_libero_env
+
+    inner = SimpleNamespace(_env=object(), _task_bddl_file="dummy.bddl")
+    vec = SimpleNamespace(envs=[inner])
+    assert unwrap_libero_env(vec) is inner
+
+
+def test_used_checkpoint_seeds_includes_dirs(tmp_path: Path) -> None:
+    ep = tmp_path / "episodes" / "seed_7501"
+    ep.mkdir(parents=True)
+    used = used_checkpoint_seeds(
+        tmp_path,
+        kept_registry=[{"seed": 7318}],
+        attempts=[{"seed": 7400}],
+    )
+    assert used == {7501, 7318, 7400}

@@ -23,7 +23,12 @@ from typing import Any
 
 from lerobot.faults.annotation import PHASE_NOMINAL, PHASE_RECOVERY
 from lerobot.faults.recovery.mix_recording import episode_dir_for_seed
-from lerobot.faults.recovery.xy_band_checkpoint import XY_BANDS
+from lerobot.faults.recovery.xy_band_checkpoint import (
+    TARGET_DROPS,
+    TARGET_DROPS_PER_BAND,
+    TARGET_NOMINAL,
+    XY_BANDS,
+)
 
 
 @dataclass
@@ -158,7 +163,13 @@ def _episode_annotation_counts(df: Any, episode_index: int) -> dict[str, int]:
     }
 
 
-def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
+def audit_xy_band_checkpoint(
+    output_dir: Path,
+    *,
+    expected_drops: int = TARGET_DROPS,
+    expected_drops_per_band: int = TARGET_DROPS_PER_BAND,
+    expected_nominal: int = TARGET_NOMINAL,
+) -> CheckpointAuditResult:
     output_dir = Path(output_dir)
     log_path = output_dir / "checkpoint_log.json"
     result = CheckpointAuditResult()
@@ -181,6 +192,7 @@ def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
 
     drop_by_band = {name: 0 for name, _, _ in XY_BANDS}
     nominal_count = 0
+    seed_to_episode = {int(e["seed"]): i for i, e in enumerate(kept)}
 
     for entry in kept:
         seed = int(entry["seed"])
@@ -200,33 +212,14 @@ def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
 
         ann: dict[str, int] = {}
         duration_s = None
-        if df is not None and "episode_index" in df.columns:
-            ep_ids = df["episode_index"].map(lambda v: int(_np_item(v))).unique()
-            for epid in ep_ids:
-                meta_path = dataset_root / "meta" / "episodes.jsonl"
-                # Match by seed in pipeline only when single-file heuristic
-                pass
-        if df is not None:
-            # Heuristic: row count for all episodes — per-seed mapping via episodes meta
-            meta = dataset_root / "meta" / "episodes.jsonl"
-            episode_id = None
-            if meta.is_file():
-                for line in meta.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    row = json.loads(line)
-                    if row.get("seed") == seed:
-                        episode_id = int(row.get("episode_index", row.get("episode_index", 0)))
-                        break
-            if episode_id is None and len(df):
-                episode_id = int(_np_item(df["episode_index"].iloc[0]))
-            if episode_id is not None:
-                ann = _episode_annotation_counts(df, episode_id)
-                fps = 10.0
-                info_path = dataset_root / "meta" / "info.json"
-                if info_path.is_file():
-                    fps = float(_load_json(info_path).get("fps", fps))
-                duration_s = ann.get("n_frames", 0) / fps
+        episode_id = seed_to_episode.get(seed)
+        if df is not None and episode_id is not None:
+            ann = _episode_annotation_counts(df, int(episode_id))
+            fps = 10.0
+            info_path = dataset_root / "meta" / "info.json"
+            if info_path.is_file():
+                fps = float(_load_json(info_path).get("fps", fps))
+            duration_s = (ann.get("n_frames", 0) or 0) / fps
 
         if kind == "drop":
             if band in drop_by_band:
@@ -246,6 +239,26 @@ def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
                             f"seed {seed}: expected 1 failure_onset, got {ann.get('n_failure_onset')}",
                         )
                     )
+            if df is not None and episode_id is not None:
+                sub = df.loc[df["episode_index"].map(lambda v: int(_np_item(v))) == int(episode_id)]
+                if not sub.empty:
+                    inj_frames = [
+                        int(_np_item(r.frame_index))
+                        for r in sub.itertuples()
+                        if bool(_np_item(r.injection_active))
+                    ]
+                    onset_frames = [
+                        int(_np_item(r.frame_index))
+                        for r in sub.itertuples()
+                        if bool(_np_item(r.failure_onset))
+                    ]
+                    if inj_frames and onset_frames and inj_frames != onset_frames:
+                        result.issues.append(
+                            AuditIssue(
+                                "fail",
+                                f"seed {seed}: injection frames {inj_frames} != onset {onset_frames}",
+                            )
+                        )
         elif kind == "nominal":
             nominal_count += 1
             if ann:
@@ -264,7 +277,7 @@ def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
 
         result.rows.append(
             {
-                "episode_id": entry.get("episode_index"),
+                "episode_id": episode_id,
                 "seed": seed,
                 "type": kind,
                 "band": band,
@@ -282,18 +295,21 @@ def audit_xy_band_checkpoint(output_dir: Path) -> CheckpointAuditResult:
         )
 
     drop_total = sum(drop_by_band.values())
-    if drop_total != 12:
+    if drop_total != expected_drops:
         result.issues.append(
-            AuditIssue("fail", f"Expected 12 drop episodes in registry, got {drop_total}")
+            AuditIssue("fail", f"Expected {expected_drops} drop episodes in registry, got {drop_total}")
         )
     for name, _, _ in XY_BANDS:
-        if drop_by_band[name] != 3:
+        if drop_by_band[name] != expected_drops_per_band:
             result.issues.append(
-                AuditIssue("fail", f"Band {name}: expected 3 drops, got {drop_by_band[name]}")
+                AuditIssue(
+                    "fail",
+                    f"Band {name}: expected {expected_drops_per_band} drops, got {drop_by_band[name]}",
+                )
             )
-    if nominal_count != 8:
+    if nominal_count != expected_nominal:
         result.issues.append(
-            AuditIssue("fail", f"Expected 8 nominal episodes, got {nominal_count}")
+            AuditIssue("fail", f"Expected {expected_nominal} nominal episodes, got {nominal_count}")
         )
 
     if dataset_root.is_dir():

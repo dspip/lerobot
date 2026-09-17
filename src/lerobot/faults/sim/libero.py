@@ -23,8 +23,18 @@ def _as_f64(arr: Any, size: int | None = None) -> np.ndarray:
 
 def unwrap_libero_env(env: Any) -> Any:
     """Peel Gymnasium / fault wrappers until a LeRobot-style ``LiberoEnv`` is found."""
-    seen: set[int] = set()
     current = env
+    if type(current).__name__ == "AsyncVectorEnv":
+        raise TypeError(
+            "AsyncVectorEnv does not expose `.envs`; use SyncVectorEnv or a single LiberoEnv."
+        )
+    if hasattr(current, "envs"):
+        sub_envs = current.envs
+        if not sub_envs:
+            raise TypeError(f"{type(current)!r} has an empty `.envs` list.")
+        current = sub_envs[0]
+
+    seen: set[int] = set()
     while True:
         oid = id(current)
         if oid in seen:
@@ -413,6 +423,50 @@ def seat_object_in_basket_if_above(
         sim.data.set_joint_qvel(joint_name, np.zeros(6, dtype=np.float64))
     sim.forward()
     for _ in range(80):
+        sim.step()
+    return True
+
+
+def offset_object_xy_on_table(
+    rs_env: Any,
+    object_name: str,
+    dx: float,
+    dy: float,
+    *,
+    basket_name: str = DEFAULT_BASKET_NAME,
+    min_basket_xy: float = 0.35,
+) -> bool:
+    """Slide an object on the table by ``(dx, dy)`` without changing height.
+
+    Used only at episode start to vary soup placement inside the LIBERO table
+    workspace. Returns False (no change) if the offset would put the object
+    too close to the basket.
+    """
+    obj = _require_object(rs_env, object_name)
+    joints = getattr(obj, "joints", None)
+    if not joints:
+        return False
+    basket = _body_xpos(rs_env, basket_name)
+    pose = get_object_pose(rs_env, object_name)
+    pos = pose["pos"].copy()
+    new_xy = pos[:2] + np.array([float(dx), float(dy)], dtype=np.float64)
+    if basket is not None:
+        if float(np.linalg.norm(new_xy - basket[:2])) < float(min_basket_xy):
+            return False
+    joint_name = joints[-1] if len(joints) > 1 else joints[0]
+    sim = rs_env.sim
+    if not (hasattr(sim.data, "get_joint_qpos") and hasattr(sim.data, "set_joint_qpos")):
+        return False
+    q = np.array(sim.data.get_joint_qpos(joint_name), dtype=np.float64, copy=True)
+    if q.size < 7:
+        return False
+    q[0] = float(new_xy[0])
+    q[1] = float(new_xy[1])
+    sim.data.set_joint_qpos(joint_name, q)
+    if hasattr(sim.data, "set_joint_qvel"):
+        sim.data.set_joint_qvel(joint_name, np.zeros(6, dtype=np.float64))
+    sim.forward()
+    for _ in range(20):
         sim.step()
     return True
 

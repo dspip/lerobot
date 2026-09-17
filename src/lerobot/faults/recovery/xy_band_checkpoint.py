@@ -33,8 +33,11 @@ PILOT_DROP_SEEDS = tuple(range(5100, 5108))
 BOUNDARY_DIAG_SEED_MIN = 6200
 BOUNDARY_DIAG_SEED_MAX = 6305
 
-NEAR_DUPLICATE_XY_M = 0.02
+NEAR_DUPLICATE_XY_M = 0.005
 TABLE_LANDING_Z_MAX = 0.06
+TARGET_DROPS_PER_BAND = 10
+TARGET_NOMINAL = 20
+TARGET_DROPS = TARGET_DROPS_PER_BAND * len(XY_BANDS)
 
 
 def is_blocked_checkpoint_seed(seed: int) -> bool:
@@ -85,30 +88,53 @@ def _xy_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def used_checkpoint_seeds(
+    output_dir: Path,
+    kept_registry: list[dict[str, Any]] | None = None,
+    attempts: list[dict[str, Any]] | None = None,
+) -> set[int]:
+    """Seeds already kept, attempted, or with an episode directory (do not rerun)."""
+    used: set[int] = set()
+    for row in kept_registry or []:
+        if row.get("seed") is not None:
+            used.add(int(row["seed"]))
+    for row in attempts or []:
+        if row.get("seed") is not None:
+            used.add(int(row["seed"]))
+    ep_root = Path(output_dir) / "episodes"
+    if ep_root.is_dir():
+        for path in ep_root.iterdir():
+            if path.name.startswith("seed_"):
+                try:
+                    used.add(int(path.name.split("_", 1)[1]))
+                except ValueError:
+                    continue
+    return used
+
+
 def is_near_duplicate_drop(
     summary: dict[str, Any],
     existing_kept: list[dict[str, Any]],
     *,
     tol_m: float = NEAR_DUPLICATE_XY_M,
 ) -> bool:
-    drop_xy = drop_xy_from_summary(summary)
+    """Reject only near-clone table landings.
+
+    With a stock soup start, drop XY in a given band is similar by construction;
+    landing XY still separates distinct recoveries.
+    """
     landing_xy = landing_xy_from_summary(summary)
-    if drop_xy is None or landing_xy is None:
+    if landing_xy is None:
         return False
     for kept in existing_kept:
-        k_drop = kept.get("drop_xy")
         k_land = kept.get("landing_xy")
-        if k_drop is None:
-            k_drop = drop_xy_from_summary(kept)
         if k_land is None:
             k_land = landing_xy_from_summary(kept)
-        if k_drop is None or k_land is None:
+        if k_land is None:
             continue
-        if isinstance(k_drop, (list, tuple)):
-            k_drop = (float(k_drop[0]), float(k_drop[1]))
         if isinstance(k_land, (list, tuple)):
             k_land = (float(k_land[0]), float(k_land[1]))
-        if _xy_distance(drop_xy, k_drop) <= tol_m and _xy_distance(landing_xy, k_land) <= tol_m:
+        if _xy_distance(landing_xy, k_land) <= tol_m:
             return True
     return False
 

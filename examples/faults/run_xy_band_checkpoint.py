@@ -13,7 +13,7 @@
 # limitations under the License.
 
 #!/usr/bin/env python3
-"""Checkpoint 1: copy XY-band pilot + record 4 drops + 8 nominal episodes."""
+"""Fill XY-band mix to 40 drops (10/band) + 20 nominal, resuming checkpoint-1."""
 
 from __future__ import annotations
 
@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     from lerobot.faults.recovery.fps import SMOLVLA_LIBERO_TARGET_FPS
     from lerobot.faults.recovery.mix_recording import commit_or_discard, mix_output_layout
     from lerobot.faults.recovery.xy_band_checkpoint import (
+        TARGET_DROPS_PER_BAND,
+        TARGET_NOMINAL,
         XY_BANDS,
         copy_pilot_into_checkpoint,
         filter_checkpoint_seeds,
@@ -55,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         should_keep_checkpoint_drop,
         should_keep_checkpoint_nominal,
         summary_episode_fields,
+        used_checkpoint_seeds,
     )
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -70,11 +73,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--policy-path", default="lerobot/smolvla_libero")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--n-new-drops-per-band", type=int, default=1)
-    parser.add_argument("--n-new-nominal", type=int, default=8)
+    parser.add_argument("--n-new-drops-per-band", type=int, default=None)
+    parser.add_argument("--drops-per-band", type=int, default=TARGET_DROPS_PER_BAND)
+    parser.add_argument("--n-new-nominal", type=int, default=None)
+    parser.add_argument("--nominal-target", type=int, default=TARGET_NOMINAL)
     parser.add_argument("--drop-seed-start", type=int, default=7200)
     parser.add_argument("--nominal-seed-start", type=int, default=8200)
-    parser.add_argument("--max-attempts", type=int, default=80)
+    parser.add_argument("--max-attempts", type=int, default=600)
+    parser.add_argument("--max-attempts-per-band", type=int, default=120)
+    parser.add_argument("--max-nominal-attempts", type=int, default=150)
     parser.add_argument("--repo-id", default="local/xy_band_checkpoint1")
     parser.add_argument("--t-min", type=int, default=0)
     parser.add_argument("--t-max", type=int, default=400)
@@ -85,6 +92,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Training recipe min_drop_distance_from_basket_m (Option B)",
     )
     args = parser.parse_args(argv)
+    drops_per_band = (
+        2 + int(args.n_new_drops_per_band)
+        if args.n_new_drops_per_band is not None
+        else int(args.drops_per_band)
+    )
+    nominal_target = (
+        int(args.n_new_nominal) if args.n_new_nominal is not None else int(args.nominal_target)
+    )
+    drop_target = drops_per_band * len(XY_BANDS)
 
     run_pipeline = _load_run_pipeline()
     layout = mix_output_layout(args.output_dir)
@@ -128,6 +144,39 @@ def main(argv: list[str] | None = None) -> int:
 
     attempts_log: list[dict[str, Any]] = []
     checkpoint_log_path = args.output_dir / "checkpoint_log.json"
+    if checkpoint_log_path.is_file():
+        prev = json.loads(checkpoint_log_path.read_text(encoding="utf-8"))
+        attempts_log = list(prev.get("attempts") or [])
+
+    used_seeds = used_checkpoint_seeds(args.output_dir, kept_registry, attempts_log)
+
+    def _persist_progress() -> None:
+        registry_path.write_text(json.dumps({"kept": kept_registry}, indent=2), encoding="utf-8")
+        drop_kept_total = sum(1 for k in kept_registry if k.get("kind") == "drop")
+        nominal_kept_total = sum(1 for k in kept_registry if k.get("kind") == "nominal")
+        payload = {
+            "bands": [{"name": n, "min": lo, "max": hi} for n, lo, hi in XY_BANDS],
+            "kept_registry": kept_registry,
+            "attempts": attempts_log,
+            "dataset_dir": str(dataset_root),
+            "quotas": {
+                "drops_target": drop_target,
+                "drops_per_band": drops_per_band,
+                "nominal_target": nominal_target,
+                "drops_kept": drop_kept_total,
+                "nominal_kept": nominal_kept_total,
+            },
+        }
+        checkpoint_log_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _next_seed(pool: list[int], index: int) -> tuple[int | None, int]:
+        while index < len(pool):
+            seed = pool[index]
+            index += 1
+            if is_blocked_checkpoint_seed(seed) or seed in used_seeds:
+                continue
+            return seed, index
+        return None, index
 
     def _kept_in_band(band_name: str) -> list[dict[str, Any]]:
         return [
@@ -137,20 +186,20 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     for band_name, band_lo, band_hi in XY_BANDS:
-        target_new = int(args.n_new_drops_per_band)
-        new_kept = 0
-        while new_kept < target_new:
-            if drop_seed_index >= len(drop_seed_pool):
+        target_total = drops_per_band
+        band_attempts = 0
+        max_band = int(args.max_attempts_per_band)
+        while kept_per_band[band_name] < target_total and band_attempts < max_band:
+            seed, drop_seed_index = _next_seed(drop_seed_pool, drop_seed_index)
+            if seed is None:
                 print("[checkpoint] drop seed pool exhausted.", flush=True)
                 break
-            seed = drop_seed_pool[drop_seed_index]
-            drop_seed_index += 1
-            if is_blocked_checkpoint_seed(seed):
-                continue
             ep_dir = _episode_dir(args.output_dir, seed)
+            used_seeds.add(seed)
+            band_attempts += 1
             print(
                 f"[checkpoint] drop band={band_name} seed={seed} "
-                f"new_kept={new_kept}/{target_new}",
+                f"kept={kept_per_band[band_name]}/{target_total}",
                 flush=True,
             )
             try:
@@ -176,8 +225,10 @@ def main(argv: list[str] | None = None) -> int:
                     drop_xy_band_max=float(band_hi),
                     fault_overrides={"object_name": "alphabet_soup_1"},
                     defer_dataset_commit=True,
+                    soup_xy_offset=(0.0, 0.0),
                 )
             except Exception as exc:
+                print(f"[checkpoint] drop seed={seed} crashed: {exc}", flush=True)
                 try:
                     logger.clear_open_episode()
                 except Exception:
@@ -214,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if kept:
                 commit_or_discard(logger, keep=True)
-                new_kept += 1
+                kept_per_band[band_name] += 1
                 entry = {
                     "seed": seed,
                     "kind": "drop",
@@ -225,24 +276,27 @@ def main(argv: list[str] | None = None) -> int:
                     **fields,
                 }
                 kept_registry.append(entry)
+                _persist_progress()
             else:
                 try:
                     logger.clear_open_episode()
                 except Exception:
                     commit_or_discard(logger, keep=False)
+                _persist_progress()
 
-    nominal_kept = 0
-    while nominal_kept < int(args.n_new_nominal):
-        if nominal_seed_index >= len(nominal_seed_pool):
+    nominal_kept = sum(1 for k in kept_registry if k.get("kind") == "nominal")
+    nominal_attempts = 0
+    max_nominal_attempts = int(args.max_nominal_attempts)
+    while nominal_kept < nominal_target and nominal_attempts < max_nominal_attempts:
+        seed, nominal_seed_index = _next_seed(nominal_seed_pool, nominal_seed_index)
+        if seed is None:
             print("[checkpoint] nominal seed pool exhausted.", flush=True)
             break
-        seed = nominal_seed_pool[nominal_seed_index]
-        nominal_seed_index += 1
-        if is_blocked_checkpoint_seed(seed):
-            continue
         ep_dir = _episode_dir(args.output_dir, seed)
+        used_seeds.add(seed)
+        nominal_attempts += 1
         print(
-            f"[checkpoint] nominal seed={seed} kept={nominal_kept}/{args.n_new_nominal}",
+            f"[checkpoint] nominal seed={seed} kept={nominal_kept}/{nominal_target}",
             flush=True,
         )
         try:
@@ -263,8 +317,10 @@ def main(argv: list[str] | None = None) -> int:
                 episode_kind="nominal",
                 repo_id=args.repo_id,
                 defer_dataset_commit=True,
+                soup_xy_offset=(0.0, 0.0),
             )
         except Exception as exc:
+            print(f"[checkpoint] nominal seed={seed} crashed: {exc}", flush=True)
             try:
                 logger.clear_open_episode()
             except Exception:
@@ -300,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
                 logger.clear_open_episode()
             except Exception:
                 commit_or_discard(logger, keep=False)
+        _persist_progress()
 
     try:
         logger.clear_open_episode()
@@ -308,35 +365,24 @@ def main(argv: list[str] | None = None) -> int:
     if kept_registry:
         logger.finalize()
 
-    registry_path.write_text(json.dumps({"kept": kept_registry}, indent=2), encoding="utf-8")
-
+    _persist_progress()
     drop_kept_total = sum(1 for k in kept_registry if k.get("kind") == "drop")
     nominal_kept_total = sum(1 for k in kept_registry if k.get("kind") == "nominal")
-    payload = {
-        "bands": [{"name": n, "min": lo, "max": hi} for n, lo, hi in XY_BANDS],
-        "kept_registry": kept_registry,
-        "attempts": attempts_log,
-        "dataset_dir": str(dataset_root),
-        "quotas": {
-            "drops_target": 12,
-            "nominal_target": 8,
-            "drops_kept": drop_kept_total,
-            "nominal_kept": nominal_kept_total,
-        },
-    }
-    checkpoint_log_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(json.dumps(payload, indent=2), flush=True)
+    quotas = json.loads(checkpoint_log_path.read_text(encoding="utf-8")).get("quotas")
+    print(json.dumps(quotas, indent=2), flush=True)
     print(f"Wrote {checkpoint_log_path}", flush=True)
 
-    drops_ok = drop_kept_total >= 12
+    drops_ok = drop_kept_total >= drop_target
     per_band_ok = all(
-        sum(1 for k in kept_registry if k.get("kind") == "drop" and k.get("band") == name) >= 3
+        sum(1 for k in kept_registry if k.get("kind") == "drop" and k.get("band") == name)
+        >= drops_per_band
         for name, _, _ in XY_BANDS
     )
-    nominal_ok = nominal_kept_total >= int(args.n_new_nominal) and nominal_kept_total >= 8
+    nominal_ok = nominal_kept_total >= nominal_target
     if not (drops_ok and per_band_ok and nominal_ok):
         print(
-            f"[checkpoint] incomplete: drops={drop_kept_total}/12 nominal={nominal_kept_total}/8",
+            f"[checkpoint] incomplete: drops={drop_kept_total}/{drop_target} "
+            f"nominal={nominal_kept_total}/{nominal_target}",
             flush=True,
         )
         return 1

@@ -283,6 +283,7 @@ def run_pipeline(
     drop_xy_band_min: float | None = None,
     drop_xy_band_max: float | None = None,
     defer_dataset_commit: bool = False,
+    soup_xy_offset: tuple[float, float] | None = None,
 ) -> dict:
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
@@ -317,6 +318,7 @@ def run_pipeline(
         object_basket_xy_distance,
         object_pose_orientation,
         unwrap_libero_env,
+        offset_object_xy_on_table,
         read_control_freq,
         read_model_timestep,
         seat_object_in_basket_if_above,
@@ -435,6 +437,25 @@ def run_pipeline(
 
     observation, info = env.reset(seed=seed)
     rs = get_robosuite_env(env)
+    soup_offset_applied = False
+    soup_offset_requested: list[float] | None = None
+    if soup_xy_offset is not None:
+        soup_offset_requested = [float(soup_xy_offset[0]), float(soup_xy_offset[1])]
+        soup_offset_applied = bool(
+            offset_object_xy_on_table(
+                rs,
+                "alphabet_soup_1",
+                float(soup_xy_offset[0]),
+                float(soup_xy_offset[1]),
+            )
+        )
+    else:
+        layout_rng = np.random.default_rng(int(seed) + 17)
+        dx, dy = layout_rng.uniform(-0.04, 0.04, size=2)
+        soup_offset_requested = [float(dx), float(dy)]
+        soup_offset_applied = bool(
+            offset_object_xy_on_table(rs, "alphabet_soup_1", float(dx), float(dy))
+        )
     initial_soup_pose = get_object_pose(rs, "alphabet_soup_1")["pos"].astype(float)
     initial_soup_pos = initial_soup_pose.tolist()
     initial_soup_xy = initial_soup_pose[:2].tolist()
@@ -512,10 +533,10 @@ def run_pipeline(
         midair_grasp = bool(
             is_object_held_midair(rs, "alphabet_soup_1", min_object_z=0.12, max_eef_distance=0.08)
         )
+        if midair_grasp and first_grasp_step is None:
+            first_grasp_step = step
+            print(f"[pipeline] MID-AIR GRASP (soup near EEF) at step={step} z={obj_z:.3f}", flush=True)
         if is_drop_episode:
-            if midair_grasp and first_grasp_step is None:
-                first_grasp_step = step
-                print(f"[pipeline] MID-AIR GRASP (soup near EEF) at step={step} z={obj_z:.3f}", flush=True)
             if (
                 triggered_at is not None
                 and midair_grasp
@@ -1005,6 +1026,8 @@ def run_pipeline(
         "seed": seed,
         "initial_soup_pos": initial_soup_pos,
         "initial_soup_xy": initial_soup_xy,
+        "soup_xy_offset_requested": soup_offset_requested,
+        "soup_xy_offset_applied": soup_offset_applied,
         "init_state_id": int(getattr(libero_env, "init_state_id", 0)),
         "landing_pos": landing_pos,
         "drop_landed_in_basket": drop_landed_in_basket if is_drop_episode else None,
