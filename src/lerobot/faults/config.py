@@ -98,10 +98,14 @@ class FaultInjectionConfig:
     gripper_settle_steps: int = 5
     # After grasp+height gates pass, wait this many env steps before dropping.
     post_grasp_delay_steps: int = 0
-    # Do not drop closer than this XY distance to the basket (meters). Inside
-    # the radius the drop is skipped. At the boundary, drop early so recovery
-    # still has workspace. <= 0 disables the keep-out.
+    # Do not drop when object XY distance to the basket is below this (meters).
+    # After post_grasp_delay_steps, if still inside the radius, skip the drop.
+    # There is no early drop at the boundary. <= 0 disables the keep-out.
     min_drop_distance_from_basket_m: float = 0.18
+    # midair_drop: optional XY distance band [min, max] to basket center (meters).
+    # Both None → delay-based trigger; both set → ignore post_grasp_delay_steps.
+    drop_xy_band_min: float | None = None
+    drop_xy_band_max: float | None = None
     # midair_drop: recovery planner output FPS.
     recovery_fps: int = 10
     # midair_drop: explicit basket / place target (x, y, z). None = auto from sim.
@@ -231,6 +235,23 @@ class FaultInjectionConfig:
                         f"min_drop_distance_from_basket_m must be >= 0 "
                         f"(got {self.min_drop_distance_from_basket_m})."
                     )
+                band_lo = self.drop_xy_band_min
+                band_hi = self.drop_xy_band_max
+                if (band_lo is None) != (band_hi is None):
+                    raise ValueError(
+                        "drop_xy_band_min and drop_xy_band_max must both be set or both None."
+                    )
+                if band_lo is not None:
+                    lo = float(band_lo)
+                    hi = float(band_hi)  # type: ignore[arg-type]
+                    if lo < 0.0 or hi < 0.0:
+                        raise ValueError(
+                            f"drop_xy_band bounds must be >= 0 (got min={lo}, max={hi})."
+                        )
+                    if hi < lo:
+                        raise ValueError(
+                            f"drop_xy_band_max must be >= drop_xy_band_min (got {hi} < {lo})."
+                        )
                 if self.recovery_fps < 1:
                     raise ValueError(f"recovery_fps must be >= 1 (got {self.recovery_fps}).")
                 if not self.object_name:

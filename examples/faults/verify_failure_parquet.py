@@ -113,6 +113,21 @@ def verify_failure_parquet(root: Path, *, require_failure: bool = True) -> dict:
             raise AssertionError(f"Expected failure_type > 0 during a faulted episode. {summary}")
         if onset.sum() > is_failure.sum():
             raise AssertionError("More onset frames than failure frames.")
+        ep = df["episode_index"].map(lambda v: int(np_item(v)))
+        inj_by_ep = injection.groupby(ep, sort=True).sum()
+        onset_by_ep = onset.groupby(ep, sort=True).sum()
+        extra = []
+        for epid, n_inj in inj_by_ep.items():
+            if int(n_inj) < 1:
+                continue
+            n_on = int(onset_by_ep.get(epid, 0))
+            if n_on != 1:
+                extra.append((int(epid), n_on, int(n_inj)))
+        if extra:
+            raise AssertionError(
+                "Expected exactly one failure_onset per injected episode; "
+                f"got {extra}. {summary}"
+            )
 
     # Successful-episode sanity when require_failure is False.
     if not require_failure:

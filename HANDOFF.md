@@ -38,8 +38,8 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 | ---- | ------ | ---- |
 | A. Frame-level Parquet labels | **Done** | Five columns from live GT; `loss_mask=0` only on injection frame |
 | B. Training-grade **data recipe** | **Done (this change)** | Carry delay, no seat teleport, settle in Parquet |
-| C. Re-verify **one** CUDA episode with the new recipe | **You run** | Must show carry_steps ≥ ~10, `seat_assisted=false`, settle rows in parquet |
-| D. Small mixed set (tens of episodes) | **Next after C** | Mix no-fault success + drop+recovery; several seeds |
+| C. Re-verify **one** CUDA episode with the new recipe | **Done (user verified)** | `carry_steps=24`, `seat_assisted=false`, `n_settle_logged=5` on recipe run |
+| D. Small mixed set (tens of episodes) | **In progress** | `examples/faults/run_failure_mix.py` — drop + nominal into one dataset |
 | E. Smoke fine-tune | After D | Short SmolVLA run using `loss_mask`; eval with faults off then on |
 | F. Scale | After E | Only if unaided recoveries look right on video **and** parquet |
 | G. Jetson / extra sensors | After F | New schema; not a missing column in current verify |
@@ -99,7 +99,23 @@ Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and 
 
 ```bash
 # Unit tests (no GPU)
-uv run pytest tests/faults/test_failure_annotation.py tests/faults/test_recording_recipe.py -q
+uv run pytest tests/faults/test_failure_annotation.py tests/faults/test_recording_recipe.py tests/faults/test_mix_recording.py -q
+
+# Mixed drop + nominal dataset (GPU + LIBERO). Fresh dir, or --append to add episodes.
+export MUJOCO_GL=egl
+uv run python examples/faults/run_failure_mix.py \
+  --output-dir outputs/failure_mix_small \
+  --policy-path lerobot/smolvla_libero \
+  --device cuda \
+  --n-drop 8 \
+  --n-nominal 8 \
+  --seed-start 2000 \
+  --repo-id local/failure_mix_small
+
+# Verify Parquet under the shared dataset root
+uv run python examples/faults/verify_failure_parquet.py \
+  --root outputs/failure_mix_small/dataset
+# Nominal-only mix (no drops): add --allow-nominal
 
 # Training-grade one-episode verify (GPU + LIBERO). Use a NEW output dir.
 export MUJOCO_GL=egl

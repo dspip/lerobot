@@ -56,6 +56,9 @@ def training_midair_drop_kwargs(
     log_path: Path | str,
     policy_fps: int,
     seat_assist_enabled: bool = False,
+    min_drop_distance_from_basket_m: float | None = None,
+    drop_xy_band_min: float | None = None,
+    drop_xy_band_max: float | None = None,
 ) -> dict[str, Any]:
     """Fault kwargs for an episode that is allowed into a training mix."""
     return {
@@ -69,11 +72,21 @@ def training_midair_drop_kwargs(
         "impulse_ang_std": 0.05,
         "impulse_lin_bias": (0.0, 0.0, -0.55),
         "post_grasp_delay_steps": int(post_grasp_delay_steps),
-        "min_drop_distance_from_basket_m": DEFAULT_MIN_DROP_DISTANCE_FROM_BASKET_M,
+        "min_drop_distance_from_basket_m": (
+            float(DEFAULT_MIN_DROP_DISTANCE_FROM_BASKET_M)
+            if min_drop_distance_from_basket_m is None
+            else float(min_drop_distance_from_basket_m)
+        ),
         "seat_assist_enabled": bool(seat_assist_enabled),
         "settle_steps": 100,
         "gripper_settle_steps": 25,
         "recovery_fps": int(policy_fps),
         "seed": int(seed),
         "log_path": Path(log_path),
+        "drop_xy_band_min": (
+            None if drop_xy_band_min is None else float(drop_xy_band_min)
+        ),
+        "drop_xy_band_max": (
+            None if drop_xy_band_max is None else float(drop_xy_band_max)
+        ),
     }

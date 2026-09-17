@@ -204,6 +204,7 @@ class FailureAnnotator:
     injector_type_id: int = FAILURE_TYPE_NONE
     _ever_held: list[bool] = field(init=False)
     _prev_failure: list[bool] = field(init=False)
+    _cleared_after_failure: list[bool] = field(init=False)
     _sticky_type: list[int] = field(init=False)
     last_frames: list[dict[str, np.ndarray]] = field(init=False)
 
@@ -215,6 +216,7 @@ class FailureAnnotator:
         if env_ids is None:
             self._ever_held = [False] * self.num_envs
             self._prev_failure = [False] * self.num_envs
+            self._cleared_after_failure = [False] * self.num_envs
             self._sticky_type = [FAILURE_TYPE_NONE] * self.num_envs
             self.last_frames = [default_failure_frame() for _ in range(self.num_envs)]
             return
@@ -223,6 +225,7 @@ class FailureAnnotator:
                 raise ValueError(f"env_id {i} out of range for num_envs={self.num_envs}.")
             self._ever_held[i] = False
             self._prev_failure[i] = False
+            self._cleared_after_failure[i] = False
             self._sticky_type[i] = FAILURE_TYPE_NONE
             self.last_frames[i] = default_failure_frame()
 
@@ -267,11 +270,17 @@ class FailureAnnotator:
                 is_failure = bool(
                     self._ever_held[env_idx] and (not snap.grasped) and (not snap.in_basket)
                 )
+            # After the first drop is cleared (regrasp / basket), a later ungrasp is
+            # usually the recovery release into the basket — not a second failure.
+            if is_failure and self._cleared_after_failure[env_idx]:
+                is_failure = False
 
             if is_failure and self._sticky_type[env_idx] == FAILURE_TYPE_NONE:
                 self._sticky_type[env_idx] = FAILURE_TYPE_MIDAIR_DROP
 
             onset = bool(is_failure and not self._prev_failure[env_idx])
+            if self._prev_failure[env_idx] and not is_failure:
+                self._cleared_after_failure[env_idx] = True
             ftype = int(self._sticky_type[env_idx])
 
             phase = choose_phase(
@@ -301,6 +310,31 @@ def frames_to_info_arrays(frames: list[dict[str, np.ndarray]]) -> dict[str, np.n
         dtype = np.dtype(spec["dtype"])
         out[key] = np.array([np.asarray(f[key]).reshape(-1)[0] for f in frames], dtype=dtype)
     return out
+
+
+def clip_failure_to_first_interval(is_failure: list[bool] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Keep only the first physical-failure run; recompute onset from that run.
+
+    Used to correct recordings where the recovery release into the basket
+    briefly looks like a second drop (ungrasped, not yet ``in_basket``).
+    """
+    fail = np.asarray([bool(x) for x in np.asarray(is_failure).reshape(-1)], dtype=bool)
+    out_fail = np.zeros_like(fail)
+    cleared = False
+    prev = False
+    for i, val in enumerate(fail.tolist()):
+        if val and cleared:
+            val = False
+        out_fail[i] = val
+        if prev and not val:
+            cleared = True
+        prev = val
+    out_onset = np.zeros_like(out_fail)
+    prev = False
+    for i, val in enumerate(out_fail.tolist()):
+        out_onset[i] = bool(val and not prev)
+        prev = val
+    return out_fail, out_onset
 
 
 def merge_annotation_into_info(info: Any, arrays: dict[str, np.ndarray]) -> dict[str, Any]:

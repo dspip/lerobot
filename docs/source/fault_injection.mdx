@@ -120,6 +120,13 @@ written to Parquet. Demo-only teleport: `--allow-seat-assist`.
 Pass criteria: `fault_events.jsonl` contains `"event": "midair_drop"`; `pipeline_log.json`
 reports behavioral success (grasp, **carry before drop**, drop, unaided in-basket).
 
+**Multi-episode mix:** `examples/faults/run_failure_mix.py` appends many
+drop-recovery and nominal (no-fault) successes into one shared
+`output_dir/dataset` via `FaultRecoveryDatasetLogger.append`. Failed attempts
+call `clear_open_episode()` so bad trajectories are not saved. Per-attempt logs
+and videos live under `output_dir/episodes/seed_<n>/`; `mix_log.json` records
+kept seeds and failed checks.
+
 ## Evidence of injection
 
 A faulted eval is only trustworthy if `fault_events.jsonl` exists and contains

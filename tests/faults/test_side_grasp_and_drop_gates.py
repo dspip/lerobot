@@ -514,10 +514,20 @@ def test_drop_does_not_fire_inside_the_basket_keepout():
     assert _patched_trigger(0.10, cfg, steps=80) is None
 
 
-def test_drop_fires_when_carry_reaches_early_radius_before_delay():
-    """0.30 m recipe radius: drop at ~30 cm, not after waiting until the rim."""
+def test_drop_skipped_inside_recipe_radius_even_after_delay():
+    """0.30 m recipe radius: inside skip zone — never drop, even after delay."""
     cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
-    assert _patched_trigger(0.297, cfg, steps=80) == 0
+    assert _patched_trigger(0.297, cfg, steps=80) is None
+
+
+def test_drop_fires_after_delay_when_outside_recipe_radius():
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
+    assert _patched_trigger(0.40, cfg, steps=80) == 50
+
+
+def test_drop_never_fires_inside_recipe_radius_after_delay():
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
+    assert _patched_trigger(0.25, cfg, steps=80) is None
 
 
 def test_drop_still_skipped_in_the_hard_rim_pocket():
@@ -567,8 +577,86 @@ def test_trigger_records_distance_and_reason():
     assert state.drop_trigger_reason == "delay_elapsed"
 
 
-def test_trigger_records_keepout_edge_reason():
-    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.18)
+def test_xy_band_partial_config_rejected():
+    with pytest.raises(ValueError, match="drop_xy_band"):
+        _drop_cfg(drop_xy_band_min=0.4)
+
+
+def test_xy_band_outside_band_never_fires():
+    cfg = _drop_cfg(
+        post_grasp_delay_steps=50,
+        drop_xy_band_min=0.42,
+        drop_xy_band_max=0.46,
+    )
+    assert _patched_trigger(0.50, cfg, steps=80) is None
+
+
+def test_xy_band_fires_on_first_eligible_step_in_band():
+    cfg = _drop_cfg(
+        post_grasp_delay_steps=50,
+        drop_xy_band_min=0.42,
+        drop_xy_band_max=0.46,
+    )
+    assert _patched_trigger(0.44, cfg, steps=5) == 0
+
+
+def test_xy_band_respects_min_drop_distance():
+    cfg = _drop_cfg(
+        post_grasp_delay_steps=0,
+        min_drop_distance_from_basket_m=0.30,
+        drop_xy_band_min=0.30,
+        drop_xy_band_max=0.33,
+    )
+    assert _patched_trigger(0.29, cfg, steps=20) is None
+    assert _patched_trigger(0.31, cfg, steps=5) == 0
+
+
+def test_default_config_uses_delay_not_xy_band():
+    cfg = FaultInjectionConfig(
+        enabled=True,
+        type="midair_drop",
+        t_min=0,
+        t_max=500,
+        post_grasp_delay_steps=50,
+        settle_steps=1,
+        seed=7,
+    )
+    assert cfg.drop_xy_band_min is None
+    assert cfg.drop_xy_band_max is None
+    assert _patched_trigger(0.50, cfg, steps=80) == 50
+
+
+def test_xy_band_trigger_reason_and_event_fields():
+    cfg = _drop_cfg(
+        drop_xy_band_min=0.42,
+        drop_xy_band_max=0.46,
+    )
+    inj = MidAirDropFault(cfg, num_envs=1)
+    state = inj._states[0]
+    with (
+        patch("lerobot.faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("lerobot.faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_object_pose",
+            return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_eef_pose",
+            return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.object_basket_xy_distance",
+            return_value=0.44,
+        ),
+    ):
+        assert inj._should_trigger(MagicMock(), 0, state)
+    assert state.drop_trigger_reason == "xy_band"
+    assert state.drop_basket_xy_dist == pytest.approx(0.44)
+
+
+def test_trigger_never_fires_close_in_after_delay_no_keepout_edge_reason():
+    """0.18 m with 0.30 m recipe skip zone: no early keepout-edge drop."""
+    cfg = _drop_cfg(post_grasp_delay_steps=50, min_drop_distance_from_basket_m=0.30)
     inj = MidAirDropFault(cfg, num_envs=1)
     state = inj._states[0]
     with (
@@ -587,9 +675,10 @@ def test_trigger_records_keepout_edge_reason():
             return_value=0.18,
         ),
     ):
-        assert inj._should_trigger(MagicMock(), 0, state)
-    assert state.drop_basket_xy_dist == pytest.approx(0.18)
-    assert state.drop_trigger_reason == "basket_keepout_edge"
+        for step in range(80):
+            state.episode_step = step
+            assert not inj._should_trigger(MagicMock(), 0, state)
+    assert state.drop_trigger_reason is None
 
 
 # --------------------------------------------------------------------------

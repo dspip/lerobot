@@ -27,6 +27,7 @@ from lerobot.faults.annotation import (
     FailureAnnotator,
     PhysicsSnapshot,
     annotation_from_scripted_phase,
+    clip_failure_to_first_interval,
     default_failure_frame,
     failure_frame_from_info,
     frames_to_info_arrays,
@@ -105,6 +106,41 @@ def test_physical_drop_onset_then_sustain_then_regrasp():
     assert bool(rec["is_failure"][0]) is False
     assert int(rec["phase"][0]) == PHASE_RECOVERY
     assert int(rec["failure_type"][0]) == FAILURE_TYPE_MIDAIR_DROP
+
+
+def test_recovery_release_is_not_a_second_onset():
+    """Gripper-open over the basket after regrasp must not raise failure_onset again."""
+    ann = FailureAnnotator(num_envs=1, injector_type_id=FAILURE_TYPE_MIDAIR_DROP)
+    ann.update(None, injection_active=[False], physics=[_snap(grasped=True, held=True)])
+    drop = ann.update(
+        None,
+        injection_active=[True],
+        physics=[_snap(grasped=False, held=False)],
+    )[0]
+    assert bool(drop["failure_onset"][0]) is True
+    rec = ann.update(
+        None,
+        injection_active=[False],
+        recovery_active=[True],
+        physics=[_snap(grasped=True, held=True)],
+    )[0]
+    assert bool(rec["is_failure"][0]) is False
+    release = ann.update(
+        None,
+        injection_active=[False],
+        recovery_active=[True],
+        physics=[_snap(grasped=False, held=False, in_basket=False)],
+    )[0]
+    assert bool(release["is_failure"][0]) is False
+    assert bool(release["failure_onset"][0]) is False
+
+
+def test_clip_failure_to_first_interval_drops_one_frame_reentry():
+    fail, onset = clip_failure_to_first_interval(
+        [False, True, True, False, False, True, False]
+    )
+    assert fail.tolist() == [False, True, True, False, False, False, False]
+    assert onset.tolist() == [False, True, False, False, False, False, False]
 
 
 def test_in_basket_clears_physical_failure():

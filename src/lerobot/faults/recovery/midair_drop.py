@@ -32,9 +32,10 @@ from lerobot.faults.logging import FaultEventLogger
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 
 # Never inject a drop closer than this XY distance to the basket (meters).
-# ``min_drop_distance_from_basket_m`` is the *early-drop* radius (drop when the
-# carry reaches it). Inside ``HARD_BASKET_KEEPOUT_M`` we skip so the can is not
-# parked against the rim. The two are equal when the config radius is smaller.
+# ``min_drop_distance_from_basket_m`` is a skip radius: if the object is still
+# inside that XY distance when the post-grasp delay elapses, the drop is skipped
+# (no early drop at the boundary). Inside ``HARD_BASKET_KEEPOUT_M`` we always
+# skip so the can is not parked against the rim.
 HARD_BASKET_KEEPOUT_M = 0.22
 
 
@@ -75,8 +76,7 @@ class _EnvDropState:
     arm_posture_noise_rad: np.ndarray | None = None
     last_impulse_lin: np.ndarray | None = None
     last_impulse_ang: np.ndarray | None = None
-    # Planar object→basket distance at the moment of the drop, and why it fired
-    # ("delay_elapsed" or "basket_keepout_edge").
+    # Planar object→basket distance at the moment of the drop.
     drop_basket_xy_dist: float | None = None
     drop_trigger_reason: str | None = None
 
@@ -238,19 +238,28 @@ class MidAirDropFault:
             rs_env, self.config.object_name, basket_name=self.config.basket_name
         )
         min_dist = float(self.config.min_drop_distance_from_basket_m)
-        at_keepout_edge = False
         if min_dist > 0.0 and basket_dist is not None:
             hard = min(min_dist, HARD_BASKET_KEEPOUT_M)
             # Inside the hard pocket: too late, skip (do not dump on the rim).
             if basket_dist < hard:
                 return False
-            # Reached the early-drop radius during carry (may be before delay).
-            at_keepout_edge = basket_dist <= min_dist
+            # Too close for recovery workspace — skip even if delay elapsed.
+            if basket_dist < min_dist:
+                return False
 
-        delay = int(self.config.post_grasp_delay_steps)
-        delay_ok = state.episode_step >= state.eligible_since + delay
-        if not delay_ok and not at_keepout_edge:
-            return False
+        band_lo = self.config.drop_xy_band_min
+        band_hi = self.config.drop_xy_band_max
+        use_xy_band = band_lo is not None and band_hi is not None
+        if use_xy_band:
+            if basket_dist is None:
+                return False
+            if not (float(band_lo) <= float(basket_dist) <= float(band_hi)):
+                return False
+        else:
+            delay = int(self.config.post_grasp_delay_steps)
+            delay_ok = state.episode_step >= state.eligible_since + delay
+            if not delay_ok:
+                return False
         if state.will_activate is None:
             state.will_activate = bool(self._rng.random() < self.config.probability)
         if not state.will_activate:
@@ -258,9 +267,7 @@ class MidAirDropFault:
         # Record where/why only for the step that actually drops, so the logs
         # never describe a drop that did not happen.
         state.drop_basket_xy_dist = basket_dist
-        state.drop_trigger_reason = (
-            "basket_keepout_edge" if (at_keepout_edge and not delay_ok) else "delay_elapsed"
-        )
+        state.drop_trigger_reason = "xy_band" if use_xy_band else "delay_elapsed"
         return True
 
     def _trigger_drop(
@@ -640,6 +647,10 @@ class MidAirDropFault:
             event["drop_basket_xy_dist"] = float(state.drop_basket_xy_dist)
         if state.drop_trigger_reason is not None:
             event["drop_trigger_reason"] = state.drop_trigger_reason
+        if self.config.drop_xy_band_min is not None:
+            event["drop_xy_band_min"] = float(self.config.drop_xy_band_min)
+        if self.config.drop_xy_band_max is not None:
+            event["drop_xy_band_max"] = float(self.config.drop_xy_band_max)
         if telemetry is not None:
             event["object_pose"] = telemetry.get("object_pose_after", telemetry.get("object_pose_before"))
             event["arm_q"] = telemetry.get("arm_q", arm_q.tolist() if arm_q is not None else None)

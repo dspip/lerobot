@@ -272,6 +272,17 @@ def run_pipeline(
     forbid_seat_assist: bool = True,
     fault_overrides: dict | None = None,
     post_drop_hook: Any | None = None,
+    wipe_output_dir: bool = True,
+    dataset_root: Path | None = None,
+    ds_logger: Any | None = None,
+    raise_on_failure: bool = True,
+    copy_demo_gif: bool = True,
+    episode_kind: str = "drop",
+    repo_id: str = "local/full_pipeline_drop_recovery",
+    min_drop_distance_from_basket_m: float | None = None,
+    drop_xy_band_min: float | None = None,
+    drop_xy_band_max: float | None = None,
+    defer_dataset_commit: bool = False,
 ) -> dict:
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
@@ -305,6 +316,7 @@ def run_pipeline(
         is_object_in_basket,
         object_basket_xy_distance,
         object_pose_orientation,
+        unwrap_libero_env,
         read_control_freq,
         read_model_timestep,
         seat_object_in_basket_if_above,
@@ -314,11 +326,16 @@ def run_pipeline(
         sample_post_grasp_delay_steps,
         training_midair_drop_kwargs,
     )
+    from lerobot.faults.annotation import default_failure_frame
     from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
-    if output_dir.exists():
+    if episode_kind not in ("drop", "nominal"):
+        raise ValueError(f"episode_kind must be 'drop' or 'nominal' (got {episode_kind!r})")
+    is_drop_episode = episode_kind == "drop"
+
+    if wipe_output_dir and output_dir.exists():
         shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     videos_dir = output_dir / "videos"
     videos_dir.mkdir()
 
@@ -378,28 +395,49 @@ def run_pipeline(
         f"seat_assist_enabled={seat_assist_enabled} forbid_seat_assist={forbid_seat_assist}",
         flush=True,
     )
-    fault_kwargs: dict = training_midair_drop_kwargs(
-        t_min=t_min,
-        t_max=t_max,
-        seed=seed,
-        post_grasp_delay_steps=delay_steps,
-        log_path=output_dir / "fault_events.jsonl",
-        policy_fps=policy_fps,
-        seat_assist_enabled=seat_assist_enabled,
-    )
-    if fault_overrides:
-        fault_kwargs.update(fault_overrides)
-    fault_cfg = FaultInjectionConfig(**fault_kwargs)
-    env = DropRecoveryEnvWrapper(vec, fault_cfg)
+    fault_cfg: FaultInjectionConfig
+    if is_drop_episode:
+        fault_kwargs: dict = training_midair_drop_kwargs(
+            t_min=t_min,
+            t_max=t_max,
+            seed=seed,
+            post_grasp_delay_steps=delay_steps,
+            log_path=output_dir / "fault_events.jsonl",
+            policy_fps=policy_fps,
+            seat_assist_enabled=seat_assist_enabled,
+            min_drop_distance_from_basket_m=min_drop_distance_from_basket_m,
+            drop_xy_band_min=drop_xy_band_min,
+            drop_xy_band_max=drop_xy_band_max,
+        )
+        if fault_overrides:
+            fault_kwargs.update(fault_overrides)
+        fault_cfg = FaultInjectionConfig(**fault_kwargs)
+        env = DropRecoveryEnvWrapper(vec, fault_cfg)
+    else:
+        fault_cfg = FaultInjectionConfig(enabled=False)
+        env = vec
 
-    ds_logger = FaultRecoveryDatasetLogger(
-        root=output_dir / "dataset",
-        repo_id="local/full_pipeline_drop_recovery",
-        policy_fps=policy_fps,
-    )
+    own_logger = ds_logger is None
+    ds_root = dataset_root if dataset_root is not None else output_dir / "dataset"
+    if own_logger:
+        ds_logger = FaultRecoveryDatasetLogger(
+            root=ds_root,
+            repo_id=repo_id,
+            policy_fps=policy_fps,
+        )
+
+    libero_env = unwrap_libero_env(vec)
+    init_states = getattr(libero_env, "_init_states", None)
+    if getattr(libero_env, "init_states", False) and init_states is not None:
+        n_init = len(init_states)
+        if n_init > 0:
+            libero_env.init_state_id = int(seed) % n_init
 
     observation, info = env.reset(seed=seed)
     rs = get_robosuite_env(env)
+    initial_soup_pose = get_object_pose(rs, "alphabet_soup_1")["pos"].astype(float)
+    initial_soup_pos = initial_soup_pose.tolist()
+    initial_soup_xy = initial_soup_pose[:2].tolist()
     control_freq = read_control_freq(rs)
     model_timestep = read_model_timestep(rs)
     assert_control_rate_aligned(control_freq, model_timestep, policy_fps)
@@ -412,10 +450,14 @@ def run_pipeline(
     triggered_at: int | None = None
     first_grasp_step: int | None = None
     regrasped_after_drop = False
+    drop_landed_in_basket = False
     pre_drop_pose: list[float] | None = None
     post_drop_pose: list[float] | None = None
+    landing_pos: list[float] | None = None
     closing_axis_at_recovery: list[float] | None = None
     yaw_error_trace: list[dict[str, float | int | str | None]] = []
+    landing_z_prev: float | None = None
+    landing_still_steps = 0
     task = "pick up the alphabet soup and place it in the basket"
 
     try:
@@ -439,7 +481,12 @@ def run_pipeline(
         executed = executed_action
         if np.asarray(executed).ndim == 2:
             executed = np.asarray(executed)[0]
-        mask = float(env.loss_mask())
+        if is_drop_episode:
+            mask = float(env.loss_mask())
+            annotation = env.failure_annotation(0)
+        else:
+            mask = 1.0
+            annotation = default_failure_frame()
         try:
             from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
 
@@ -450,7 +497,7 @@ def run_pipeline(
                 task,
                 mask,
                 phase=phase_name,
-                annotation=env.failure_annotation(0),
+                annotation=annotation,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[pipeline] dataset log warning at step={sim_step}: {exc}", flush=True)
@@ -458,65 +505,72 @@ def run_pipeline(
     n_settle_logged = 0
 
     for step in range(max_steps):
-        st = env.fault._states[0]
+        if is_drop_episode:
+            st = env.fault._states[0]
         obj_z = float(get_object_pose(rs, "alphabet_soup_1")["pos"][2])
         grasped_now = bool(is_object_grasped(rs, "alphabet_soup_1"))
         midair_grasp = bool(
             is_object_held_midair(rs, "alphabet_soup_1", min_object_z=0.12, max_eef_distance=0.08)
         )
-        if midair_grasp and first_grasp_step is None:
-            first_grasp_step = step
-            print(f"[pipeline] MID-AIR GRASP (soup near EEF) at step={step} z={obj_z:.3f}", flush=True)
-        if (
-            triggered_at is not None
-            and midair_grasp
-            and st.recovery_active
-            and not regrasped_after_drop
-        ):
-            regrasped_after_drop = True
-            print(
-                f"[pipeline] REGRASP after drop at step={step} z={obj_z:.3f}",
-                flush=True,
-            )
-        elif grasped_now and first_grasp_step is None and step % 20 == 0:
-            print(
-                f"[pipeline] contact/false grasp? step={step} z={obj_z:.3f} "
-                f"(waiting for soup held mid-air near EEF)",
-                flush=True,
-            )
+        if is_drop_episode:
+            if midair_grasp and first_grasp_step is None:
+                first_grasp_step = step
+                print(f"[pipeline] MID-AIR GRASP (soup near EEF) at step={step} z={obj_z:.3f}", flush=True)
+            if (
+                triggered_at is not None
+                and midair_grasp
+                and st.recovery_active
+                and not regrasped_after_drop
+            ):
+                regrasped_after_drop = True
+                print(
+                    f"[pipeline] REGRASP after drop at step={step} z={obj_z:.3f}",
+                    flush=True,
+                )
+            elif grasped_now and first_grasp_step is None and step % 20 == 0:
+                print(
+                    f"[pipeline] contact/false grasp? step={step} z={obj_z:.3f} "
+                    f"(waiting for soup held mid-air near EEF)",
+                    flush=True,
+                )
 
-        if st.recovery_active:
-            phase = "recovery"
-            wp = getattr(st.planner, "phase_name", "?") if st.planner is not None else "?"
-            retries = getattr(st, "grasp_retries", 0)
-            yaw_err = getattr(st.planner, "yaw_error", None) if st.planner is not None else None
-            lying = getattr(st.planner, "object_lying", None) if st.planner is not None else None
-            banner = f"PHASE: RECOVERY [{wp}] z={obj_z:.2f} r={retries}"
-            color = (40, 160, 70)
-            if yaw_err is not None:
-                yaw_error_trace.append(
-                    {
-                        "step": step,
-                        "phase": str(wp),
-                        "yaw_error": float(yaw_err),
-                        "object_lying": bool(lying) if lying is not None else None,
-                    }
-                )
-                print(
-                    f"[pipeline] yaw_error step={step} phase={wp} "
-                    f"yaw_error={float(yaw_err):+.4f} lying={lying}",
-                    flush=True,
-                )
-            if step % 25 == 0:
-                print(
-                    f"[pipeline] recovery step={step} phase={wp} obj_z={obj_z:.3f} "
-                    f"grasped={grasped_now} retries={retries}",
-                    flush=True,
-                )
-        elif st.triggered or (triggered_at is not None and step >= triggered_at):
-            phase = "drop"
-            banner = "PHASE: DROP (midair_drop)"
-            color = (200, 50, 50)
+            if st.recovery_active:
+                phase = "recovery"
+                wp = getattr(st.planner, "phase_name", "?") if st.planner is not None else "?"
+                retries = getattr(st, "grasp_retries", 0)
+                yaw_err = getattr(st.planner, "yaw_error", None) if st.planner is not None else None
+                lying = getattr(st.planner, "object_lying", None) if st.planner is not None else None
+                banner = f"PHASE: RECOVERY [{wp}] z={obj_z:.2f} r={retries}"
+                color = (40, 160, 70)
+                if yaw_err is not None:
+                    yaw_error_trace.append(
+                        {
+                            "step": step,
+                            "phase": str(wp),
+                            "yaw_error": float(yaw_err),
+                            "object_lying": bool(lying) if lying is not None else None,
+                        }
+                    )
+                    print(
+                        f"[pipeline] yaw_error step={step} phase={wp} "
+                        f"yaw_error={float(yaw_err):+.4f} lying={lying}",
+                        flush=True,
+                    )
+                if step % 25 == 0:
+                    print(
+                        f"[pipeline] recovery step={step} phase={wp} obj_z={obj_z:.3f} "
+                        f"grasped={grasped_now} retries={retries}",
+                        flush=True,
+                    )
+            elif st.triggered or (triggered_at is not None and step >= triggered_at):
+                phase = "drop"
+                banner = "PHASE: DROP (midair_drop)"
+                color = (200, 50, 50)
+            else:
+                phase = "vla"
+                g = "GRASPED" if grasped_now else "seeking"
+                banner = f"PHASE: VLA (SmolVLA) [{g}]"
+                color = (30, 90, 200)
         else:
             phase = "vla"
             g = "GRASPED" if grasped_now else "seeking"
@@ -546,7 +600,7 @@ def run_pipeline(
         observation, reward, terminated, truncated, info = env.step(action_numpy)
 
         # Post-step regrasp check (catches lift on the same step the planner finishes).
-        if triggered_at is not None and step > triggered_at and env.fault._states[0].recovery_active:
+        if is_drop_episode and triggered_at is not None and step > triggered_at and st.recovery_active:
             try:
                 if is_object_held_midair(
                     rs, "alphabet_soup_1", min_object_z=0.12, max_eef_distance=0.08
@@ -561,7 +615,7 @@ def run_pipeline(
             except Exception:
                 pass
 
-        if env.fault._states[0].triggered and triggered_at is None:
+        if is_drop_episode and st.triggered and triggered_at is None:
             triggered_at = step
             pre_drop_pose = pose_before.tolist()
             # Test hook: lets a harness force a specific landing pose (e.g. the can
@@ -624,18 +678,53 @@ def run_pipeline(
         object_traj.append(pose["pos"].astype(float).tolist())
         grasp_flags.append(grasped_now)
 
+        if (
+            is_drop_episode
+            and triggered_at is not None
+            and step > triggered_at
+            and not regrasped_after_drop
+        ):
+            if is_object_in_basket(rs, "alphabet_soup_1", z_min=0.05, z_max=0.14):
+                drop_landed_in_basket = True
+            else:
+                xy_dist = object_basket_xy_distance(rs, "alphabet_soup_1")
+                if xy_dist is not None and xy_dist <= 0.07:
+                    basket_ref = get_place_destination(rs, "alphabet_soup_1")
+                    obj_pos = pose["pos"].astype(float)
+                    z_rel = float(obj_pos[2] - (float(basket_ref[2]) - 0.10))
+                    if z_rel >= 0.05:
+                        drop_landed_in_basket = True
+            if landing_pos is None:
+                if landing_z_prev is not None and abs(obj_z - landing_z_prev) < 0.002:
+                    landing_still_steps += 1
+                else:
+                    landing_still_steps = 0
+                landing_z_prev = obj_z
+                if landing_still_steps >= 4 and obj_z < 0.08:
+                    landing_pos = pose["pos"].astype(float).tolist()
+
         # Always log the drop injection frame (loss_mask=0); otherwise stride may skip it.
-        is_drop_frame = bool(env.fault._states[0].drop_injection_step)
+        is_drop_frame = bool(is_drop_episode and st.drop_injection_step)
         if step % stride == 0 or is_drop_frame:
-            executed = env.last_executed_action
+            if is_drop_episode:
+                executed = env.last_executed_action
+            else:
+                executed = action_numpy
             if executed is None:
                 executed = action_numpy
             _log_dataset_step(step, observation, executed, phase)
 
         done = bool(np.asarray(terminated).any() or np.asarray(truncated).any())
-        planner_done = bool(
-            env.fault._states[0].planner is not None and env.fault._states[0].planner.done
-        )
+        if not is_drop_episode:
+            if is_object_in_basket(rs, "alphabet_soup_1", z_max=0.14):
+                print(f"[pipeline] nominal: object in basket at step={step}, stopping", flush=True)
+                break
+            if done:
+                print(f"[pipeline] nominal: episode ended at step={step}", flush=True)
+                break
+            continue
+
+        planner_done = bool(st.planner is not None and st.planner.done)
         if triggered_at is not None and step >= triggered_at + recovery_horizon:
             break
         if triggered_at is not None and planner_done and phases.count("recovery") > 5:
@@ -665,34 +754,31 @@ def run_pipeline(
             frames.extend(settle_frames)
             phases.extend(settle_phases)
             break
-        if done and not env.fault._states[0].triggered:
+        if done and not st.triggered:
             print(f"[pipeline] episode ended at step={step} before drop (no grasp in window?)", flush=True)
             break
-
-    try:
-        ds_logger.end_episode()
-        ds_logger.finalize()
-        assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
-        loss_counts = dict(ds_logger.loss_mask_counts)
-    except Exception as exc:
-        print(f"[pipeline] dataset finalize warning: {exc}", flush=True)
-        loss_counts = {}
 
     basket_place_ok = False
     seat_assisted = False
     basket_dest = None
     final_object_pos = None
     planned_dest = None
+    st0 = None
     try:
-        st0 = env.fault._states[0]
-        # Prefer proof captured at seat time via after_physics_step.
-        seat_assisted = bool(getattr(st0, "seat_assisted", False))
+        if is_drop_episode:
+            st0 = env.fault._states[0]
+            seat_assisted = bool(getattr(st0, "seat_assisted", False))
+        else:
+            st0 = None
+            seat_assisted = False
         # Strict in-basket (z_max=0.14). Prefer live sim; fall back to fault proof.
         basket_place_ok = bool(is_object_in_basket(rs, "alphabet_soup_1", z_max=0.14))
         final_object_pos = get_object_pose(rs, "alphabet_soup_1")["pos"].astype(float).tolist()
         basket_dest = get_place_destination(rs, "alphabet_soup_1").astype(float).tolist()
         if (
-            not basket_place_ok
+            is_drop_episode
+            and st0 is not None
+            and not basket_place_ok
             and st0.place_succeeded
             and st0.proof_object_pos is not None
             and st0.proof_basket_pos is not None
@@ -724,17 +810,18 @@ def run_pipeline(
                 for _ in range(40):
                     rs.sim.step()
                 final_object_pos = get_object_pose(rs, "alphabet_soup_1")["pos"].astype(float).tolist()
-        if st0.destination_pos is not None:
+        if is_drop_episode and st0 is not None and st0.destination_pos is not None:
             planned_dest = np.asarray(st0.destination_pos, dtype=float).tolist()
         # Render proof frames when place succeeded behaviorally.
         if basket_place_ok:
+            proof_phase = "recovery" if is_drop_episode else "vla"
             for _ in range(6):
                 try:
                     raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
                     frames.append(
                         _overlay_banner(np.asarray(raw[0]), "PHASE: IN BASKET", (20, 140, 60))
                     )
-                    phases.append("recovery")
+                    phases.append(proof_phase)
                 except Exception:
                     break
     except Exception as exc:
@@ -746,19 +833,6 @@ def run_pipeline(
         print(f"[pipeline] final multi-camera proof: {proof_shot}", flush=True)
     except Exception as exc:
         print(f"[pipeline] proof shot warning: {exc}", flush=True)
-
-    env.close()
-
-    gif_path = videos_dir / "full_pipeline.gif"
-    mp4_path = videos_dir / "full_pipeline.mp4"
-    # Keep GIF manageable; prefer every other frame when long.
-    gif_stride = max(1, len(frames) // 100)
-    _write_gif(gif_path, frames[::gif_stride], fps=8)
-    _write_mp4(mp4_path, frames, fps=int(round(control_freq)))
-
-    demo_dir = REPO_ROOT / "docs" / "assets" / "demo"
-    demo_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(gif_path, demo_dir / "full_pipeline_drop_recovery.gif")
 
     # Behavioral success criteria (honest).
     grasped_before_drop = first_grasp_step is not None and (
@@ -786,26 +860,115 @@ def run_pipeline(
     else:
         summary_drop_metrics = {}
 
+    if landing_pos is None and summary_drop_metrics.get("later_pos") is not None:
+        landing_pos = list(summary_drop_metrics["later_pos"])
+
+    drop_basket_xy_dist_val = (
+        float(st0.drop_basket_xy_dist)
+        if is_drop_episode and st0 is not None and st0.drop_basket_xy_dist is not None
+        else None
+    )
+    drop_xy_band_ok: bool | None = None
+    if (
+        is_drop_episode
+        and fault_cfg.drop_xy_band_min is not None
+        and fault_cfg.drop_xy_band_max is not None
+        and drop_basket_xy_dist_val is not None
+    ):
+        drop_xy_band_ok = bool(
+            float(fault_cfg.drop_xy_band_min)
+            <= drop_basket_xy_dist_val
+            <= float(fault_cfg.drop_xy_band_max)
+        )
+
     carry_steps = (
         int(triggered_at - first_grasp_step)
         if first_grasp_step is not None and triggered_at is not None
         else None
     )
-    min_carry = 0 if int(fault_cfg.post_grasp_delay_steps) == 0 else min(10, int(fault_cfg.post_grasp_delay_steps))
+    uses_xy_band = (
+        is_drop_episode
+        and fault_cfg.drop_xy_band_min is not None
+        and fault_cfg.drop_xy_band_max is not None
+    )
+    min_carry = (
+        0
+        if not is_drop_episode
+        or int(fault_cfg.post_grasp_delay_steps) == 0
+        or uses_xy_band
+        else min(10, int(fault_cfg.post_grasp_delay_steps))
+    )
     dropped_after_carry = carry_steps is not None and carry_steps >= min_carry
     seat_assist_ok = (not seat_assisted) if forbid_seat_assist else True
 
-    behavioral_success = bool(
-        grasped_before_drop
-        and was_midair_at_drop
-        and triggered_at is not None
-        and drop_moved
-        and object_visible_after_drop
-        and phases.count("recovery") > 10
-        and basket_place_ok
-        and seat_assist_ok
-        and dropped_after_carry
-    )
+    if is_drop_episode:
+        behavioral_success = bool(
+            grasped_before_drop
+            and was_midair_at_drop
+            and triggered_at is not None
+            and drop_moved
+            and object_visible_after_drop
+            and phases.count("recovery") > 10
+            and basket_place_ok
+            and seat_assist_ok
+            and dropped_after_carry
+        )
+        checks: dict[str, Any] = {
+            "grasped_before_drop": grasped_before_drop,
+            "was_midair_at_drop": was_midair_at_drop,
+            "fault_triggered": triggered_at is not None,
+            "drop_moved_object": drop_moved,
+            "object_in_view_after_drop": object_visible_after_drop,
+            "recovery_steps": phases.count("recovery"),
+            "regrasped_after_drop": regrasped_after_drop,
+            "object_in_basket": basket_place_ok,
+            "seat_assisted": seat_assisted,
+            "seat_assist_ok": seat_assist_ok,
+            "dropped_after_carry": dropped_after_carry,
+        }
+    else:
+        behavioral_success = bool(
+            basket_place_ok and not seat_assisted and triggered_at is None
+        )
+        checks = {
+            "object_in_basket": basket_place_ok,
+            "seat_assisted": seat_assisted,
+            "fault_triggered": triggered_at is not None,
+        }
+
+    from lerobot.faults.recovery.mix_recording import commit_or_discard
+
+    episode_committed = False
+    loss_counts: dict[float, int] = {}
+    try:
+        if defer_dataset_commit:
+            # Leave the open episode for the caller to commit or discard.
+            episode_committed = False
+        else:
+            commit_keep = bool(behavioral_success)
+            commit_or_discard(ds_logger, keep=commit_keep)
+            episode_committed = commit_keep
+        if behavioral_success:
+            assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
+        loss_counts = dict(ds_logger.loss_mask_counts)
+        if own_logger and behavioral_success and not defer_dataset_commit:
+            ds_logger.finalize()
+    except Exception as exc:
+        print(f"[pipeline] dataset commit warning: {exc}", flush=True)
+
+    env.close()
+
+    gif_path = videos_dir / "full_pipeline.gif"
+    mp4_path = videos_dir / "full_pipeline.mp4"
+    # Keep GIF manageable; prefer every other frame when long.
+    gif_stride = max(1, len(frames) // 100)
+    _write_gif(gif_path, frames[::gif_stride], fps=8)
+    _write_mp4(mp4_path, frames, fps=int(round(control_freq)))
+
+    if copy_demo_gif:
+        demo_dir = REPO_ROOT / "docs" / "assets" / "demo"
+        demo_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(gif_path, demo_dir / "full_pipeline_drop_recovery.gif")
 
     # Yaw-convention diagnostic: |yaw_error| should shrink when side-grasp is on.
     yaw_abs = [abs(float(t["yaw_error"])) for t in yaw_error_trace if t.get("yaw_error") is not None]
@@ -822,19 +985,9 @@ def run_pipeline(
 
     summary = {
         "success": behavioral_success,
-        "checks": {
-            "grasped_before_drop": grasped_before_drop,
-            "was_midair_at_drop": was_midair_at_drop,
-            "fault_triggered": triggered_at is not None,
-            "drop_moved_object": drop_moved,
-            "object_in_view_after_drop": object_visible_after_drop,
-            "recovery_steps": phases.count("recovery"),
-            "regrasped_after_drop": regrasped_after_drop,
-            "object_in_basket": basket_place_ok,
-            "seat_assisted": seat_assisted,
-            "seat_assist_ok": seat_assist_ok,
-            "dropped_after_carry": dropped_after_carry,
-        },
+        "episode_kind": episode_kind,
+        "episode_committed": episode_committed,
+        "checks": checks,
         "regrasped_after_drop": regrasped_after_drop,
         "closing_axis_at_recovery": closing_axis_at_recovery,
         "yaw_error_trace": yaw_error_trace,
@@ -850,11 +1003,20 @@ def run_pipeline(
         "t_min": t_min,
         "t_max": t_max,
         "seed": seed,
+        "initial_soup_pos": initial_soup_pos,
+        "initial_soup_xy": initial_soup_xy,
+        "init_state_id": int(getattr(libero_env, "init_state_id", 0)),
+        "landing_pos": landing_pos,
+        "drop_landed_in_basket": drop_landed_in_basket if is_drop_episode else None,
+        "drop_xy_band_ok": drop_xy_band_ok,
         "fault_config": {
-            "post_grasp_delay_steps": int(fault_cfg.post_grasp_delay_steps),
+            "enabled": bool(fault_cfg.enabled),
+            "post_grasp_delay_steps": int(getattr(fault_cfg, "post_grasp_delay_steps", 0)),
             "seat_assist_enabled": bool(fault_cfg.seat_assist_enabled),
             "forbid_seat_assist": bool(forbid_seat_assist),
             "min_drop_distance_from_basket_m": float(fault_cfg.min_drop_distance_from_basket_m),
+            "drop_xy_band_min": fault_cfg.drop_xy_band_min,
+            "drop_xy_band_max": fault_cfg.drop_xy_band_max,
             "impulse_lin_std": float(fault_cfg.impulse_lin_std),
             "impulse_ang_std": float(fault_cfg.impulse_ang_std),
             "impulse_lin_bias": list(fault_cfg.impulse_lin_bias),
@@ -866,6 +1028,14 @@ def run_pipeline(
         },
         "first_grasp_step": first_grasp_step,
         "triggered_at": triggered_at,
+        "drop_basket_xy_dist": (
+            float(st0.drop_basket_xy_dist)
+            if is_drop_episode and st0 is not None and st0.drop_basket_xy_dist is not None
+            else None
+        ),
+        "drop_trigger_reason": (
+            st0.drop_trigger_reason if is_drop_episode and st0 is not None else None
+        ),
         "carry_steps": carry_steps,
         "n_settle_logged": n_settle_logged,
         "object_traj": object_traj,
@@ -888,7 +1058,7 @@ def run_pipeline(
         "video_mp4": str(mp4_path),
         "video_gif": str(gif_path),
         "final_state_multicam": proof_shot,
-        "dataset_dir": str(output_dir / "dataset"),
+        "dataset_dir": str(ds_root),
         "planned_destination": planned_dest,
         "seat_assisted": seat_assisted,
         "note": (
@@ -903,23 +1073,15 @@ def run_pipeline(
     print(json.dumps(summary, indent=2), flush=True)
 
     if not behavioral_success:
-        failed = [
-            k
-            for k in (
-                "grasped_before_drop",
-                "was_midair_at_drop",
-                "fault_triggered",
-                "drop_moved_object",
-                "object_in_view_after_drop",
-                "regrasped_after_drop",
-                "object_in_basket",
-                "seat_assist_ok",
-                "dropped_after_carry",
-            )
-            if not summary["checks"].get(k)
-        ]
-        raise SystemExit(f"FAIL: behavioral checks failed: {failed}")
-    print("SUCCESS: grasp → midair drop → recovery place into basket", flush=True)
+        failed = [k for k, v in checks.items() if not v]
+        if raise_on_failure:
+            raise SystemExit(f"FAIL: behavioral checks failed: {failed}")
+        print(f"[pipeline] FAIL (continuing): behavioral checks failed: {failed}", flush=True)
+    else:
+        if is_drop_episode:
+            print("SUCCESS: grasp → midair drop → recovery place into basket", flush=True)
+        else:
+            print("SUCCESS: nominal VLA place into basket", flush=True)
     return summary
 
 
