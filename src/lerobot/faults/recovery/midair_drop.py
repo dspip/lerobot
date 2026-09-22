@@ -303,6 +303,63 @@ class MidAirDropFault:
             gripper_settle_steps=self.config.gripper_settle_steps,
         )
         state.triggered = True
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = self._next_recovery_action(env_idx, env=env)
+        self._log_event(
+            env_idx=env_idx,
+            status="triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+            proposed_action=proposed_action,
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def request_recovery(
+        self,
+        env: Any,
+        env_idx: int,
+        *,
+        reason: str = "head",
+    ) -> np.ndarray | None:
+        """Start IK recovery from current poses without a physics drop impulse.
+
+        If recovery is already active, returns the next recovery action without
+        rebuilding the planner. If the fault is disabled, returns ``None``.
+        """
+        if not self.config.enabled:
+            return None
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished:
+            return None
+        if state.recovery_active:
+            return self._next_recovery_action(env_idx, env=env)
+
+        state.drop_trigger_reason = reason
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = self._next_recovery_action(env_idx, env=env)
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        self._log_event(
+            env_idx=env_idx,
+            status="recovery_requested",
+            telemetry=None,
+            arm_q=get_arm_qpos(rs_env),
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def _start_recovery_planner(
+        self,
+        env: Any,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> np.ndarray:
+        """Build ``SimpleIKRecoveryPlanner`` from current EEF and object poses."""
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
         state.recovery_active = True
 
         episode_seed = _episode_seed(self.config.seed, state.episode_id)
@@ -349,17 +406,7 @@ class MidAirDropFault:
             destination_pos=destination,
             gripper_open=True,
         )
-        recovery_action = self._next_recovery_action(env_idx, env=env)
-        self._log_event(
-            env_idx=env_idx,
-            status="triggered",
-            telemetry=telemetry,
-            arm_q=get_arm_qpos(rs_env),
-            proposed_action=proposed_action,
-            executed_recovery_action=recovery_action,
-            destination_pos=destination,
-        )
-        return recovery_action
+        return np.asarray(destination, dtype=np.float64)
 
     def _next_recovery_action(self, env_idx: int, *, env: Any | None = None) -> np.ndarray:
         state = self._states[env_idx]

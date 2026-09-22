@@ -78,6 +78,12 @@ Timing: `--fault.post_grasp_delay_steps`, `--fault.min_drop_distance_from_basket
 Recovery: `--fault.recovery_fps`, `--fault.basket_name`, `--fault.side_grasp_enabled`,
 `--fault.seat_assist_enabled`, `--fault.waypoint_noise_m`, etc.
 
+The same IK recovery planner can also be started on demand via
+`MidAirDropFault.request_recovery` (for example when an external monitor decides the
+episode needs help). That path uses current end-effector and object poses and does
+**not** apply a new physics impulse or set the drop-injection loss mask; only the
+automatic drop trigger (`_trigger_drop`) applies the impulse and gripper settle.
+
 See `src/lerobot/faults/config.py` for the full schema.
 
 ## Example: action hold

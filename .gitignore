@@ -183,3 +183,8 @@ ft_inventory/
 *.urdf
 *.xml
 *.part
+
+# Local experiment downloads and dataset archives
+/checkpoints/
+/failure_mix_small_dataset.tar
+/xy_band_mix_60ep.tar.gz

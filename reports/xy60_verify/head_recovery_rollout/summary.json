@@ -1,0 +1,8 @@
+{
+  "checkpoint": "/home/aviya/Projects/lerobot/checkpoints/no_calibration_predicted_head_to_vlm-total3000-20260922T091225Z-1-001/no_calibration_predicted_head_to_vlm-total3000",
+  "steps": 40,
+  "threshold": 0.5,
+  "recovery_started_at": null,
+  "max_p_drop": 0.005730696953833103,
+  "note": "Recovery starts only from HeadToVlmPolicy probability, via request_recovery. The automatic drop trigger is never called. The two-pass module is a reconstruction; Eran's head_vlm_conditioning.py is not in this repo."
+}
