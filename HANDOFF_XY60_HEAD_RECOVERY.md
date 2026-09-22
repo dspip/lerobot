@@ -4,7 +4,14 @@ Single source of truth for the **next agent** on this task. Read this whole file
 
 **Owner:** Aviya. **Supervisor rule:** if an investigation finds a bug or an ambiguity, stop. Explain it in simple words, give a recommended fix with pros and cons and the checks you already ran, and wait for Aviya's approval. Do not "just fix it."
 
-**Out of scope:** `grasp_miss`, soup initial-position variation, more dataset recording, retraining, commits, pushing.
+**Out of scope:** `grasp_miss`, soup initial-position variation, more dataset recording, retraining, pushing, and any commit on `main`.
+
+**Branches (not merged, not pushed):**
+
+| Repo | Branch | Commit | What |
+| --- | --- | --- | --- |
+| `/home/aviya/Projects/lerobot` | `feat/head-triggered-recovery` | `14313b83` | `request_recovery`, tests, rollout script, audit, videos. `main` does not contain this. |
+| `third_party/Gangelia_Project` | `feat/head-vlm-loader` | `e80efe8` | Reconstructed two-pass loader. Eran's `eran_ai/initial-pipeline` does not contain this. |
 
 Drop latch semantics stay as they are. See [`HANDOFF.md`](./HANDOFF.md). Grasp-miss work stays in [`HANDOFF_GRASP_MISS.md`](./HANDOFF_GRASP_MISS.md) and must not start until mid-air drop recovery is proven reliable.
 
@@ -15,9 +22,9 @@ Drop latch semantics stay as they are. See [`HANDOFF.md`](./HANDOFF.md). Grasp-m
 | Track | Status | What |
 | --- | --- | --- |
 | 1. Prove the XY60 dataset | **DONE, waiting on Aviya** | Report: `reports/xy60_verify/DATASET_AUDIT.md`. Inventory, labels, masks, and videos match the training report. Picture/action before-vs-after is **not proven**. Dataset was not edited. |
-| 2. Recovery activator | **DONE, waiting on Aviya before sim** | `MidAirDropFault.request_recovery` starts the IK planner without an impulse. 270 fault tests passed. Checkpoint rollout is still not started. |
-| 3. Vary soup start pose | **WAIT** | Only after Track 1 convinces Aviya the dataset is sound. |
-| 4. Roll out Eran's checkpoints | **ONE VIDEO DONE** | Head-triggered recovery ran after a scripted release. See `reports/xy60_verify/head_recovery_after_release/`. The two-pass loader is a reconstruction; Eran's `head_vlm_conditioning.py` is still not in the repo. |
+| 2. Recovery activator | **DONE** | `MidAirDropFault.request_recovery` starts the IK planner without an impulse. 270 fault tests passed. Drop trigger path was not changed. |
+| 3. Vary soup start pose | **WAIT** | Only after Aviya says the dataset is sound enough. |
+| 4. Head-triggered sim | **ONE SCENE ONLY** | Clean 40 steps: max P(drop)=0.006, recovery never started. After a scripted release: P(drop)=0.993 and `request_recovery` ran. Not a success-rate test. |
 
 Eran trained SmolVLA. Aviya records data and owns the in-tree fault system. Eran is not the person to implement the recovery hook.
 
@@ -208,36 +215,41 @@ The point of that test: the head's offline F1 does not tell us if recovery helps
 | 2026-09-22 | Aviya stopped the parallel workers. Dataset audit produced no report and no frames. Extract left at `/tmp/xy_band_mix_60ep_extract`. The next agent is the manager, not another pair of workers. |
 | 2026-09-22 | Track 1 finished by the manager. `reports/xy60_verify/DATASET_AUDIT.md` plus 64 labeled frames under `reports/xy60_verify/frames/`. Counts hold (60 episodes, 5,953 rows, 20/40 split, 48/12 via `audit_xy60.py`, 40 masked inject frames). All 8 videos decode to those lengths. Observation/action lag is not proven (both lags match arm motion). No dataset edit. Track 3 and rollouts still waiting. |
 | 2026-09-22 | Aviya approved the predicted-head sim (head calls `request_recovery`, no drop impulse, video). Stopped before any rollout. Checkpoint format `gangelia-phase2-head-to-vlm-v1` does not load in the in-tree `Phase2Policy` (adapter outputs 960, two VLM passes). `head_vlm_conditioning.py` and `train_head_vlm_no_calibration.py` are not on this machine. |
-| 2026-09-22 | Continued anyway with a reconstructed two-pass loader (`smolvla_r_package/head_vlm_conditioning.py`): unconditioned VLM pass, head, 960-d residual on the state token, second VLM pass. Clean 40-step rollout: max P(drop)=0.006, recovery never started (`reports/xy60_verify/head_recovery_rollout/`). After replaying nominal episode 12 and a physics release that does not call the drop trigger: can was grasped, head P(drop)=0.993 on the first scored step, `request_recovery` logged `drop_trigger_reason=head`. Video: `reports/xy60_verify/head_recovery_after_release/rollout.mp4`. This is not a 10-seed success rate. |
+| 2026-09-22 | Continued with a reconstructed two-pass loader (`smolvla_r_package/head_vlm_conditioning.py`): unconditioned VLM pass, head, 960-d residual on the state token, second VLM pass. Clean 40-step rollout: max P(drop)=0.006, recovery never started (`reports/xy60_verify/head_recovery_rollout/`). After replaying nominal episode 12 and a physics release that does not call the drop trigger: can was grasped, head P(drop)=0.993 on the first scored step, `request_recovery` logged `drop_trigger_reason=head`. Video: `reports/xy60_verify/head_recovery_after_release/rollout.mp4`. This is not a 10-seed success rate. |
+| 2026-09-22 | Aviya rejected a commit on `main`. That commit was moved, unpushed, to `feat/head-triggered-recovery` (`14313b83`). The loader commit was moved off `eran_ai/initial-pipeline` onto `feat/head-vlm-loader` (`e80efe8`). Do not commit to `main` or to Eran's branch. |
+| 2026-09-22 | Manual drop/recovery live demo: `examples/faults/run_manual_drop_recovery.py` (tkinter, no head). Replay ep 12, then Aviya presses Drop or Recover. Write-up: `reports/xy60_verify/MANUAL_DROP_RECOVERY.md`. Not run interactively in CI; `py_compile` only. |
+| 2026-09-22 | Manual drop/recovery demo fix: full nominal replay (random ep from audit), no pre-drop freeze; `after_physics_step` during recovery; 4000-step cap and `recovery_done` exit. Aviya hit `step_cap` at 472 on the old script. Docs: `MANUAL_DROP_RECOVERY.md`. |
+| 2026-09-22 | Manual demo replay fix: default ep 12 only, loop same episode with `init_state_id` restored on reset (no random ep chain). Recover-before-drop message. |
 
-The next agent owns this file and updates this table as work finishes.
+The next agent owns this file and updates this table as work finishes. This handoff edit itself may be uncommitted on `feat/head-triggered-recovery`. Do not commit it unless Aviya asks.
 
 ## 7b. Manager role (Aviya, 2026-09-22)
 
-You are the manager. Do not open two background workers at the start. Aviya asked for one agent to continue this job.
+You are one manager in this chat. Do not open background workers. Do not commit. Do not push. Do not touch `main`.
 
-Do the dataset proof yourself first. Delegate a coding change to Composer only when the change is already approved and too large to do inline. If a check finds a bug, stop and ask Aviya. Do not launch Track 3 or a checkpoint rollout on your own.
+Discuss the next step with Aviya before writing more code. If a check finds a bug, stop and explain it in simple words with pros, cons, and the checks you ran.
 
 ---
 
 ## 8. Copy-paste prompt for a fresh agent
 
 ```text
-You are the manager for Aviya's LeRobot repo at /home/aviya/Projects/lerobot. Continue the job in HANDOFF_XY60_HEAD_RECOVERY.md. Do not start a second chat's worth of parallel workers. One manager. Read that handoff fully, plus AGENTS.md and .cursor/rules/fault-code.mdc.
+You are talking with Aviya about an unfinished experiment. Do not write code, do not commit, do not push, and do not touch main until Aviya asks. Read HANDOFF_XY60_HEAD_RECOVERY.md first. Also skim reports/xy60_verify/DATASET_AUDIT.md and reports/xy60_verify/head_recovery_after_release/summary.json.
 
-Already done, do not redo:
-- Track 2: MidAirDropFault.request_recovery(env, env_idx, reason="head") starts IK recovery without an impulse. Details in reports/xy60_verify/RECOVERY_REQUEST.md. tests/faults: 270 passed. No policy calls this yet. Do not rerun the whole suite unless you change that code.
+Repo: /home/aviya/Projects/lerobot
+Checked-out branch: feat/head-triggered-recovery (commit 14313b83). main does not have this work. It was never pushed.
+Training repo: third_party/Gangelia_Project on feat/head-vlm-loader (commit e80efe8). Eran's branch eran_ai/initial-pipeline does not have the loader. That commit was never pushed.
 
-Cancelled, so you do it:
-- Track 1 dataset proof was stopped before any report. Tarball: /home/aviya/Projects/lerobot/xy_band_mix_60ep.tar.gz. A partial extract may exist at /tmp/xy_band_mix_60ep_extract. reports/xy60_verify/frames/ is empty. There is no DATASET_AUDIT.md.
+What is already true:
+- XY60 dataset audit holds on counts, labels, masks, and video length. Whether each picture was taken before or after its action is not proven. Report: reports/xy60_verify/DATASET_AUDIT.md. Frames: reports/xy60_verify/frames/.
+- MidAirDropFault.request_recovery starts the existing IK planner without a physics drop. Tests passed. The automatic drop path was not changed.
+- A reconstructed two-pass head (third_party/Gangelia_Project/smolvla_r_package/head_vlm_conditioning.py) loads the predicted-head checkpoint. Eran's real head_vlm_conditioning.py is still missing, so this loader is not proven identical to his.
+- Clean 40-step rollout: max P(drop)=0.006, recovery never started. Video: reports/xy60_verify/head_recovery_rollout/rollout.mp4.
+- After replaying nominal episode 12 and a scripted release that does not start recovery: the can was grasped, then the head scored P(drop)=0.993 and request_recovery logged drop_trigger_reason=head. Video: reports/xy60_verify/head_recovery_after_release/rollout.mp4. Task success was not scored. One scene only.
 
-Your next job is Track 1 yourself:
-Prove whether xy_band_mix_60ep is a correct training set. Numbers and pictures. Write reports/xy60_verify/DATASET_AUDIT.md. Do not fix the dataset. If a claim fails, explain it in simple words with pros, cons, and the checks you ran, then wait for Aviya.
+Checkpoint used: checkpoints/no_calibration_predicted_head_to_vlm-total3000-20260922T091225Z-1-001/no_calibration_predicted_head_to_vlm-total3000 (gitignored local download).
 
-Still forbidden until Aviya says otherwise:
-grasp_miss, soup start-position changes, retraining, checkpoint rollouts, commits, and launching two background workers.
+Out of scope until Aviya says otherwise: grasp_miss, moving the soup's start position, retraining, committing to main, pushing.
 
-Update the progress log in HANDOFF_XY60_HEAD_RECOVERY.md when you finish a step.
-
-Return: what you verified, any code you changed, test results, and any decision waiting on Aviya.
+Aviya wants to discuss the next step. Explain in simple words. If you recommend something, give pros and cons and wait.
 ```
