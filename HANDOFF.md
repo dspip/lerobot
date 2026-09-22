@@ -1,6 +1,8 @@
 # HANDOFF — Failure-annotated LIBERO datasets (LeRobot Parquet)
 
-Single source of truth for this workstream.
+Single source of truth for the **mid-air drop** workstream.
+
+**Grasp-miss (next failure type):** [`HANDOFF_GRASP_MISS.md`](./HANDOFF_GRASP_MISS.md) — do not change drop latch semantics in this file.
 
 ## 1. Goal
 
@@ -43,6 +45,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 | E. Smoke fine-tune | After D | Short SmolVLA run using `loss_mask`; eval with faults off then on |
 | F. Scale | After E | Only if unaided recoveries look right on video **and** parquet |
 | G. Jetson / extra sensors | After F | New schema; not a missing column in current verify |
+| H. `grasp_miss` type | **Handoff written** | See [`HANDOFF_GRASP_MISS.md`](./HANDOFF_GRASP_MISS.md); do not fold into drop latch |
 
 **Do not scale** from `outputs/failure_annotation_verify/` (delay=0, seat assist, settle not in parquet).
 
