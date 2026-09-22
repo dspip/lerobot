@@ -278,6 +278,53 @@ class MidAirDropFault:
         *,
         proposed_action: np.ndarray,
     ) -> np.ndarray:
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = self._next_recovery_action(env_idx, env=env)
+        self._log_event(
+            env_idx=env_idx,
+            status="triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+            proposed_action=proposed_action,
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def trigger_manual_drop(self, env: Any, env_idx: int, *, reason: str = "manual") -> bool:
+        """Drop the configured object immediately without starting recovery.
+
+        This is the interactive counterpart to the automatic trigger. It shares
+        the configured impulse, settling, state bookkeeping, and event schema;
+        callers can later start recovery with :meth:`request_recovery`.
+        """
+        if not self.config.enabled:
+            return False
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished or state.triggered:
+            return False
+        state.drop_trigger_reason = reason
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        self._log_event(
+            env_idx=env_idx,
+            status="manual_triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+        )
+        return True
+
+    def _drop_object(
+        self,
+        env: Any,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> tuple[dict[str, Any], Any]:
+        """Apply the configured physical drop and retain its sampled impulse."""
         rs_env = get_robosuite_env(env, env_idx=env_idx)
         # Bias + Gaussian noise. Keep |v| modest so the can stays in-camera.
         bias = np.asarray(self.config.impulse_lin_bias, dtype=np.float64).reshape(3)
@@ -302,19 +349,7 @@ class MidAirDropFault:
             settle_steps=self.config.settle_steps,
             gripper_settle_steps=self.config.gripper_settle_steps,
         )
-        state.triggered = True
-        destination = self._start_recovery_planner(env, env_idx, state)
-        recovery_action = self._next_recovery_action(env_idx, env=env)
-        self._log_event(
-            env_idx=env_idx,
-            status="triggered",
-            telemetry=telemetry,
-            arm_q=get_arm_qpos(rs_env),
-            proposed_action=proposed_action,
-            executed_recovery_action=recovery_action,
-            destination_pos=destination,
-        )
-        return recovery_action
+        return telemetry, rs_env
 
     def request_recovery(
         self,
@@ -322,11 +357,14 @@ class MidAirDropFault:
         env_idx: int,
         *,
         reason: str = "head",
+        consume_first_action: bool = True,
     ) -> np.ndarray | None:
         """Start IK recovery from current poses without a physics drop impulse.
 
         If recovery is already active, returns the next recovery action without
-        rebuilding the planner. If the fault is disabled, returns ``None``.
+        rebuilding the planner. Set ``consume_first_action=False`` when a
+        :class:`DropRecoveryEnvWrapper` will execute the first action on its
+        next ``step``. If the fault is disabled, returns ``None``.
         """
         if not self.config.enabled:
             return None
@@ -340,7 +378,9 @@ class MidAirDropFault:
 
         state.drop_trigger_reason = reason
         destination = self._start_recovery_planner(env, env_idx, state)
-        recovery_action = self._next_recovery_action(env_idx, env=env)
+        recovery_action = (
+            self._next_recovery_action(env_idx, env=env) if consume_first_action else None
+        )
         rs_env = get_robosuite_env(env, env_idx=env_idx)
         self._log_event(
             env_idx=env_idx,

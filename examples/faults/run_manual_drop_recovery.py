@@ -36,12 +36,11 @@ REPO = Path(__file__).resolve().parents[2]
 from lerobot.envs.configs import LiberoEnv  # noqa: E402
 from lerobot.envs.factory import make_env  # noqa: E402
 from lerobot.faults.config import FaultInjectionConfig  # noqa: E402
-from lerobot.faults.logging import FaultEventLogger  # noqa: E402
 from lerobot.faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
+from lerobot.faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 from lerobot.faults.sim.libero import (  # noqa: E402
     get_robosuite_env,
     is_object_grasped,
-    midair_drop,
     unwrap_libero_env,
 )
 
@@ -50,8 +49,6 @@ DATASET_ROOT = Path("/tmp/xy_band_mix_60ep_extract/dataset/data/chunk-000")
 DEFAULT_OUTPUT = REPO / "reports" / "xy60_verify" / "manual_drop_recovery"
 DEFAULT_REPLAY_EPISODE = 12
 OBJECT_NAME = "alphabet_soup_1"
-DROP_LIN = [0.0, 0.08, -0.45]
-DROP_ANG = [0.0, -0.06, 0.01]
 ACTION_HOLD_STEPS = 2
 MAX_TOTAL_STEPS = 4000
 LIBERO_EPISODE_LENGTH = 4000
@@ -276,13 +273,18 @@ def main() -> None:
     baseline_init_state_id = libero_env.init_state_id
 
     args.output.mkdir(parents=True, exist_ok=True)
-    logger = FaultEventLogger(args.output / "fault_events.jsonl")
-    fault = MidAirDropFault(
-        FaultInjectionConfig(enabled=True, type="midair_drop", seed=1000, probability=0.0),
-        num_envs=1,
-        event_logger=logger,
+    fault_config = FaultInjectionConfig(
+        enabled=True,
+        type="midair_drop",
+        seed=1000,
+        probability=0.0,
+        impulse_lin_bias=(0.0, 0.08, -0.45),
+        impulse_lin_std=0.0,
+        impulse_ang_std=0.0,
+        log_path=args.output / "fault_events.jsonl",
     )
-    fault.reset(episode_ids=[0])
+    env = DropRecoveryEnvWrapper(vec, fault_config)
+    fault: MidAirDropFault = env.fault
 
     ui = ManualControlUI()
     frames: list[np.ndarray] = []
@@ -306,31 +308,29 @@ def main() -> None:
         nonlocal obs, replay_index, replay_hold, reset_seed
         libero_env.init_state_id = baseline_init_state_id
         reset_seed += 1
-        obs, _info = vec.reset(seed=reset_seed)
+        obs, _info = env.reset(seed=reset_seed)
         replay_index = 0
         replay_hold = 0
         print(f"Restarting nominal episode {replay_episode_id} from action 0")
 
     try:
-        obs, _info = vec.reset(seed=reset_seed)
+        obs, _info = env.reset(seed=reset_seed)
         while global_step < MAX_TOTAL_STEPS and not ui.quit_requested:
             ui.pump()
             if recovery_finished and post_recovery_frames >= POST_RECOVERY_HOLD_FRAMES:
                 quit_reason = "recovery_done"
                 break
 
-            recovery_action_from_request: np.ndarray | None = None
-
             if ui.pending_drop:
                 ui.pending_drop = False
                 if not dropped:
-                    rs_env = get_robosuite_env(vec, 0)
+                    rs_env = get_robosuite_env(env, 0)
                     grasped_before_drop = bool(is_object_grasped(rs_env, OBJECT_NAME))
                     print(f"Drop: is_object_grasped={grasped_before_drop} (step {global_step})")
-                    midair_drop(rs_env, OBJECT_NAME, lin_vel=DROP_LIN, ang_vel=DROP_ANG)
-                    dropped = True
-                    drop_pressed_at = global_step
-                    replay_index = len(replay_commands)
+                    if fault.trigger_manual_drop(env, 0):
+                        dropped = True
+                        drop_pressed_at = global_step
+                        replay_index = len(replay_commands)
 
             if ui.pending_recover:
                 ui.pending_recover = False
@@ -338,25 +338,18 @@ def main() -> None:
                     if not dropped:
                         print("Press Drop while the can is in the hand first.")
                     else:
-                        first = fault.request_recovery(vec, 0, reason="manual")
+                        fault.request_recovery(
+                            env, 0, reason="manual", consume_first_action=False
+                        )
                         recovery_active = True
                         recovery_pressed_at = global_step
                         print(f"Recovery started at step {global_step}")
-                        if first is not None:
-                            recovery_action_from_request = np.clip(
-                                np.asarray(first, dtype=np.float32).reshape(-1)[:7], -1.0, 1.0
-                            )
 
             in_replay = replay_index < len(replay_commands) and not dropped and not recovery_active
             if recovery_finished:
                 action = _hold_action(dropped=True)
             elif recovery_active:
-                if recovery_action_from_request is not None:
-                    action = recovery_action_from_request
-                else:
-                    hold = _hold_action(dropped=True)
-                    action = fault.on_step(vec, hold.reshape(1, -1))[0]
-                    action = np.clip(np.asarray(action, dtype=np.float32).reshape(-1)[:7], -1.0, 1.0)
+                action = _hold_action(dropped=True)
             elif in_replay:
                 if replay_hold == 0:
                     action = replay_commands[replay_index]
@@ -381,11 +374,10 @@ def main() -> None:
             frames.append(_overlay(images["image"], overlay))
             ui.show(frames[-1])
 
-            obs, _reward, terminated, truncated, _info = vec.step(action.reshape(1, 7))
+            obs, _reward, terminated, truncated, _info = env.step(action.reshape(1, 7))
             global_step += 1
 
             if recovery_active and not recovery_finished:
-                fault.after_physics_step(vec)
                 if _recovery_planner_done(fault):
                     recovery_finished = True
                     recovery_active = False
@@ -410,7 +402,7 @@ def main() -> None:
             quit_reason = "user_quit"
     finally:
         ui.destroy()
-        vec.close()
+        env.close()
         if ui.quit_requested:
             quit_reason = "user_quit"
         summary = {

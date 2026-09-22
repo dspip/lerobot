@@ -144,3 +144,51 @@ def test_request_recovery_disabled_returns_none():
     inj = MidAirDropFault(_cfg(enabled=False), num_envs=1)
     assert inj.request_recovery(MagicMock(), 0) is None
     assert not inj._states[0].recovery_active
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+def test_request_recovery_can_leave_first_action_for_wrapper(
+    mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_dest
+):
+    mock_get_rs.return_value = _mock_rs_env()
+    mock_arm_q.return_value = np.zeros(7)
+    mock_eef.return_value = (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
+    mock_obj_pose.return_value = {"pos": np.zeros(3), "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0])}
+    mock_dest.return_value = np.array([0.3, 0.2, 0.9])
+    inj = MidAirDropFault(_cfg(), num_envs=1)
+    env = MagicMock()
+
+    assert inj.request_recovery(env, 0, consume_first_action=False) is None
+    action = inj.on_step(env, _action(1, 7, 99.0))
+
+    assert inj._states[0].recovery_active
+    assert not np.allclose(action, [[99.0] * 7])
+
+
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+def test_manual_drop_uses_fault_lifecycle_without_starting_recovery(
+    mock_get_rs, mock_arm_q, mock_drop, tmp_path: Path
+):
+    mock_get_rs.return_value = _mock_rs_env()
+    mock_arm_q.return_value = np.zeros(7)
+    mock_drop.return_value = {"object_pose_after": {"pos": [0.0, 0.0, 0.0]}}
+    logger = FaultEventLogger(tmp_path / "faults.jsonl")
+    inj = MidAirDropFault(_cfg(), num_envs=1, event_logger=logger)
+
+    assert inj.trigger_manual_drop(MagicMock(), 0)
+    logger.close()
+
+    state = inj._states[0]
+    assert state.triggered
+    assert not state.recovery_active
+    assert state.last_impulse_lin is not None
+    mock_drop.assert_called_once()
+    event = json.loads((tmp_path / "faults.jsonl").read_text())
+    assert event["status"] == "manual_triggered"
+    assert event["drop_trigger_reason"] == "manual"
