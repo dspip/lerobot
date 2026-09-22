@@ -24,12 +24,20 @@ import argparse
 import json
 import os
 import subprocess
-import tkinter as tk
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw
 from robosuite.utils.transform_utils import quat2axisangle
+
+try:
+    import tkinter as tk
+    from PIL import ImageTk
+except ImportError:
+    raise SystemExit(
+        "Tkinter/PIL.ImageTk is required to run the interactive manual drop/recovery script.\n"
+        "Please install it (e.g. `sudo apt-get install python3-tk` on Ubuntu/Debian) and try again."
+    )
 
 REPO = Path(__file__).resolve().parents[2]
 

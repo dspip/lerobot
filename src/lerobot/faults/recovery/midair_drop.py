@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import gymnasium as gym
+    from gymnasium.vector import VectorEnv
 
 import numpy as np
 
@@ -169,7 +173,7 @@ class MidAirDropFault:
 
     def on_step(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         actions: np.ndarray,
         episode_ids: list[int] | None = None,
     ) -> np.ndarray:
@@ -211,7 +215,7 @@ class MidAirDropFault:
 
         return executed
 
-    def _should_trigger(self, env: Any, env_idx: int, state: _EnvDropState) -> bool:
+    def _should_trigger(self, env: gym.Env | VectorEnv, env_idx: int, state: _EnvDropState) -> bool:
         if state.triggered:
             return False
         if not (self.config.t_min <= state.episode_step <= self.config.t_max):
@@ -272,7 +276,7 @@ class MidAirDropFault:
 
     def _trigger_drop(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         env_idx: int,
         state: _EnvDropState,
         *,
@@ -293,7 +297,7 @@ class MidAirDropFault:
         )
         return recovery_action
 
-    def trigger_manual_drop(self, env: Any, env_idx: int, *, reason: str = "manual") -> bool:
+    def trigger_manual_drop(self, env: gym.Env | VectorEnv, env_idx: int, *, reason: str = "manual") -> bool:
         """Drop the configured object immediately without starting recovery.
 
         This is the interactive counterpart to the automatic trigger. It shares
@@ -320,7 +324,7 @@ class MidAirDropFault:
 
     def _drop_object(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         env_idx: int,
         state: _EnvDropState,
     ) -> tuple[dict[str, Any], Any]:
@@ -353,7 +357,7 @@ class MidAirDropFault:
 
     def request_recovery(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         env_idx: int,
         *,
         reason: str = "head",
@@ -394,7 +398,7 @@ class MidAirDropFault:
 
     def _start_recovery_planner(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         env_idx: int,
         state: _EnvDropState,
     ) -> np.ndarray:
@@ -448,7 +452,7 @@ class MidAirDropFault:
         )
         return np.asarray(destination, dtype=np.float64)
 
-    def _next_recovery_action(self, env_idx: int, *, env: Any | None = None) -> np.ndarray:
+    def _next_recovery_action(self, env_idx: int, *, env: gym.Env | VectorEnv | None = None) -> np.ndarray:
         state = self._states[env_idx]
         if state.planner is None:
             raise RuntimeError(f"MidAirDropFault env {env_idx}: recovery_active without planner.")
@@ -567,7 +571,7 @@ class MidAirDropFault:
         noisy[:6] = np.clip(noisy[:6], -1.0, 1.0)
         return noisy
 
-    def after_physics_step(self, env: Any) -> None:
+    def after_physics_step(self, env: gym.Env | VectorEnv) -> None:
         """Seat into basket after Gym physics, then freeze recovery.
 
         Must run *after* ``env.step`` so the control cycle cannot eject a just-seated can.

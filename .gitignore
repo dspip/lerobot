@@ -188,3 +188,9 @@ ft_inventory/
 /checkpoints/
 /failure_mix_small_dataset.tar
 /xy_band_mix_60ep.tar.gz
+
+# Local manual drop recovery outputs
+/reports/xy60_verify/manual_drop_recovery/
+
+# Gangelia project third-party repository
+/third_party/Gangelia_Project/
