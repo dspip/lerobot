@@ -183,3 +183,19 @@ ft_inventory/
 *.urdf
 *.xml
 *.part
+
+# Local experiment downloads and dataset archives
+/checkpoints/
+/failure_mix_small_dataset.tar
+/xy_band_mix_60ep.tar.gz
+
+# Local manual drop recovery outputs
+/reports/xy60_verify/manual_drop_recovery/
+
+# Verification media files (frames and rollout videos)
+/reports/xy60_verify/frames/
+/reports/xy60_verify/head_recovery_after_release/rollout.mp4
+/reports/xy60_verify/head_recovery_rollout/rollout.mp4
+
+# Gangelia project third-party repository
+/third_party/Gangelia_Project/

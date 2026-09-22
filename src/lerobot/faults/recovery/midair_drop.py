@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import gymnasium as gym
+    from gymnasium.vector import VectorEnv
 
 import numpy as np
 
@@ -169,7 +173,7 @@ class MidAirDropFault:
 
     def on_step(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         actions: np.ndarray,
         episode_ids: list[int] | None = None,
     ) -> np.ndarray:
@@ -211,7 +215,7 @@ class MidAirDropFault:
 
         return executed
 
-    def _should_trigger(self, env: Any, env_idx: int, state: _EnvDropState) -> bool:
+    def _should_trigger(self, env: gym.Env | VectorEnv, env_idx: int, state: _EnvDropState) -> bool:
         if state.triggered:
             return False
         if not (self.config.t_min <= state.episode_step <= self.config.t_max):
@@ -272,12 +276,59 @@ class MidAirDropFault:
 
     def _trigger_drop(
         self,
-        env: Any,
+        env: gym.Env | VectorEnv,
         env_idx: int,
         state: _EnvDropState,
         *,
         proposed_action: np.ndarray,
     ) -> np.ndarray:
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = self._next_recovery_action(env_idx, env=env)
+        self._log_event(
+            env_idx=env_idx,
+            status="triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+            proposed_action=proposed_action,
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def trigger_manual_drop(self, env: gym.Env | VectorEnv, env_idx: int, *, reason: str = "manual") -> bool:
+        """Drop the configured object immediately without starting recovery.
+
+        This is the interactive counterpart to the automatic trigger. It shares
+        the configured impulse, settling, state bookkeeping, and event schema;
+        callers can later start recovery with :meth:`request_recovery`.
+        """
+        if not self.config.enabled:
+            return False
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished or state.triggered:
+            return False
+        state.drop_trigger_reason = reason
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        self._log_event(
+            env_idx=env_idx,
+            status="manual_triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+        )
+        return True
+
+    def _drop_object(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> tuple[dict[str, Any], Any]:
+        """Apply the configured physical drop and retain its sampled impulse."""
         rs_env = get_robosuite_env(env, env_idx=env_idx)
         # Bias + Gaussian noise. Keep |v| modest so the can stays in-camera.
         bias = np.asarray(self.config.impulse_lin_bias, dtype=np.float64).reshape(3)
@@ -302,7 +353,57 @@ class MidAirDropFault:
             settle_steps=self.config.settle_steps,
             gripper_settle_steps=self.config.gripper_settle_steps,
         )
-        state.triggered = True
+        return telemetry, rs_env
+
+    def request_recovery(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        *,
+        reason: str = "head",
+        consume_first_action: bool = True,
+    ) -> np.ndarray | None:
+        """Start IK recovery from current poses without a physics drop impulse.
+
+        If recovery is already active, returns the next recovery action without
+        rebuilding the planner. Set ``consume_first_action=False`` when a
+        :class:`DropRecoveryEnvWrapper` will execute the first action on its
+        next ``step``. If the fault is disabled, returns ``None``.
+        """
+        if not self.config.enabled:
+            return None
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished:
+            return None
+        if state.recovery_active:
+            return self._next_recovery_action(env_idx, env=env)
+
+        state.drop_trigger_reason = reason
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = (
+            self._next_recovery_action(env_idx, env=env) if consume_first_action else None
+        )
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        self._log_event(
+            env_idx=env_idx,
+            status="recovery_requested",
+            telemetry=None,
+            arm_q=get_arm_qpos(rs_env),
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def _start_recovery_planner(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> np.ndarray:
+        """Build ``SimpleIKRecoveryPlanner`` from current EEF and object poses."""
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
         state.recovery_active = True
 
         episode_seed = _episode_seed(self.config.seed, state.episode_id)
@@ -349,19 +450,9 @@ class MidAirDropFault:
             destination_pos=destination,
             gripper_open=True,
         )
-        recovery_action = self._next_recovery_action(env_idx, env=env)
-        self._log_event(
-            env_idx=env_idx,
-            status="triggered",
-            telemetry=telemetry,
-            arm_q=get_arm_qpos(rs_env),
-            proposed_action=proposed_action,
-            executed_recovery_action=recovery_action,
-            destination_pos=destination,
-        )
-        return recovery_action
+        return np.asarray(destination, dtype=np.float64)
 
-    def _next_recovery_action(self, env_idx: int, *, env: Any | None = None) -> np.ndarray:
+    def _next_recovery_action(self, env_idx: int, *, env: gym.Env | VectorEnv | None = None) -> np.ndarray:
         state = self._states[env_idx]
         if state.planner is None:
             raise RuntimeError(f"MidAirDropFault env {env_idx}: recovery_active without planner.")
@@ -480,7 +571,7 @@ class MidAirDropFault:
         noisy[:6] = np.clip(noisy[:6], -1.0, 1.0)
         return noisy
 
-    def after_physics_step(self, env: Any) -> None:
+    def after_physics_step(self, env: gym.Env | VectorEnv) -> None:
         """Seat into basket after Gym physics, then freeze recovery.
 
         Must run *after* ``env.step`` so the control cycle cannot eject a just-seated can.
