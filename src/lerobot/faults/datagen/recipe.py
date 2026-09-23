@@ -56,6 +56,14 @@ _ALLOWED_CONTROLLER_MODES: frozenset[tuple[DatagenController, PostDropMode]] = f
     }
 )
 
+_CONTROLLER_MODE_TAGS: dict[tuple[DatagenController, PostDropMode], int] = {
+    (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK): 1,
+    (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK): 2,
+    (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK): 3,
+    (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK): 4,
+    (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK): 5,
+}
+
 
 @dataclass(frozen=True)
 class PlacementRecipe:
@@ -258,7 +266,7 @@ def paired_episode_seed_manifests(
         for episode_index in range(int(variant.episodes)):
             if episode_index != logical_episode_index:
                 continue
-            ctrl_tag = hash((variant.controller.value, variant.post_drop_mode.value)) & 0xFFFF
+            ctrl_tag = _CONTROLLER_MODE_TAGS[(variant.controller, variant.post_drop_mode)]
             controller_seed = _derive_seed(ep_seed, _CONTROLLER_SEED_TAG, ctrl_tag)
             manifests.append(
                 EpisodeSeedManifest(
