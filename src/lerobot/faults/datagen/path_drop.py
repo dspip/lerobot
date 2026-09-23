@@ -126,12 +126,16 @@ def eligible_path(
     *,
     basket_xy: np.ndarray,
     keepout_m: float,
+    eligible_phases: tuple[str, ...] | None = None,
 ) -> EligiblePath:
     """Clip every carry segment against the circular basket keep-out."""
     basket = np.asarray(basket_xy, dtype=np.float64).reshape(2)
     keepout = float(keepout_m)
+    allowed = frozenset(eligible_phases) if eligible_phases is not None else None
     pieces: list[EligibleArcPiece] = []
     for order, segment in enumerate(carry_path.segments):
+        if allowed is not None and segment.name not in allowed:
+            continue
         for t0, t1 in _outside_intervals(segment, basket, keepout):
             length = segment.length * (t1 - t0)
             if length > 1e-12:

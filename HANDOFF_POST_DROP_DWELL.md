@@ -10,10 +10,12 @@
 **Working tree:** implement in the current tree (often `main`). Do not switch
 to `feat/head-triggered-recovery` unless the user says so.
 **Date:** 2026-09-23
-**Status:** Diagnostics closed. Recorder still starts IK on the drop step.
-**Deliverable:** ship a mergeable recorder + shared recipe JSON so the
-teammate can record dwell data **without** scripted hover/wander and **with**
-our measured defaults.
+**Status (2026-09-23):** Unified drop datagen is implemented on branch
+`feat/unified-drop-datagen`. Use `examples/faults/recipes/can_drop_datagen.json`
+and `examples/faults/run_drop_datagen.py` (five controller×mode variants,
+paired seeds, `run_manifest.json`). Sections below that reference deleted
+files (`can_simpleik_datagen.json`, 50/50-only mix, `matrix_results.json`,
+`DatagenEventLog`, viewer modules) are **historical** unless marked current.
 
 This file supersedes:
 
@@ -41,11 +43,12 @@ Our fixes vs their original plan:
 | Always-on retry / hover | Three **tagged** modes in JSON; default is continue | Reset retries exist only if you clear the action queue |
 | Delete `_cleared_after_failure` | **Do not** | Labels a successful place as a second drop |
 | `basket_dist < 0.15` success | **Do not** | That oracle does not exist; keep cylinder checks |
-| Shared recipe JSON | **Yes:** `examples/faults/recipes/can_simpleik_datagen.json` | Additive `post_drop` block so their pose/object work can merge |
+| Shared recipe JSON | **Yes (current):** `examples/faults/recipes/can_drop_datagen.json` | Unified matrix: SimpleIK + SmolVLA × post-drop modes |
 
-Default recording mix (§12.6): **`continue_then_ik` / `reset_then_ik` at 50/50**,
-dwell 80. `immediate_ik` weight **0** in the shared recipe (library default
-remains for unit-test compatibility).
+Default recording mix (current recipe): **all five** approved controller×mode
+pairs with equal episode counts; `post_drop.dwell_steps` ≥ 1 (80 in the checked-in
+recipe). `immediate_ik` is included for SimpleIK/SmolVLA where supported, not
+weighted to zero.
 
 ---
 

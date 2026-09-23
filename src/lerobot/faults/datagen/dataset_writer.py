@@ -27,6 +27,7 @@ from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.manifest import (
     EpisodeMetadataRow,
     RunManifest,
+    RunStatus,
     build_episode_metadata_row,
     write_run_manifest_atomic,
 )
@@ -171,11 +172,44 @@ class RunDatasetWriter:
         self._loggers: dict[VariantKey, Any] = {}
         self._episode_rows: list[EpisodeMetadataRow] = []
         self._manifest_written = False
+        self._run_started = False
 
     @property
     def episode_rows(self) -> tuple[EpisodeMetadataRow, ...]:
         """Metadata rows accumulated for episodes processed so far."""
         return tuple(self._episode_rows)
+
+    def mark_run_started(self) -> None:
+        """Record that matrix orchestration has begun (manifest required on abort)."""
+        self._run_started = True
+
+    @property
+    def run_started(self) -> bool:
+        """Whether the matrix loop has started at least one logical episode."""
+        return self._run_started
+
+    @property
+    def manifest_written(self) -> bool:
+        """Whether a terminal or in-progress manifest has been persisted."""
+        return self._manifest_written
+
+    def _manifest_path(self) -> Path:
+        return Path(self._recipe.recording.output_dir) / "run_manifest.json"
+
+    def _persist_manifest(self, *, status: RunStatus, error_summary: str | None) -> Path:
+        path = self._manifest_path()
+        write_run_manifest_atomic(
+            path,
+            RunManifest(
+                recipe_name=self._recipe.name,
+                base_seed=int(self._recipe.recording.base_seed),
+                output_dir=str(self._recipe.recording.output_dir),
+                episodes=list(self._episode_rows),
+                run_status=status,
+                error_summary=error_summary,
+            ),
+        )
+        return path
 
     def open_episode_session(self, manifest: EpisodeSeedManifest) -> DatagenEpisodeSession:
         """Return a session bound to the logger for this controller/mode variant."""
@@ -233,25 +267,24 @@ class RunDatasetWriter:
         result.keep = keep
         result.keep_reason = reason if keep else None
         result.reject_reason = reason if not keep else None
+        self._persist_manifest(status=RunStatus.IN_PROGRESS, error_summary=None)
         return row
+
+    def write_aborted_manifest(self, error_summary: str) -> Path:
+        """Persist partial episode rows and mark the run aborted."""
+        self._finalize_loggers()
+        path = self._persist_manifest(status=RunStatus.ABORTED, error_summary=error_summary)
+        self._manifest_written = True
+        return path
 
     def finalize(self) -> Path:
         """Flush all variant datasets and write ``run_manifest.json`` once."""
         if self._manifest_written:
-            return Path(self._recipe.recording.output_dir) / "run_manifest.json"
+            return self._manifest_path()
         self._finalize_loggers()
-        manifest_path = Path(self._recipe.recording.output_dir) / "run_manifest.json"
-        write_run_manifest_atomic(
-            manifest_path,
-            RunManifest(
-                recipe_name=self._recipe.name,
-                base_seed=int(self._recipe.recording.base_seed),
-                output_dir=str(self._recipe.recording.output_dir),
-                episodes=list(self._episode_rows),
-            ),
-        )
+        path = self._persist_manifest(status=RunStatus.COMPLETE, error_summary=None)
         self._manifest_written = True
-        return manifest_path
+        return path
 
     def finalize_loggers_only(self) -> None:
         """Flush variant datasets without writing run_manifest.json (failed matrix run)."""

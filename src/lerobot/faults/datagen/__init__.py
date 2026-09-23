@@ -20,7 +20,6 @@ from lerobot.faults.datagen.drop_timing import (
     eligible_indices,
     sample_drop,
 )
-from lerobot.faults.datagen.events import DatagenEventLog, LogEvent
 from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
 from lerobot.faults.datagen.recipe import (
     DatagenController,
@@ -49,14 +48,12 @@ from lerobot.faults.datagen.recipe import (
 
 __all__ = [
     "DatagenController",
-    "DatagenEventLog",
     "DropDatagenRecipe",
     "DropDecision",
     "DropRecipe",
     "DropXYBand",
     "EpisodeSeedManifest",
     "ExpandedMatrixRun",
-    "LogEvent",
     "MatrixVariant",
     "ObjectPose2d",
     "PlacementRecipe",

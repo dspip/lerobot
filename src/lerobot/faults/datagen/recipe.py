@@ -33,6 +33,76 @@ class RecipeError(ValueError):
     """Raised when a datagen recipe cannot be loaded or validated."""
 
 
+_SUPPORTED_TASK = "libero_object"
+_SUPPORTED_TASK_ID = 0
+_SUPPORTED_OBJECT_NAMES = ("alphabet_soup_1",)
+
+_ROOT_KEYS = frozenset(
+    {
+        "name",
+        "task",
+        "task_id",
+        "control_hz",
+        "q",
+        "object_names",
+        "basket_name",
+        "placement",
+        "simple_ik",
+        "smolvla",
+        "post_drop",
+        "recording",
+        "experiment_matrix",
+    }
+)
+_PLACEMENT_KEYS = frozenset(
+    {
+        "xy_range_m",
+        "min_basket_clearance_m",
+        "distractor_basket_clearance_m",
+        "min_pairwise_clearance_m",
+        "yaw_range_deg",
+        "max_attempts",
+    }
+)
+_SIMPLE_IK_KEYS = frozenset(
+    {
+        "trajectory_randomization_enabled",
+        "pickup_via_offset_m",
+        "transport_via_offset_m",
+        "arm_posture_noise_deg",
+        "speed_multiplier_range",
+        "waypoint_blend_radius_m",
+        "path_drop",
+    }
+)
+_PATH_DROP_KEYS = frozenset(
+    {
+        "eligible_phases",
+        "min_drop_distance_from_basket_m",
+        "hard_keepout_floor_m",
+    }
+)
+_SMOLVLA_KEYS = frozenset(
+    {
+        "policy_path",
+        "post_grasp_delay_steps",
+        "min_drop_distance_from_basket_m",
+        "drop_xy_bands",
+    }
+)
+_BAND_KEYS = frozenset({"name", "min_m", "max_m"})
+_POST_DROP_KEYS = frozenset({"dwell_steps"})
+_RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps"})
+_MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "episodes"})
+
+
+def _reject_unknown_keys(raw: dict[str, Any], allowed: frozenset[str], section: str) -> None:
+    extra = set(raw.keys()) - allowed
+    if extra:
+        labels = ", ".join(sorted(str(key) for key in extra))
+        raise RecipeError(f"{section}: unknown key(s): {labels}")
+
+
 class DatagenController(StrEnum):
     """Policy/controller backend used for a datagen recipe section."""
 
@@ -195,6 +265,21 @@ class DropDatagenRecipe:
     post_drop: PostDropRecipe
     recording: RecordingRecipe
     experiment_matrix: tuple[MatrixVariant, ...]
+
+
+def validate_poc_recipe_constraints(recipe: DropDatagenRecipe) -> None:
+    """Enforce the current LIBERO object POC supported by unified datagen."""
+    if recipe.task != _SUPPORTED_TASK:
+        raise RecipeError(f"task must be {_SUPPORTED_TASK!r} for unified drop datagen (got {recipe.task!r})")
+    if int(recipe.task_id) != _SUPPORTED_TASK_ID:
+        raise RecipeError(
+            f"task_id must be {_SUPPORTED_TASK_ID} for unified drop datagen (got {recipe.task_id})"
+        )
+    if recipe.object_names != _SUPPORTED_OBJECT_NAMES:
+        raise RecipeError(
+            "object_names must be exactly ['alphabet_soup_1'] for the current POC "
+            f"(got {list(recipe.object_names)!r})"
+        )
 
 
 def _required(mapping: dict[str, Any], key: str, *, section: str = "recipe") -> Any:
@@ -434,6 +519,7 @@ def _parse_placement(placement_raw: dict[str, Any], *, strict: bool = False) -> 
 
 def _parse_simple_ik_path_drop(path_drop_raw: dict[str, Any]) -> SimpleIKPathDropRecipe:
     section = "simple_ik.path_drop"
+    _reject_unknown_keys(path_drop_raw, _PATH_DROP_KEYS, section)
     phases_raw = _required(path_drop_raw, "eligible_phases", section=section)
     if not isinstance(phases_raw, list) or not phases_raw:
         raise RecipeError(f"{section}.eligible_phases must be a non-empty array")
@@ -495,6 +581,7 @@ def _parse_simple_ik(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
 
 
 def _parse_simple_ik_unified(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
+    _reject_unknown_keys(simple_ik_raw, _SIMPLE_IK_KEYS, "simple_ik")
     speed_raw = _required(simple_ik_raw, "speed_multiplier_range", section="simple_ik")
     if not isinstance(speed_raw, list) or len(speed_raw) != 2:
         raise RecipeError("simple_ik.speed_multiplier_range must contain [min, max]")
@@ -561,6 +648,7 @@ def _load_json_object(path: Path) -> dict[str, Any]:
 def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     """Load and strictly validate the unified drop datagen recipe."""
     raw = _load_json_object(Path(path))
+    _reject_unknown_keys(raw, _ROOT_KEYS, "recipe")
 
     if "drop" in raw:
         raise RecipeError("drop must not appear at the recipe root; use simple_ik.path_drop for SimpleIK")
@@ -596,6 +684,11 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     if not isinstance(matrix_raw, list) or not matrix_raw:
         raise RecipeError("experiment_matrix must be a non-empty array")
 
+    _reject_unknown_keys(placement_raw, _PLACEMENT_KEYS, "placement")
+    _reject_unknown_keys(smolvla_raw, _SMOLVLA_KEYS, "smolvla")
+    _reject_unknown_keys(post_drop_raw, _POST_DROP_KEYS, "post_drop")
+    _reject_unknown_keys(recording_raw, _RECORDING_KEYS, "recording")
+
     placement = _parse_placement(placement_raw, strict=True)
     simple_ik = _parse_simple_ik_unified(simple_ik_raw)
 
@@ -607,6 +700,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         if not isinstance(band, dict):
             raise RecipeError(f"smolvla.drop_xy_bands[{idx}] must be an object")
         band_section = f"smolvla.drop_xy_bands[{idx}]"
+        _reject_unknown_keys(band, _BAND_KEYS, band_section)
         name = _require_json_str(
             _required(band, "name", section=band_section),
             field=f"{band_section}.name",
@@ -648,7 +742,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     dwell = _require_json_int(
         _required(post_drop_raw, "dwell_steps", section="post_drop"),
         field="post_drop.dwell_steps",
-        min_value=0,
+        min_value=1,
     )
     post_drop = PostDropRecipe(dwell_steps=dwell)
 
@@ -659,6 +753,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     base_seed = _require_json_int(
         _required(recording_raw, "base_seed", section="recording"),
         field="recording.base_seed",
+        min_value=0,
     )
     dataset_fps = _require_json_int(
         _required(recording_raw, "dataset_fps", section="recording"),
@@ -679,6 +774,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         section = f"experiment_matrix[{idx}]"
         if not isinstance(entry, dict):
             raise RecipeError(f"{section} must be an object")
+        _reject_unknown_keys(entry, _MATRIX_ROW_KEYS, section)
         controller = _parse_controller(
             _required(entry, "controller", section=section),
             section=section,
@@ -706,7 +802,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     experiment_matrix = tuple(matrix)
     validate_experiment_matrix_entries(experiment_matrix)
 
-    return DropDatagenRecipe(
+    recipe = DropDatagenRecipe(
         name=_require_json_str(_required(raw, "name"), field="name"),
         task=_require_json_str(_required(raw, "task"), field="task"),
         task_id=task_id,
@@ -721,3 +817,5 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         recording=recording,
         experiment_matrix=experiment_matrix,
     )
+    validate_poc_recipe_constraints(recipe)
+    return recipe

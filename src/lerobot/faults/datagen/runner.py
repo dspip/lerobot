@@ -108,8 +108,11 @@ def run_drop_datagen_matrix(
     results: list[EpisodeResult] = []
     run_ok = False
     active_session: DatagenEpisodeSession | None = None
+    run_started = False
     try:
         for logical_index in logical_episode_indices:
+            writer.mark_run_started()
+            run_started = True
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
             if not manifests:
                 raise DropDatagenRunnerError(f"No manifests for logical episode index {logical_index}")
@@ -169,12 +172,23 @@ def run_drop_datagen_matrix(
                 active_session = None
                 results.append(result)
         run_ok = True
+    except BaseException as exc:
+        if run_started and not writer.manifest_written:
+            summary = str(exc)
+            try:
+                writer.write_aborted_manifest(summary)
+            except BaseException as manifest_exc:
+                exc.add_note(f"failed to write aborted run manifest: {manifest_exc}")
+        raise
     finally:
         if active_session is not None and active_session.is_open:
             active_session.discard()
         cleanup_error: BaseException | None = None
         try:
-            _finalize_writer_after_run(writer, run_ok=run_ok)
+            if run_ok:
+                _finalize_writer_after_run(writer, run_ok=True)
+            elif not writer.manifest_written:
+                writer.finalize_loggers_only()
         except BaseException as exc:
             cleanup_error = exc
         if cleanup_error is not None:

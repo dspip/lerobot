@@ -303,6 +303,17 @@ def run_pipeline(
     drop_xy_target_m: float | None = None,
     layout_seed: int | None = None,
     placement_config: Any | None = None,
+    episode_seed: int | None = None,
+    drop_seed: int | None = None,
+    variant_seed: int | None = None,
+    task: str = "libero_object",
+    task_id: int = 0,
+    control_hz: int | None = None,
+    motion_profile: Any | None = None,
+    policy_resources: Any | None = None,
+    task_description: str | None = None,
+    record_dataset: bool = False,
+    dataset_fps: int | None = None,
 ) -> dict:
     """Run SmolVLA nominal and drop-recovery in LIBERO with optional dataset logging."""
     os.environ.setdefault("MUJOCO_GL", "egl")
@@ -359,12 +370,15 @@ def run_pipeline(
     videos_dir = output_dir / "videos"
     videos_dir.mkdir()
 
-    set_seed(seed)
+    ep_seed = int(episode_seed if episode_seed is not None else seed)
+    drp_seed = int(drop_seed if drop_seed is not None else ep_seed)
+    var_seed = int(variant_seed if variant_seed is not None else ep_seed)
+    set_seed(ep_seed)
 
     # Match successful baseline eval: LIBERO default 20 Hz control.
     # Record dataset / planner at SmolVLA's 10 FPS via stride=2.
-    control_freq_target = DEFAULT_LIBERO_CONTROL_FREQ
-    policy_fps = SMOLVLA_LIBERO_TARGET_FPS
+    control_freq_target = int(control_hz) if control_hz is not None else DEFAULT_LIBERO_CONTROL_FREQ
+    policy_fps = int(dataset_fps) if dataset_fps is not None else SMOLVLA_LIBERO_TARGET_FPS
     configure_libero_control_freq(control_freq_target)
     hook_ok = install_libero_control_freq_hook(control_freq_target)
 
@@ -374,15 +388,9 @@ def run_pipeline(
         print("CUDA unavailable; falling back to CPU (slow).", flush=True)
         device = "cpu"
 
-    policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
-    policy_cfg.pretrained_path = policy_path
-    policy_cfg.device = device
-    if hasattr(policy_cfg, "empty_cameras"):
-        policy_cfg.empty_cameras = 1
-
     env_cfg = LiberoEnv(
-        task="libero_object",
-        task_ids=[0],
+        task=task,
+        task_ids=[int(task_id)],
         control_mode="relative",
         camera_name_mapping={
             "agentview_image": "camera1",
@@ -390,20 +398,37 @@ def run_pipeline(
         },
     )
 
-    policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+    if policy_resources is not None:
+        policy_cfg = policy_resources.policy_cfg
+        policy = policy_resources.policy
+        preprocessor = policy_resources.preprocessor
+        postprocessor = policy_resources.postprocessor
+        env_preprocessor = policy_resources.env_preprocessor
+        env_postprocessor = policy_resources.env_postprocessor
+    else:
+        policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
+        policy_cfg.pretrained_path = policy_path
+        policy_cfg.device = device
+        if hasattr(policy_cfg, "empty_cameras"):
+            policy_cfg.empty_cameras = 1
+        policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy_cfg,
+            pretrained_path=policy_path,
+            preprocessor_overrides={"device_processor": {"device": device}},
+            postprocessor_overrides={"device_processor": {"device": device}},
+        )
+        env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+            env_cfg=env_cfg,
+            policy_cfg=policy_cfg,
+        )
     policy.eval()
     policy.reset()  # required by SmolVLA action-chunk queue (matches lerobot_eval.rollout)
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy_cfg,
-        pretrained_path=policy_path,
-        preprocessor_overrides={"device_processor": {"device": device}},
-        postprocessor_overrides={"device_processor": {"device": device}},
-    )
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=env_cfg, policy_cfg=policy_cfg)
 
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
-    vec = envs["libero_object"][0]
-    delay_rng = np.random.default_rng(seed)
+    vec = next(iter(envs[task].values()))
+    log_task = task_description or task
+    delay_rng = np.random.default_rng(var_seed)
     delay_steps = (
         int(post_grasp_delay_steps)
         if post_grasp_delay_steps is not None
@@ -420,7 +445,7 @@ def run_pipeline(
         fault_kwargs: dict = training_midair_drop_kwargs(
             t_min=t_min,
             t_max=t_max,
-            seed=seed,
+            seed=drp_seed,
             post_grasp_delay_steps=delay_steps,
             log_path=output_dir / "fault_events.jsonl",
             policy_fps=policy_fps,
@@ -457,7 +482,7 @@ def run_pipeline(
             defer_dataset_commit = True
             own_logger = False
             ds_root = episode_session.dataset_root
-        else:
+        elif record_dataset or ds_logger is not None:
             own_logger = ds_logger is None
             ds_root = dataset_root if dataset_root is not None else output_dir / "dataset"
             if own_logger:
@@ -466,6 +491,10 @@ def run_pipeline(
                     repo_id=repo_id,
                     policy_fps=policy_fps,
                 )
+        else:
+            own_logger = False
+            ds_root = dataset_root if dataset_root is not None else output_dir / "dataset"
+            ds_logger = None
 
         libero_env = unwrap_libero_env(vec)
         init_states = getattr(libero_env, "_init_states", None)
@@ -474,10 +503,22 @@ def run_pipeline(
         elif getattr(libero_env, "init_states", False) and init_states is not None:
             n_init = len(init_states)
             if n_init > 0:
-                libero_env.init_state_id = int(seed) % n_init
+                libero_env.init_state_id = int(ep_seed) % n_init
 
-        observation, info = env.reset(seed=seed)
+        observation, info = env.reset(seed=ep_seed)
         rs = get_robosuite_env(env)
+        if control_hz is not None:
+            sim_hz = int(round(read_control_freq(rs)))
+            if sim_hz != int(control_hz):
+                raise ValueError(f"sim control_hz={sim_hz} does not match recipe.control_hz={control_hz}")
+        if is_drop_episode and motion_profile is not None:
+            env.fault.set_recovery_motion_profile(
+                0,
+                speed_multiplier=float(motion_profile.speed_multiplier),
+                pickup_offset_xy_m=tuple(motion_profile.recovery.pickup_offset_xy_m),
+                transport_offset_m=float(motion_profile.recovery.transport_offset_m),
+                posture_bias_rad=tuple(motion_profile.recovery.posture_bias_rad),
+            )
         soup_offset_applied = False
         soup_offset_requested: list[float] | None = None
         if shared_layout is not None:
@@ -584,11 +625,13 @@ def run_pipeline(
                     env=env,
                     post_step_observation=observation_t,
                     executed_action=np.asarray(executed),
-                    task=task,
+                    task=log_task,
                     phase=phase_name,
                     is_drop_episode=is_drop_episode,
                     sim_step=sim_step,
                 )
+                return
+            if ds_logger is None:
                 return
             from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
 
@@ -597,7 +640,7 @@ def run_pipeline(
                 ds_logger,
                 observation_dict=frame,
                 executed_action=np.asarray(executed),
-                task=task,
+                task=log_task,
                 phase=phase_name,
                 loss_mask=float(env.loss_mask(0)) if is_drop_episode else 1.0,
                 annotation=env.failure_annotation(0),
@@ -684,13 +727,16 @@ def run_pipeline(
                 color = (30, 90, 200)
 
             obs_dict = preprocess_observation(observation)
-            try:
-                obs_dict["task"] = list(env.call("task_description"))
-            except Exception:
+            if task_description is not None:
+                obs_dict["task"] = [task_description]
+            else:
                 try:
-                    obs_dict["task"] = list(env.call("task"))
+                    obs_dict["task"] = list(env.call("task_description"))
                 except Exception:
-                    obs_dict["task"] = [task]
+                    try:
+                        obs_dict["task"] = list(env.call("task"))
+                    except Exception:
+                        obs_dict["task"] = [log_task]
             obs_dict = env_preprocessor(obs_dict)
             obs_dict = preprocessor(obs_dict)
             with torch.inference_mode():
@@ -1056,14 +1102,14 @@ def run_pipeline(
         if defer_dataset_commit:
             # Leave the open episode for the caller to commit or discard.
             episode_committed = False
-        else:
+        elif ds_logger is not None:
             commit_keep = bool(behavioral_success)
             commit_or_discard(ds_logger, keep=commit_keep)
             episode_committed = commit_keep
-        if behavioral_success:
+        if behavioral_success and ds_logger is not None:
             assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
-        loss_counts = dict(ds_logger.loss_mask_counts)
-        if own_logger and behavioral_success and not defer_dataset_commit:
+        loss_counts = dict(ds_logger.loss_mask_counts) if ds_logger is not None else {}
+        if own_logger and ds_logger is not None and behavioral_success and not defer_dataset_commit:
             ds_logger.finalize()
 
     finally:
@@ -1111,7 +1157,9 @@ def run_pipeline(
         "recording_stride": stride,
         "t_min": t_min,
         "t_max": t_max,
-        "seed": seed,
+        "seed": ep_seed,
+        "episode_seed": ep_seed,
+        "drop_seed": drp_seed,
         "initial_soup_pos": initial_soup_pos,
         "initial_soup_xy": initial_soup_xy,
         "soup_xy_offset_requested": soup_offset_requested,

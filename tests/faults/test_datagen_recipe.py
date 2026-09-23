@@ -190,12 +190,12 @@ def test_paired_seed_manifests_deterministic_and_vary_by_episode(tmp_path: Path)
     assert a[0].drop_seed != c[0].drop_seed
 
 
-def test_object_names_schema_allows_multiple_without_recording_impl(tmp_path: Path) -> None:
+def test_object_names_rejects_non_poc_values(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe(object_names=["alphabet_soup_1", "milk_1"])
     _write_recipe(path, payload)
-    recipe = load_drop_datagen_recipe(path)
-    assert recipe.object_names == ("alphabet_soup_1", "milk_1")
+    with pytest.raises(RecipeError, match="object_names"):
+        load_drop_datagen_recipe(path)
 
 
 def test_rejects_missing_experiment_matrix_pair(tmp_path: Path) -> None:

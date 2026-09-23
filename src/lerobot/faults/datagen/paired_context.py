@@ -57,7 +57,7 @@ class PairedEpisodePlan:
 def resolve_init_state_id(episode_seed: int, num_init_states: int) -> int:
     """Map ``episode_seed`` to a LIBERO init state index."""
     if num_init_states <= 0:
-        return 0
+        raise ValueError(f"num_init_states must be positive (got {num_init_states})")
     return int(episode_seed) % int(num_init_states)
 
 
@@ -112,11 +112,17 @@ def resolve_path_drop_trigger(
     *,
     basket_xy: np.ndarray,
     keepout_m: float,
+    eligible_phases: tuple[str, ...] | None = None,
 ) -> PathTrigger | None:
     """Map paired ``drop_u`` onto the controller's real eligible carry path."""
     if plan.drop_u is None:
         return None
-    path = eligible_path(carry_path, basket_xy=basket_xy, keepout_m=float(keepout_m))
+    path = eligible_path(
+        carry_path,
+        basket_xy=basket_xy,
+        keepout_m=float(keepout_m),
+        eligible_phases=eligible_phases,
+    )
     if path.total <= 0.0:
         return None
     return path_trigger_at_drop_u(plan.drop_u, path)

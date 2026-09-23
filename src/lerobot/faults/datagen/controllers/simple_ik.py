@@ -29,7 +29,12 @@ from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
-from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger, eligible_path, sample_path_drop
+from lerobot.faults.datagen.path_drop import (
+    EligiblePath,
+    PathTrigger,
+    eligible_path,
+    sample_path_drop,  # noqa: F401 — unit tests patch ``simple_ik.sample_path_drop``
+)
 from lerobot.faults.datagen.recipe import (
     DropDatagenRecipe,
     DropRecipe,
@@ -38,6 +43,7 @@ from lerobot.faults.datagen.recipe import (
 )
 from lerobot.faults.datagen.runtime import stabilize_carry_action
 from lerobot.faults.datagen.scene import apply_serializable_layout
+from lerobot.faults.datagen.task_label import read_libero_task_description
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 from lerobot.faults.sim.libero import (
@@ -127,7 +133,8 @@ def run_simple_ik_episode_loop(
     on_step_end: Callable[..., None] | None = None,
     episode_session: Any | None = None,
     recording_stride: int = 1,
-    task: str = "pick up the object and place it in the basket",
+    task: str = "pick up the alphabet soup and place it in the basket",
+    eligible_phases: tuple[str, ...] | None = None,
 ) -> SimpleIKEpisodeFacts:
     """Drive one SimpleIK episode with path-based drop timing and optional recording."""
     keepout = keepout_m(
@@ -180,20 +187,21 @@ def run_simple_ik_episode_loop(
                     planner.carry_path,
                     basket_xy=basket[:2],
                     keepout_m=keepout,
+                    eligible_phases=eligible_phases,
                 )
-                if paired_plan is not None:
-                    decision = paired_plan.drop_decision
-                    if paired_plan.drop_decision.drop and paired_plan.drop_u is not None:
-                        path_trigger = resolve_path_drop_trigger(
-                            paired_plan,
-                            planner.carry_path,
-                            basket_xy=basket[:2],
-                            keepout_m=keepout,
-                        )
-                    else:
-                        path_trigger = None
+                if paired_plan is None:
+                    raise ValueError("paired_plan is required for unified drop datagen")
+                decision = paired_plan.drop_decision
+                if paired_plan.drop_decision.drop and paired_plan.drop_u is not None:
+                    path_trigger = resolve_path_drop_trigger(
+                        paired_plan,
+                        planner.carry_path,
+                        basket_xy=basket[:2],
+                        keepout_m=keepout,
+                        eligible_phases=eligible_phases,
+                    )
                 else:
-                    decision, path_trigger = sample_path_drop(q, path, drop_rng)
+                    path_trigger = None
 
             held_midair = bool(is_object_held_midair(rs_env, object_name))
             fire = (
@@ -242,13 +250,21 @@ def run_simple_ik_episode_loop(
                             trigger_pose,
                             int(state.dwell_steps_completed),
                         )
-                    if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped:
+                    if not paired_plan.drop_decision.drop and not dropped:
                         return _paired_nominal_no_drop_facts(
                             rs_env,
                             object_name=object_name,
                             basket_name=basket_name,
                             reason=paired_plan.drop_decision.reason,
                             trigger_pose=trigger_pose,
+                        )
+                    if decision is not None and decision.reason == "runtime_keepout":
+                        return SimpleIKEpisodeFacts(
+                            False,
+                            "runtime_keepout",
+                            _drop_trigger_payload(decision, path_trigger),
+                            trigger_pose,
+                            0,
                         )
                     return SimpleIKEpisodeFacts(
                         False,
@@ -417,11 +433,12 @@ class SimpleIKDatagenAdapter:
             post_drop_mode=manifest.post_drop_mode.value,
             drop_xy_band_min=None,
             drop_xy_band_max=None,
-            seed=manifest.controller_seed,
+            seed=plan.drop_seed,
             log_path=request.output_dir / "fault_events.jsonl",
         )
-        env = DropRecoveryEnvWrapper(vec, config)
+        env: Any | None = None
         try:
+            env = DropRecoveryEnvWrapper(vec, config)
             libero_env = unwrap_libero_env(vec)
             libero_env.init_state_id = int(plan.init_state_id)
             env.reset(seed=plan.episode_seed)
@@ -447,8 +464,14 @@ class SimpleIKDatagenAdapter:
             from lerobot.faults.recovery.fps import recording_stride
 
             control_freq = read_control_freq(rs_env)
+            if int(round(control_freq)) != int(recipe.control_hz):
+                raise ValueError(
+                    f"sim control_hz={control_freq} does not match recipe.control_hz={recipe.control_hz}"
+                )
             stride = recording_stride(control_freq, recipe.recording.dataset_fps)
-            task = f"pick up the {request.object_name} and place it in the {recipe.basket_name}"
+            path_drop = recipe.simple_ik.path_drop
+            assert path_drop is not None
+            task = read_libero_task_description(vec)
             facts = run_simple_ik_episode_loop(
                 env,
                 rs_env,
@@ -464,6 +487,7 @@ class SimpleIKDatagenAdapter:
                 episode_session=request.episode_session,
                 recording_stride=stride,
                 task=task,
+                eligible_phases=path_drop.eligible_phases,
             )
             return EpisodeResult.from_run(
                 request,
@@ -476,7 +500,8 @@ class SimpleIKDatagenAdapter:
                 motion_profile=asdict(plan.motion_profile),
             )
         finally:
-            env.close()
+            if env is not None:
+                env.close()
 
 
 def build_simple_ik_planner(

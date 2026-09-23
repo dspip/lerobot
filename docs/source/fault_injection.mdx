@@ -123,8 +123,12 @@ post-drop mode) under `recording.output_dir`. Training-grade SmolVLA kwargs live
 in `src/lerobot/faults/recovery/recording_recipe.py` (`seat_assist_enabled=false`,
 XY-band drops, dwell steps from the recipe).
 
-Pass criteria per variant: episode logs under the variant output tree;
-`matrix_results.json` summarizes success counts at the recipe output root.
+Pass criteria per variant: LeRobot datasets under
+`<output_dir>/<controller>/<post_drop_mode>/dataset/` and per-episode artifacts
+under `episode_XXXX/`. The run writes `run_manifest.json` at the recipe
+output root with `run_status` (`in_progress`, `complete`, or `aborted`),
+`error_summary` when aborted, and one metadata row per matrix episode
+(seeds, keep/reject, dataset episode index).
 
 ## Evidence of injection
 

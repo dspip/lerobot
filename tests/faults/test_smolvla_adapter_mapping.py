@@ -82,7 +82,7 @@ def test_smolvla_adapter_maps_unsuccessful_summary_without_raising(tmp_path: Pat
     )
     result = adapter.run_episode(request)
     assert result.success is False
-    assert result.outcome == "pipeline_failed"
+    assert result.outcome == "behavioral_failed"
 
 
 def test_smolvla_adapter_propagates_real_pipeline_exceptions(tmp_path: Path) -> None:

@@ -547,7 +547,10 @@ def test_finalize_raises_without_manifest_on_logger_failure(tmp_path: Path) -> N
     writer.record_episode_outcome(req, res, session)
     with pytest.raises(RunDatasetFinalizeError):
         writer.finalize()
-    assert not (tmp_path / "out" / "run_manifest.json").exists()
+    manifest_path = tmp_path / "out" / "run_manifest.json"
+    assert manifest_path.is_file()
+    loaded = read_run_manifest(manifest_path)
+    assert loaded.run_status.value == "in_progress"
 
 
 def test_fault_recovery_logger_keep_reject_roundtrip(tmp_path: Path) -> None:

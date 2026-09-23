@@ -321,7 +321,12 @@ def test_keyboard_interrupt_discards_partial_episode_keeps_prior_commits(tmp_pat
         )
     assert len(writer.episode_rows) == 2
     manifest_path = Path(recipe.recording.output_dir) / "run_manifest.json"
-    assert not manifest_path.is_file()
+    assert manifest_path.is_file()
+    from lerobot.faults.datagen.manifest import read_run_manifest
+
+    loaded = read_run_manifest(manifest_path)
+    assert loaded.run_status.value == "aborted"
+    assert len(loaded.episodes) == 2
     loggers: list[_TrackingDatasetLogger] = writer._test_loggers  # type: ignore[attr-defined]
     assert sum(logger.committed for logger in loggers) == 2
     assert sum(logger.discarded for logger in loggers) == 1
@@ -337,11 +342,11 @@ def test_cleanup_failure_adds_note_without_replacing_primary_cause(tmp_path: Pat
                 request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
             raise ValueError("primary failure")
 
-    def _boom_finalize_loggers_only(self: RunDatasetWriter) -> None:
+    def _boom_finalize_loggers(self: RunDatasetWriter) -> None:
         raise RuntimeError("cleanup failed")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(RunDatasetWriter, "finalize_loggers_only", _boom_finalize_loggers_only)
+        mp.setattr(RunDatasetWriter, "_finalize_loggers", _boom_finalize_loggers)
         with pytest.raises(DropDatagenRunnerError, match="primary failure") as exc_info:
             run_drop_datagen_matrix(
                 recipe,
@@ -395,7 +400,13 @@ def test_record_episode_outcome_commit_failure_leaves_no_manifest_row(tmp_path: 
                 dataset_writer=writer,
             )
     assert len(writer.episode_rows) == 2
-    assert not (Path(recipe.recording.output_dir) / "run_manifest.json").is_file()
+    manifest_path = Path(recipe.recording.output_dir) / "run_manifest.json"
+    assert manifest_path.is_file()
+    from lerobot.faults.datagen.manifest import read_run_manifest
+
+    loaded = read_run_manifest(manifest_path)
+    assert loaded.run_status.value == "aborted"
+    assert len(loaded.episodes) == 2
     loggers: list[_TrackingDatasetLogger] = writer._test_loggers  # type: ignore[attr-defined]
     assert sum(logger.committed for logger in loggers) == 2
 

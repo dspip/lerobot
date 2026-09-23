@@ -17,17 +17,29 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.recipe import effective_post_drop_dwell_steps
 
+
+class RunStatus(StrEnum):
+    """Lifecycle status for a unified datagen matrix run."""
+
+    IN_PROGRESS = "in_progress"
+    COMPLETE = "complete"
+    ABORTED = "aborted"
+
+
 __all__ = [
     "EPISODE_METADATA_FIELDS",
     "EpisodeMetadataRow",
     "RunManifest",
+    "RunStatus",
     "build_episode_metadata_row",
     "read_run_manifest",
     "write_run_manifest_atomic",
@@ -97,12 +109,14 @@ class EpisodeMetadataRow:
 
 @dataclass
 class RunManifest:
-    """Top-level manifest written after a successful unified datagen matrix run."""
+    """Top-level manifest for a unified datagen matrix run."""
 
     recipe_name: str
     base_seed: int
     output_dir: str
     episodes: list[EpisodeMetadataRow]
+    run_status: RunStatus = RunStatus.COMPLETE
+    error_summary: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the run manifest including all episode rows."""
@@ -110,6 +124,8 @@ class RunManifest:
             "recipe_name": self.recipe_name,
             "base_seed": self.base_seed,
             "output_dir": self.output_dir,
+            "run_status": self.run_status.value,
+            "error_summary": self.error_summary,
             "episodes": [row.to_dict() for row in self.episodes],
         }
 
@@ -132,7 +148,7 @@ def build_episode_metadata_row(
         "drop_u": plan.drop_u,
         "step": plan.drop_decision.step,
     }
-    fault_config = {
+    fault_config: dict[str, Any] = {
         "type": "midair_drop",
         "post_drop_mode": manifest.post_drop_mode.value,
         "post_drop_dwell_steps": dwell,
@@ -140,6 +156,9 @@ def build_episode_metadata_row(
         "basket_name": request.recipe.basket_name,
         "controller": manifest.controller.value,
     }
+    motion_profile = result.details.get("motion_profile")
+    if motion_profile is not None:
+        fault_config["recovery_motion_profile"] = motion_profile
     reject_reason = None if keep else (keep_reason or result.outcome)
     return EpisodeMetadataRow(
         controller=manifest.controller.value,
@@ -175,8 +194,19 @@ def write_run_manifest_atomic(path: Path, manifest: RunManifest) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     payload = json.dumps(manifest.to_dict(), indent=2, sort_keys=True)
-    tmp.write_text(payload + "\n", encoding="utf-8")
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(payload + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     tmp.replace(path)
+    try:
+        dir_fd = os.open(path.parent, os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _row_from_dict(data: dict[str, Any]) -> EpisodeMetadataRow:
@@ -187,9 +217,19 @@ def read_run_manifest(path: Path) -> RunManifest:
     """Load a run manifest from disk."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     episodes = [_row_from_dict(item) for item in raw.get("episodes", [])]
+    status_raw = raw.get("run_status", RunStatus.COMPLETE.value)
+    try:
+        run_status = RunStatus(str(status_raw))
+    except ValueError:
+        run_status = RunStatus.COMPLETE
+    error_summary = raw.get("error_summary")
+    if error_summary is not None:
+        error_summary = str(error_summary)
     return RunManifest(
         recipe_name=str(raw["recipe_name"]),
         base_seed=int(raw["base_seed"]),
         output_dir=str(raw["output_dir"]),
         episodes=episodes,
+        run_status=run_status,
+        error_summary=error_summary,
     )

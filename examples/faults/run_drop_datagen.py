@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, RecipeError, load_drop_datagen_recipe
@@ -78,39 +78,14 @@ def _apply_overrides(
         raise RecipeError("episodes override must be >= 1")
     recording = recipe.recording
     if base_seed is not None:
-        recording = recording.__class__(
-            base_seed=int(base_seed),
-            output_dir=recording.output_dir,
-            dataset_fps=recording.dataset_fps,
-        )
+        recording = replace(recording, base_seed=int(base_seed))
     if output is not None:
-        recording = recording.__class__(
-            base_seed=recording.base_seed,
-            output_dir=str(output),
-            dataset_fps=recording.dataset_fps,
-        )
+        recording = replace(recording, output_dir=str(output))
     matrix = recipe.experiment_matrix
     if episodes is not None:
-        matrix = tuple(
-            variant.__class__(
-                controller=variant.controller,
-                post_drop_mode=variant.post_drop_mode,
-                episodes=int(episodes),
-            )
-            for variant in matrix
-        )
-    return recipe.__class__(
-        name=recipe.name,
-        task=recipe.task,
-        task_id=recipe.task_id,
-        control_hz=recipe.control_hz,
-        q=recipe.q,
-        object_names=recipe.object_names,
-        basket_name=recipe.basket_name,
-        placement=recipe.placement,
-        simple_ik=recipe.simple_ik,
-        smolvla=recipe.smolvla,
-        post_drop=recipe.post_drop,
+        matrix = tuple(replace(variant, episodes=int(episodes)) for variant in matrix)
+    return replace(
+        recipe,
         recording=recording,
         experiment_matrix=matrix,
     )
