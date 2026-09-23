@@ -28,7 +28,6 @@ from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
 from lerobot.faults.datagen.path_drop import (
-    EligiblePath,
     PathTrigger,
     eligible_path,
     sample_path_drop,  # noqa: F401 — unit tests patch ``simple_ik.sample_path_drop``
@@ -127,7 +126,6 @@ def run_simple_ik_episode_loop(
         recipe_drop.min_drop_distance_from_basket_m,
         recipe_drop.hard_keepout_floor_m,
     )
-    path: EligiblePath | None = None
     decision: DropDecision | None = None
     path_trigger: PathTrigger | None = None
     dropped = False
@@ -167,7 +165,7 @@ def run_simple_ik_episode_loop(
             distance = float(np.linalg.norm(obj[:2] - basket[:2]))
 
             if decision is None and phase == "lift" and planner.carry_path is not None:
-                path = eligible_path(
+                eligible_path(
                     planner.carry_path,
                     basket_xy=basket[:2],
                     keepout_m=keepout,

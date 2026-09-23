@@ -174,7 +174,7 @@ def test_smolvla_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_in
     assert captured["episode_seed"] == manifest.episode_seed
     assert captured["drop_seed"] == manifest.drop_seed
     assert captured.get("seed") == manifest.episode_seed
-    assert captured["task_description"] == LIBERO_TASK_DESCRIPTION
+    assert captured.get("task_description") is None
     assert captured["motion_profile"] == plan.motion_profile
 
 

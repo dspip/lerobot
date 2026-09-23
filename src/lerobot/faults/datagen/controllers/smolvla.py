@@ -25,7 +25,6 @@ from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, effective_post_drop_dwell_steps
 from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 from lerobot.faults.datagen.smolvla_resources import SmolVLAPolicyResources, load_smolvla_policy_resources
-from lerobot.faults.datagen.task_label import DEFAULT_LIBERO_OBJECT_TASK_DESCRIPTION
 
 PipelineRunner = Callable[..., dict[str, Any]]
 
@@ -122,7 +121,6 @@ class SmolVLADatagenAdapter:
             "task": recipe.task,
             "task_id": recipe.task_id,
             "control_hz": recipe.control_hz,
-            "task_description": DEFAULT_LIBERO_OBJECT_TASK_DESCRIPTION,
             "post_grasp_delay_steps": recipe.smolvla.post_grasp_delay_steps,
             "post_drop_dwell_steps": dwell_steps,
             "post_drop_mode": manifest.post_drop_mode.value,
