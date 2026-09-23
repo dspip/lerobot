@@ -23,6 +23,7 @@ import pytest
 
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.recovery.recording_recipe import (
+    DEFAULT_POST_DROP_DWELL_STEPS,
     DEFAULT_POST_GRASP_DELAY_MAX,
     DEFAULT_POST_GRASP_DELAY_MIN,
     sample_post_grasp_delay_steps,
@@ -57,8 +58,23 @@ def test_training_kwargs_disable_seat_assist_and_require_carry() -> None:
     )
     assert kw["seat_assist_enabled"] is False
     assert kw["post_grasp_delay_steps"] == 32
+    assert kw["post_drop_dwell_steps"] == DEFAULT_POST_DROP_DWELL_STEPS
     assert kw["min_drop_distance_from_basket_m"] == 0.30
     assert kw["require_grasp"] is True
     cfg = FaultInjectionConfig(**kw)
     assert cfg.seat_assist_enabled is False
     assert cfg.post_grasp_delay_steps == 32
+    assert cfg.post_drop_dwell_steps == DEFAULT_POST_DROP_DWELL_STEPS
+
+
+def test_training_kwargs_post_drop_dwell_override() -> None:
+    kw = training_midair_drop_kwargs(
+        t_min=0,
+        t_max=10,
+        seed=1,
+        post_grasp_delay_steps=0,
+        post_drop_dwell_steps=12,
+        log_path=Path("/tmp/fault_events.jsonl"),
+        policy_fps=10,
+    )
+    assert kw["post_drop_dwell_steps"] == 12

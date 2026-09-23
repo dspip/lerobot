@@ -329,11 +329,228 @@ def test_maybe_wrap_env_uses_drop_wrapper():
         ({"t_max": 1, "t_min": 5}, "t_max"),
         ({"impulse_lin_std": -0.1}, "impulse_lin_std"),
         ({"object_name": ""}, "object_name"),
+        ({"post_drop_dwell_steps": -1}, "post_drop_dwell_steps"),
     ],
 )
 def test_invalid_config_errors(kwargs, match):
     with pytest.raises(ValueError, match=match):
         FaultInjectionConfig(enabled=True, type="midair_drop", **kwargs)
+
+
+def _mock_drop_trigger_patches():
+    """Common patches for a single-step automatic drop trigger."""
+    return (
+        patch("lerobot.faults.recovery.midair_drop.get_place_destination"),
+        patch("lerobot.faults.recovery.midair_drop.midair_drop"),
+        patch("lerobot.faults.recovery.midair_drop.get_object_pose"),
+        patch("lerobot.faults.recovery.midair_drop.get_eef_pose"),
+        patch("lerobot.faults.recovery.midair_drop.get_arm_qpos"),
+        patch("lerobot.faults.recovery.midair_drop.get_robosuite_env"),
+        patch("lerobot.faults.recovery.midair_drop.is_object_grasped"),
+    )
+
+
+def _setup_drop_mocks(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+    *,
+    grasped: bool = True,
+):
+    mock_get_rs.return_value = _mock_rs_env()
+    mock_grasped.return_value = grasped
+    mock_arm_q.return_value = np.zeros(7)
+    mock_eef.return_value = (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
+    mock_obj_pose.return_value = {"pos": np.zeros(3), "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0])}
+    mock_dest.return_value = np.array([0.3, 0.2, 0.9])
+    mock_drop.return_value = {
+        "object_pose_after": {"pos": [0.0, 0.0, 0.0]},
+        "arm_q": [0.0] * 7,
+        "impulse": {"lin_vel": [0.1, 0.0, 0.0], "ang_vel": [0.0, 0.0, 0.0]},
+    }
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_zero_dwell_starts_recovery_on_drop_step(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    inj = MidAirDropFault(_cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=0), num_envs=1)
+    env = MagicMock()
+    policy = _action(1, 7, 42.0)
+    out = inj.on_step(env, policy)
+    assert inj._states[0].triggered
+    assert inj._states[0].recovery_active
+    mock_dest.assert_called_once()
+    assert not np.allclose(out, policy)
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_post_drop_dwell_passes_policy_and_delays_planner(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    dwell = 2
+    inj = MidAirDropFault(
+        _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=dwell),
+        num_envs=1,
+    )
+    env = MagicMock()
+    drop_out = inj.on_step(env, _action(1, 7, 1.0))
+    assert inj._states[0].triggered
+    assert not inj._states[0].recovery_active
+    np.testing.assert_array_equal(drop_out, _action(1, 7, 1.0))
+    mock_dest.assert_not_called()
+
+    for fill in (2.0, 3.0):
+        out = inj.on_step(env, _action(1, 7, fill))
+        assert not inj._states[0].recovery_active
+        np.testing.assert_array_equal(out, _action(1, 7, fill))
+    mock_dest.assert_not_called()
+
+    out = inj.on_step(env, _action(1, 7, 99.0))
+    assert inj._states[0].recovery_active
+    mock_dest.assert_called_once()
+    assert not np.allclose(out, _action(1, 7, 99.0))
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_dwell_loss_mask_zero_until_ik(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    inj = MidAirDropFault(
+        _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=2),
+        num_envs=1,
+    )
+    env = MagicMock()
+    inj.on_step(env, _action(1, 7, 1.0))
+    assert inj.loss_mask_for_env(0) == 0.0
+    inj.on_step(env, _action(1, 7, 2.0))
+    assert inj.loss_mask_for_env(0) == 0.0
+    inj.on_step(env, _action(1, 7, 3.0))
+    assert inj.loss_mask_for_env(0) == 0.0
+    inj.on_step(env, _action(1, 7, 4.0))
+    assert inj.loss_mask_for_env(0) == 1.0
+
+
+@patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_regrasp_during_dwell_skips_ik(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+    mock_in_basket,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    mock_grasped.side_effect = [False, False, True, True]
+
+    inj = MidAirDropFault(
+        _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=2),
+        num_envs=1,
+    )
+    env = MagicMock()
+    inj.on_step(env, _action(1, 7, 1.0))
+    inj.on_step(env, _action(1, 7, 2.0))
+    inj.on_step(env, _action(1, 7, 3.0))
+    out = inj.on_step(env, _action(1, 7, 4.0))
+    assert not inj._states[0].recovery_active
+    mock_dest.assert_not_called()
+    np.testing.assert_array_equal(out, _action(1, 7, 4.0))
+
+
+@patch("lerobot.faults.recovery.midair_drop.is_object_in_basket")
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped", return_value=False)
+def test_object_in_basket_after_dwell_skips_ik(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+    mock_in_basket,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    mock_in_basket.return_value = True
+
+    inj = MidAirDropFault(
+        _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=1),
+        num_envs=1,
+    )
+    env = MagicMock()
+    inj.on_step(env, _action(1, 7, 1.0))
+    inj.on_step(env, _action(1, 7, 2.0))
+    out = inj.on_step(env, _action(1, 7, 3.0))
+    assert not inj._states[0].recovery_active
+    mock_dest.assert_not_called()
+    np.testing.assert_array_equal(out, _action(1, 7, 3.0))
 
 
 def test_notify_dones_clears_recovery_state():
@@ -517,3 +734,58 @@ def test_probability_one_triggers_when_eligible(
 
     assert inj._states[0].triggered
     assert inj._states[0].will_activate is True
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+@patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
+def test_reset_then_ik_dwell_sets_policy_reset_and_delays_ik(
+    mock_in_basket,
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+):
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    inj = MidAirDropFault(
+        _cfg(
+            t_min=0,
+            t_max=0,
+            require_grasp=False,
+            post_drop_dwell_steps=2,
+            post_drop_mode="reset_then_ik",
+        ),
+        num_envs=1,
+    )
+    env = MagicMock()
+    inj.on_step(env, _action(1, 7, 1.0))
+    assert inj._states[0].policy_reset_requested is True
+    assert inj.consume_policy_reset(0) is True
+    assert inj.consume_policy_reset(0) is False
+    mock_dest.assert_not_called()
+    for fill in (2.0, 3.0):
+        inj.on_step(env, _action(1, 7, fill))
+    mock_dest.assert_not_called()
+    inj.on_step(env, _action(1, 7, 99.0))
+    assert inj._states[0].recovery_active
+    mock_dest.assert_called_once()
+
+
+def test_reset_then_ik_zero_dwell_raises_at_config():
+    with pytest.raises(ValueError, match="reset_then_ik"):
+        FaultInjectionConfig(
+            enabled=True,
+            type="midair_drop",
+            post_drop_mode="reset_then_ik",
+            post_drop_dwell_steps=0,
+        )

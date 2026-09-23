@@ -1,4 +1,8 @@
 {
+  "name": "can_simpleik_datagen",
+  "task": "libero_object",
+  "task_id": 0,
+  "control_hz": 20,
   "q": 1,
   "object_name": "milk_1",
   "basket_name": "basket_1",
@@ -22,6 +26,13 @@
     "arm_posture_noise_deg": 3.0,
     "speed_multiplier_range": [0.9, 1.1],
     "waypoint_blend_radius_m": 0.02
+  },
+  "post_drop": {
+    "dwell_steps": 80,
+    "mode_weights": {
+      "continue_then_ik": 0.5,
+      "reset_then_ik": 0.5,
+      "immediate_ik": 0.0
+    }
   }
 }
-

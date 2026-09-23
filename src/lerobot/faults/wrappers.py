@@ -420,6 +420,9 @@ class DropRecoveryEnvWrapper:
     def loss_mask(self, env_idx: int = 0) -> float:
         return self.fault.loss_mask_for_env(env_idx)
 
+    def consume_policy_reset(self, env_idx: int = 0) -> bool:
+        return self.fault.consume_policy_reset(env_idx)
+
     def close(self):
         self._close_logger()
         return self.env.close()

@@ -23,7 +23,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATAGEN_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_simpleik_datagen.json"
 
 
 def _load_run_pipeline():
@@ -91,7 +94,26 @@ def main(argv: list[str] | None = None) -> int:
         default=0.30,
         help="Training recipe min_drop_distance_from_basket_m (Option B)",
     )
+    parser.add_argument(
+        "--datagen-recipe",
+        type=Path,
+        default=DEFAULT_DATAGEN_RECIPE,
+        help="Shared post_drop recipe JSON for dwell steps and mode mix",
+    )
     args = parser.parse_args(argv)
+
+    from lerobot.faults.recovery.recording_recipe import (
+        load_datagen_recipe,
+        sample_post_drop_mode,
+    )
+
+    datagen_recipe = load_datagen_recipe(args.datagen_recipe)
+    post_drop_cfg = datagen_recipe["post_drop"]
+    post_drop_dwell_steps = int(post_drop_cfg["dwell_steps"])
+    post_drop_mode_weights = {
+        str(k): float(v) for k, v in post_drop_cfg["mode_weights"].items()
+    }
+    mode_rng = np.random.default_rng(0)
     drops_per_band = (
         2 + int(args.n_new_drops_per_band)
         if args.n_new_drops_per_band is not None
@@ -202,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"kept={kept_per_band[band_name]}/{target_total}",
                 flush=True,
             )
+            sampled_post_drop_mode = sample_post_drop_mode(mode_rng, post_drop_mode_weights)
             try:
                 summary = run_pipeline(
                     ep_dir,
@@ -223,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
                     min_drop_distance_from_basket_m=float(args.min_drop_distance_m),
                     drop_xy_band_min=float(band_lo),
                     drop_xy_band_max=float(band_hi),
+                    post_drop_dwell_steps=post_drop_dwell_steps,
+                    post_drop_mode=sampled_post_drop_mode,
                     fault_overrides={"object_name": "alphabet_soup_1"},
                     defer_dataset_commit=True,
                     soup_xy_offset=(0.0, 0.0),
@@ -257,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                     "band": band_name,
                     "band_lo": band_lo,
                     "band_hi": band_hi,
+                    "post_drop_mode": sampled_post_drop_mode,
                     "kept": kept,
                     "reason": reason,
                     **fields,
@@ -272,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
                     "band": band_name,
                     "band_lo": band_lo,
                     "band_hi": band_hi,
+                    "post_drop_mode": sampled_post_drop_mode,
                     "source": "checkpoint",
                     **fields,
                 }

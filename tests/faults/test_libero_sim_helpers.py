@@ -27,6 +27,15 @@ def test_loss_mask_from_fault_state():
     assert loss_mask_from_fault(triggered=False, drop_injection_step=False, recovery_active=False) == 1.0
     assert loss_mask_from_fault(triggered=True, drop_injection_step=True, recovery_active=True) == 0.0
     assert loss_mask_from_fault(triggered=True, drop_injection_step=False, recovery_active=True) == 1.0
+    assert (
+        loss_mask_from_fault(
+            triggered=True,
+            drop_injection_step=False,
+            recovery_active=False,
+            post_drop_dwell_step=True,
+        )
+        == 0.0
+    )
 
 
 def test_get_place_destination_prefers_basket():

@@ -174,10 +174,85 @@ def test_info_roundtrip_and_defaults():
     )
     arrays = frames_to_info_arrays(frames)
     assert arrays["injection_active"].tolist() == [False, True]
+    assert arrays["ever_held_midair"].tolist() == [True, True]
     extracted = failure_frame_from_info(arrays, env_idx=1)
     assert bool(extracted["injection_active"][0]) is True
+    assert bool(extracted["ever_held_midair"][0]) is True
     zeros = failure_frame_from_info({}, env_idx=0)
     np.testing.assert_array_equal(zeros["failure_type"], default_failure_frame()["failure_type"])
+    assert bool(zeros["ever_held_midair"][0]) is False
+
+
+def test_ever_held_midair_default_false_until_physics_latch():
+    ann = FailureAnnotator(num_envs=1)
+    before = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=False, held=False)],
+    )[0]
+    assert bool(before["ever_held_midair"][0]) is False
+    after = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=True, held=True)],
+    )[0]
+    assert bool(after["ever_held_midair"][0]) is True
+
+
+def test_ever_held_midair_stays_true_after_regrasp_and_basket():
+    ann = FailureAnnotator(num_envs=1, injector_type_id=FAILURE_TYPE_MIDAIR_DROP)
+    ann.update(None, injection_active=[False], physics=[_snap(grasped=True, held=True)])
+    ann.update(None, injection_active=[True], physics=[_snap(grasped=False, held=False)])
+    rec = ann.update(
+        None,
+        injection_active=[False],
+        recovery_active=[True],
+        physics=[_snap(grasped=True, held=True)],
+    )[0]
+    assert bool(rec["is_failure"][0]) is False
+    assert bool(rec["ever_held_midair"][0]) is True
+    placed = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=False, held=False, in_basket=True)],
+    )[0]
+    assert bool(placed["ever_held_midair"][0]) is True
+
+
+def test_ever_held_midair_clears_on_full_and_partial_reset():
+    ann = FailureAnnotator(num_envs=2, injector_type_id=FAILURE_TYPE_MIDAIR_DROP)
+    ann.update(
+        None,
+        injection_active=[False, False],
+        physics=[_snap(grasped=True, held=True), _snap(grasped=True, held=True)],
+    )
+    ann.reset(env_ids=[1])
+    partial = ann.update(
+        None,
+        injection_active=[False, False],
+        physics=[_snap(grasped=True, held=True), _snap(grasped=False, held=False)],
+    )
+    assert bool(partial[0]["ever_held_midair"][0]) is True
+    assert bool(partial[1]["ever_held_midair"][0]) is False
+    ann.reset()
+    cold = ann.update(
+        None,
+        injection_active=[False, False],
+        physics=[_snap(grasped=False, held=False), _snap(grasped=False, held=False)],
+    )
+    assert bool(cold[0]["ever_held_midair"][0]) is False
+    assert bool(cold[1]["ever_held_midair"][0]) is False
+
+
+def test_scripted_phases_export_ever_held_midair_false():
+    for phase in ("drop", "post", "post_fault", "recovery", "vla"):
+        frame = annotation_from_scripted_phase(phase, onset=True)
+        assert bool(frame["ever_held_midair"][0]) is False
+
+
+def test_default_failure_frame_includes_ever_held_midair_false():
+    frame = default_failure_frame()
+    assert bool(frame["ever_held_midair"][0]) is False
 
 
 def test_injection_phase_outranks_recovery_on_the_glitch_frame():

@@ -1,0 +1,1 @@
+Shared JSON recipes for fault datagen and checkpoint recording live here. Merge teammate changes by adding sibling keys to the same file; do not rename the `post_drop` block (dwell steps and mode weights).
