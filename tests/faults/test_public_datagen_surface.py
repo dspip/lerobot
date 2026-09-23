@@ -41,6 +41,13 @@ def test_unified_cli_entry_point() -> None:
     assert recipe.name == "can_drop_datagen"
 
 
+def test_smolvla_pipeline_library_only_not_cli_recorder() -> None:
+    from lerobot.faults.datagen import smolvla_pipeline
+
+    assert callable(smolvla_pipeline.run_pipeline)
+    assert not hasattr(smolvla_pipeline, "main")
+
+
 def test_legacy_datagen_compatibility_apis_removed() -> None:
     import lerobot.faults.datagen as datagen_pkg
     import lerobot.faults.datagen.recipe as recipe_mod

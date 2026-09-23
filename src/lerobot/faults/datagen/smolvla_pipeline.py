@@ -25,7 +25,6 @@ Important:
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
@@ -1203,59 +1202,3 @@ def run_pipeline(
         else:
             print("SUCCESS: nominal VLA place into basket", flush=True)
     return summary
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "outputs" / "full_pipeline_demo")
-    parser.add_argument("--policy-path", default="lerobot/smolvla_libero")
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--t-min", type=int, default=40, help="Earliest step to allow drop (after grasp)")
-    parser.add_argument("--t-max", type=int, default=400, help="Latest step to wait for grasp+drop")
-    parser.add_argument("--max-steps", type=int, default=750)
-    parser.add_argument("--recovery-horizon", type=int, default=450)
-    parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument(
-        "--post-grasp-delay-min",
-        type=int,
-        default=20,
-        help="Min env steps of mid-air carry before drop (sampled with --seed)",
-    )
-    parser.add_argument(
-        "--post-grasp-delay-max",
-        type=int,
-        default=60,
-        help="Max env steps of mid-air carry before drop",
-    )
-    parser.add_argument(
-        "--post-grasp-delay-steps",
-        type=int,
-        default=None,
-        help="If set, use this delay instead of sampling [min, max]",
-    )
-    parser.add_argument(
-        "--allow-seat-assist",
-        action="store_true",
-        help="Enable rim teleport (demo only; not for training-grade datasets)",
-    )
-    args = parser.parse_args(argv)
-    run_pipeline(
-        args.output_dir,
-        policy_path=args.policy_path,
-        device=args.device,
-        t_min=args.t_min,
-        t_max=args.t_max,
-        max_steps=args.max_steps,
-        seed=args.seed,
-        recovery_horizon=args.recovery_horizon,
-        post_grasp_delay_min=args.post_grasp_delay_min,
-        post_grasp_delay_max=args.post_grasp_delay_max,
-        post_grasp_delay_steps=args.post_grasp_delay_steps,
-        seat_assist_enabled=bool(args.allow_seat_assist),
-        forbid_seat_assist=not bool(args.allow_seat_assist),
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
