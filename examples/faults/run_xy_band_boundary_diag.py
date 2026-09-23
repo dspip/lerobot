@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -31,12 +30,6 @@ BOUNDARY_TARGETS: list[tuple[str, float, float, float, float]] = [
     ("d027", 0.27, 0.27, 0.27, 0.29),
     ("d024", 0.24, 0.24, 0.24, 0.26),
 ]
-
-
-def _load_run_pipeline():
-    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
-
-    return run_pipeline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to write boundary diag into xy_band_pilot output.", flush=True)
         return 2
 
-    run_pipeline = _load_run_pipeline()
+    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     episodes_root = args.output_dir / "episodes"
     episodes_root.mkdir(parents=True, exist_ok=True)

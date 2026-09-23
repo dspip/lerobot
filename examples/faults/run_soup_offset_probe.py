@@ -18,18 +18,11 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load_run_pipeline():
-    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
-
-    return run_pipeline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to write offset probe into the checkpoint dataset.", flush=True)
         return 2
 
-    run_pipeline = _load_run_pipeline()
+    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
 

@@ -19,17 +19,11 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-_EXAMPLES_FAULTS = Path(__file__).resolve().parent
-if str(_EXAMPLES_FAULTS) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_FAULTS))
-
-from datagen import RandomizationConfig, _loss_mask_for_step, sample_episode_params
+from lerobot.faults.datagen.demo_randomization import RandomizationConfig, sample_episode_params
 from lerobot.faults.recovery.fps import (
     SMOLVLA_LIBERO_TARGET_FPS,
     assert_control_rate_aligned,
@@ -41,8 +35,10 @@ from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
 from lerobot.faults.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
 from lerobot.faults.annotation import annotation_from_scripted_phase
 from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
+from lerobot.faults.recovery.loss_mask import loss_mask_for_step
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DRY_DIR = REPO_ROOT / "outputs" / "demo_drop_recovery_dry"
 
 
@@ -98,7 +94,7 @@ def run_dry_run(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS
     t_recovery_start = t_injection + 1
 
     for step in range(total):
-        mask = _loss_mask_for_step(step, t_injection, drop_duration=1)
+        mask = loss_mask_for_step(step, t_injection, drop_duration=1)
         if step < n_nominal:
             action = np.zeros(7, dtype=np.float32)
             phase = "vla"
