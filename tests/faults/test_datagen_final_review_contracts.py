@@ -242,6 +242,44 @@ def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_
     assert captured["task"] == LIBERO_TASK_DESCRIPTION
 
 
+def test_simple_ik_rejects_control_hz_mismatch(tmp_path: Path) -> None:
+    from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    import lerobot.faults.datagen.controllers.simple_ik as simple_ik_mod
+
+    mock_env = MagicMock()
+    mock_env.fault = MagicMock()
+    adapter = SimpleIKDatagenAdapter(recipe)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(simple_ik_mod, "make_env", lambda *a, **k: {"libero_object": {0: MagicMock()}})
+        mp.setattr(simple_ik_mod, "DropRecoveryEnvWrapper", lambda *a, **k: mock_env)
+        mp.setattr(
+            simple_ik_mod,
+            "unwrap_libero_env",
+            lambda v: MagicMock(_init_states=[0], init_state_id=0),
+        )
+        mp.setattr(simple_ik_mod, "get_robosuite_env", lambda e, i=0: MagicMock())
+        mp.setattr(simple_ik_mod, "apply_serializable_layout", lambda *a, **k: None)
+        mp.setattr(simple_ik_mod, "read_control_freq", lambda rs: 30)
+        mp.setattr(simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock())
+        mock_env.reset = MagicMock(return_value=({}, {}))
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        )
+        with pytest.raises(ValueError, match="control_hz"):
+            adapter.run_episode(request)
+
+
 def test_run_manifest_tracks_in_progress_and_aborted(tmp_path: Path) -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     recipe = recipe.__class__(
