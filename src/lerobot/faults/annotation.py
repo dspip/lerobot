@@ -71,6 +71,7 @@ FAILURE_TYPE_FROM_CONFIG: dict[str, int] = {
 
 FAILURE_ANNOTATION_FEATURES: dict[str, dict[str, Any]] = {
     "is_failure": {"dtype": "bool", "shape": (1,), "names": None},
+    "ever_held_midair": {"dtype": "bool", "shape": (1,), "names": None},
     "failure_onset": {"dtype": "bool", "shape": (1,), "names": None},
     "failure_type": {"dtype": "int64", "shape": (1,), "names": None},
     "injection_active": {"dtype": "bool", "shape": (1,), "names": None},
@@ -88,6 +89,7 @@ def default_failure_frame() -> dict[str, np.ndarray]:
     """Successful / unlabeled frame: all flags false, type and phase zero."""
     return {
         "is_failure": np.array([False]),
+        "ever_held_midair": np.array([False]),
         "failure_onset": np.array([False]),
         "failure_type": np.array([FAILURE_TYPE_NONE], dtype=np.int64),
         "injection_active": np.array([False]),
@@ -98,6 +100,7 @@ def default_failure_frame() -> dict[str, np.ndarray]:
 def annotation_to_frame(
     *,
     is_failure: bool,
+    ever_held_midair: bool,
     failure_onset: bool,
     failure_type: int,
     injection_active: bool,
@@ -105,6 +108,7 @@ def annotation_to_frame(
 ) -> dict[str, np.ndarray]:
     return {
         "is_failure": np.array([bool(is_failure)]),
+        "ever_held_midair": np.array([bool(ever_held_midair)]),
         "failure_onset": np.array([bool(failure_onset)]),
         "failure_type": np.array([int(failure_type)], dtype=np.int64),
         "injection_active": np.array([bool(injection_active)]),
@@ -129,6 +133,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key in {"drop", "injection", "fault"}:
         return annotation_to_frame(
             is_failure=True,
+            ever_held_midair=False,
             failure_onset=onset,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=True,
@@ -137,6 +142,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key in {"post", "post_fault"}:
         return annotation_to_frame(
             is_failure=True,
+            ever_held_midair=False,
             failure_onset=False,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=False,
@@ -145,6 +151,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key == "recovery":
         return annotation_to_frame(
             is_failure=False,
+            ever_held_midair=False,
             failure_onset=False,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=False,
@@ -290,6 +297,7 @@ class FailureAnnotator:
             )
             frame = annotation_to_frame(
                 is_failure=is_failure,
+                ever_held_midair=bool(self._ever_held[env_idx]),
                 failure_onset=onset,
                 failure_type=ftype,
                 injection_active=injection,

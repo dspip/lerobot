@@ -31,12 +31,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_simpleik_datagen.json"
 
 
-def test_load_default_recipe_dwell_and_continue_mode() -> None:
+def test_load_default_recipe_dwell_and_fifty_fifty_modes() -> None:
     recipe = load_datagen_recipe(DEFAULT_RECIPE)
     assert recipe["post_drop"]["dwell_steps"] == 80
-    rng = np.random.default_rng(0)
-    for _ in range(20):
-        assert sample_post_drop_mode(rng, recipe["post_drop"]["mode_weights"]) == "continue_then_ik"
+    weights = recipe["post_drop"]["mode_weights"]
+    assert weights == {
+        "continue_then_ik": 0.5,
+        "reset_then_ik": 0.5,
+        "immediate_ik": 0.0,
+    }
+    rng = np.random.default_rng(42)
+    seen = {sample_post_drop_mode(rng, weights) for _ in range(64)}
+    assert seen == {"continue_then_ik", "reset_then_ik"}
+
+
+def test_default_recipe_samples_both_modes_with_fixed_seed() -> None:
+    recipe = load_datagen_recipe(DEFAULT_RECIPE)
+    weights = recipe["post_drop"]["mode_weights"]
+    rng_a = np.random.default_rng(7)
+    rng_b = np.random.default_rng(7)
+    assert sample_post_drop_mode(rng_a, weights) == sample_post_drop_mode(rng_b, weights)
+    assert sample_post_drop_mode(rng_a, weights) in {"continue_then_ik", "reset_then_ik"}
 
 
 def test_sample_reset_only() -> None:

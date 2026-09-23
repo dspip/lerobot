@@ -43,9 +43,9 @@ Our fixes vs their original plan:
 | `basket_dist < 0.15` success | **Do not** | That oracle does not exist; keep cylinder checks |
 | Shared recipe JSON | **Yes:** `examples/faults/recipes/can_simpleik_datagen.json` | Additive `post_drop` block so their pose/object work can merge |
 
-Default recording mix: **`continue_then_ik` at 100%** until they opt in.
-`reset_then_ik` may be a later minority (start ≤15%, tagged). `immediate_ik`
-is today’s behavior (library default, unit-test compatibility).
+Default recording mix (§12.6): **`continue_then_ik` / `reset_then_ik` at 50/50**,
+dwell 80. `immediate_ik` weight **0** in the shared recipe (library default
+remains for unit-test compatibility).
 
 ---
 
@@ -305,8 +305,8 @@ README: merge by adding sibling keys, do not rename `post_drop`.
   "post_drop": {
     "dwell_steps": 80,
     "mode_weights": {
-      "continue_then_ik": 1.0,
-      "reset_then_ik": 0.0,
+      "continue_then_ik": 0.5,
+      "reset_then_ik": 0.5,
       "immediate_ik": 0.0
     }
   }
@@ -318,7 +318,7 @@ Loader (pure, no GPU) e.g. `load_datagen_recipe(path) -> dict` +
 
 - Weights must be ≥ 0 and sum > 0.
 - Unknown mode keys → `ValueError`.
-- Default file above always samples `continue_then_ik`.
+- Default file above samples `continue_then_ik` or `reset_then_ik` (50/50).
 
 Checkpoint recorder: for each drop episode, sample mode from recipe weights,
 pass dwell_steps + mode into `run_pipeline`. Write sampled mode into the
@@ -387,8 +387,8 @@ Do not call `policy.reset()` from the injector.
   elapses.
 - `immediate_ik` is unchanged when `dwell_steps=0`.
 - Config: `reset_then_ik` + `dwell_steps=0` raises.
-- Recipe load + `sample_post_drop_mode` with 100% continue; with 100% reset;
-  invalid weights.
+- Recipe load + `sample_post_drop_mode` on the default JSON (50/50 continue/reset
+  per §12.6); with 100% continue; with 100% reset; invalid weights.
 - Existing midair_drop tests with no new kwargs still pass (`dwell_steps=0`).
 
 Run:
@@ -423,12 +423,18 @@ policy-driven (continue or reset) and IK still starts from current poses.
 
 ## 10. After code lands (stop and ask the user)
 
+**Closed in §12.6:** default datagen recipe is **50/50** `continue_then_ik` /
+`reset_then_ik`; recorded frames export **`ever_held_midair`** (physical
+`is_failure` formula unchanged).
+
+Remaining human gates:
+
 1. One CUDA mid-band episode with **continue** dwell; parquet: failure window
    ≈ wait, `loss_mask=0` on dwell, IK `loss_mask=1`, video is departure.
-2. User gate: sampled wait vs fixed 80; keep non-recovered drops; unify
-   basket `z_max`; whether to raise `reset_then_ik` weight above 0.
-3. If they enable reset: measure head precision on **pre-first-grasp** frames
-   before scaling. Tag lets you drop those episodes without re-recording.
+2. Sampled wait vs fixed 80; keep non-recovered drops; unify basket `z_max`.
+3. Before scaling a full XY-band mix: measure head precision on
+   **pre-first-grasp** frames in reset episodes (§2.2). Tag
+   `post_drop_mode` lets you drop those episodes without re-recording.
 
 Related: `HANDOFF.md` (drop labels), `HANDOFF_XY60_HEAD_RECOVERY.md` (head
 eval). Do not fold `grasp_miss` into this work (`HANDOFF_GRASP_MISS.md`).
@@ -475,8 +481,8 @@ Do not commit unless the user asks.
 Supervisor records decisions here. Do not re-decide them in code.
 
 1. **Implement this handoff**, not the teammate Downloads plan. The Downloads file stays rejected (§9).
-2. **Reset is a real option and must be tested**, not only sketched. If later traces are bad, drop those episodes by tag. Do not put reset in the default mix.
-3. **Default dataset stays `continue_then_ik` at weight 1.0**, dwell 80. That is the fixed dataset recipe.
+2. **Reset is a real option and must be tested**, not only sketched. If later traces are bad, drop those episodes by tag. *(Superseded for recipe weights by §12.6.)*
+3. **Default dataset stays `continue_then_ik` at weight 1.0**, dwell 80. *(Superseded by §12.6 — 50/50 continue/reset.)*
 4. **Reset timeline the user asked for**, after the check below:
 
    `drop → (control wait only if the can is still airborne) → policy.reset() once → VLA for the dwell → existing IK from live poses`
@@ -497,7 +503,7 @@ Source: `/home/aviya/Downloads/HEAD_DATA_PLAN_post_drop_dwell_2026-09-22.md`. Th
 | Their ask | Response | Where it is handled |
 | --- | --- | --- |
 | Failure head never saw long post-drop rest; live recall ~0.06 | **Accept the gap.** Record a real wait after the drop before IK. | §1, dwell in `midair_drop.py` |
-| Label rule unchanged (`held earlier AND not grasped AND not in basket`) | **Accept.** Do not edit `annotation.py`. | §3.2 |
+| Label rule unchanged (`held earlier AND not grasped AND not in basket`) | **Accept.** Formula unchanged. Recorded schema also exports `ever_held_midair` from `_ever_held` (§12.6). *(Superseded: “do not edit `annotation.py`” — schema-only export landed in §12.6.)* | §3.2, §12.6 |
 | Scripted low hover ~40% | **Reject.** Stock SmolVLA leaves; hover is not this policy (§2.1). | §9 |
 | Scripted high hover ~25% | **Reject.** Same. | §9 |
 | Scripted wander ~20% | **Reject.** Continue-mode VLA already leaves the wrist view (3–14% wrist-visible after 1 s). Do not script waypoints. | §2.1, §9 |
@@ -511,26 +517,26 @@ Source: `/home/aviya/Downloads/HEAD_DATA_PLAN_post_drop_dwell_2026-09-22.md`. Th
 | Force ≥20% tipped landings | **Reject for this slice.** Do not change the impulse hook to force tips. | §3.4 |
 | Nudges that move the can 2–50 cm | **Reject.** That was the missed-grasp script. | §9 |
 | Wrist-out-of-view and occlusion frames | **Emerge from continue VLA**, not from scripted wander. | §2.1 |
-| Do not reduce pre-grasp / carry / in-basket negatives | **Accept.** No nominal-episode deletion. Reset dwell overlaps pre-grasp, so reset stays **weight 0** in the default recipe and is tagged. | §2.2, recipe |
+| Do not reduce pre-grasp / carry / in-basket negatives | **Accept.** No nominal-episode deletion. Reset dwell overlaps pre-grasp (§2.2). **Default recipe is 50/50 continue/reset (§12.6)**; tag `post_drop_mode` to filter reset episodes if head precision is poor. *(Superseded: reset weight 0 in default recipe.)* | §2.2, recipe, §12.6 |
 | ~2000 dwell frames, ~20–25 episodes, +10 nominal, 20% holdout | **Reject the quota.** Ship the recorder + recipe first. One continue episode and one reset episode are the proof runs, not a 2000-frame mix. | §10 |
 | Keep `no_regrasp` / `not_success` when they contain dwell | **Reject for this slice.** | §3.4 |
 | Log `dwell_behaviours` | **Reject** (no scripted behaviours). **Do log** `post_drop_mode` and `post_drop_dwell_steps` on the episode summary so reset episodes can be dropped later. | §5 |
 | Acceptance: median failure window ≥ 8 s, min ≥ 2 s | **Reject the 8 s bar.** Target window is the 4 s dwell (80 control steps; dataset frames at 10 FPS are about half of that). | §0 |
 | ≥500 frames EEF >15 cm lateral | **Expected from continue**, not a scripted quota. | §2.1 |
-| ≥500 frames EEF 2–10 cm above can, gripper open | **That is hover.** Continue does not do it. Reset does (§2.2) and is optional/tagged. | §2.2 |
+| ≥500 frames EEF 2–10 cm above can, gripper open | **That is hover.** Continue does not do it. Reset does (§2.2); **50% of sampled episodes use reset (§12.6)**. | §2.2, §12.6 |
 | ≥300 tipped-can failure frames | **Out of slice.** | §3.4 |
 | Non-recovered episodes present with `loss_mask=0` | **Mask on dwell is in slice. Keeping non-recovered episodes is not.** | §3.2, §3.4 |
 | Retrain head; recall ≥ 0.8 in every time bucket | **Out of slice.** Data recorder only. | — |
-| Single-frame head cannot separate upright landing from pre-grasp without history | **Accept as a warning.** Reason reset is not the default: reset dwell looks like pre-first-grasp (§2.2). | §2.2 |
+| Single-frame head cannot separate upright landing from pre-grasp without history | **Accept as a warning.** Reset dwell can look like pre-first-grasp (§2.2). Mix is **50/50 by §12.6** — use `ever_held_midair` history downstream and measure before scaling. *(Superseded: “reset is not the default”.)* | §2.2, §12.6 |
 | Code pointers: dwell between trigger and planner | **Accept the insertion point.** | §7 |
-| Code pointers: edit `annotation.py` | **Reject.** | §3.2 |
+| Code pointers: edit `annotation.py` | **Partial (§12.6).** Reject changing the physical `is_failure` rule; **accept** exporting `ever_held_midair` in the annotation schema only. *(Superseded: blanket reject.)* | §12.6 |
 | Code pointers: loosen `should_keep_checkpoint_drop` | **Reject this slice.** | §3.4 |
 | Code pointers: `loss_mask.py` | **Accept**, for dwell frames, not for a new non-recovered keep policy. | §3.2 |
 | Code pointers: summary fields in the pipeline | **Accept** for mode + dwell steps. | §5 |
 
 ### 12.3 What “fixed dataset” means here
 
-The next XY-band recording uses `examples/faults/recipes/can_simpleik_datagen.json`: dwell 80, `continue_then_ik` weight 1.0. `reset_then_ik` weight 0.0 until a human raises it. Episode metadata stores the sampled mode.
+The next XY-band recording uses `examples/faults/recipes/can_simpleik_datagen.json`: dwell 80, **50/50** `continue_then_ik` / `reset_then_ik` (§12.6). Episode metadata stores the sampled mode. Recorded frames export **`ever_held_midair`** alongside `is_failure` for failure-head history input.
 
 ### 12.4 Implementation log
 
@@ -543,18 +549,21 @@ Code:
 - Drop with dwell `> 0` returns the VLA action and does not start IK. After `dwell` further `on_step` calls, IK starts from live poses unless grasped or in basket.
 - `reset_then_ik` sets `policy_reset_requested` on the drop step. `DropRecoveryEnvWrapper.consume_policy_reset` is one-shot. The pipeline calls `policy.reset()` once after that `env.step` and prints `[pipeline] policy.reset() once after drop (reset_then_ik)`.
 - `loss_mask` is `0` on the drop frame and on dwell (`triggered` and not `recovery_active`).
-- Recipe `examples/faults/recipes/can_simpleik_datagen.json`: dwell 80, `continue_then_ik` weight 1.0, reset and immediate weights 0. Checkpoint samples the mode and passes it into `run_pipeline`.
+- Recipe `examples/faults/recipes/can_simpleik_datagen.json`: dwell 80; mode weights updated to **50/50** continue/reset in §12.6. Checkpoint samples the mode and passes it into `run_pipeline`.
 - `suppress_grasp_skip` on `_EnvDropState`: the grasp that is still reported on the first dwell frames is not treated as a regrasp. It clears the first time the object reads ungrasped. Both sim proofs started IK at step 161, so this latch did not swallow recovery.
+- **§12.6 follow-up:** `annotation.py` adds `ever_held_midair` to `FAILURE_ANNOTATION_FEATURES` and frame export; `_ever_held` / `_cleared_after_failure` / physical `is_failure` logic unchanged.
 
-Not done, on purpose:
+Not done, on purpose (initial dwell slice):
 
-- No edit to `annotation.py`, keep gate, or `lerobot_eval.py`.
+- No edit to keep gate or `lerobot_eval.py`.
 - No scripted hover / wander / missed grasp.
 - No full XY-band mix. Two proof episodes only (below). A full mix is the checkpoint script and will take hours.
 
+*(Superseded: “no edit to `annotation.py`” — schema export only in §12.6.)*
+
 ### 12.5 Finish summary
 
-**Teammate plan:** every ask is answered in §12.2. The gap they named is real. The generator they specified is not what shipped. The fixed recording recipe is passive VLA for 80 control steps, then the existing IK planner. Reset is implemented, tagged, weight 0 in the recipe, and was run.
+**Teammate plan:** every ask is answered in §12.2. The gap they named is real. The generator they specified is not what shipped. The fixed recording recipe is passive VLA for 80 control steps, then the existing IK planner. Reset is implemented and tagged; **recipe mix is 50/50 continue/reset as of §12.6** (proof runs below used explicit modes).
 
 **Unit tests the supervisor re-ran:** 13 passed (`reset_then_ik` handshake, zero-dwell error, dwell delay, recipe). Worker reported `tests/faults` 289 passed before the one-line reset log.
 
@@ -577,7 +586,12 @@ Not done, on purpose:
 
 **1 s wait before reset:** still no. Physics settle is inside the drop. Reset ran on step 80, VLA ran until step 161, then IK. The arm was not given a second of queued carry before the queue clear.
 
-**What is still a human gate:** whether reset episodes are worth mixing in (weight is 0 until you say otherwise). Both modes placed the can on this seed; that does not measure head precision on pre-grasp frames. Do not raise `reset_then_ik` weight on that one success.
+**Human gate (post §12.6):** reset is **in the default mix at 50%** with continue
+(proof runs below used explicit modes per episode). Before a large XY-band
+recording, check head precision on pre-first-grasp frames in reset dwell (§2.2);
+filter by `post_drop_mode` if needed. Seed 9300 success in both modes does not
+prove head precision on reset dwell alone. *(Superseded: reset weight 0 / raise
+later.)*
 
 **Mode is now visible on the recorded video.** The drop-phase banner used to read `PHASE: DROP (midair_drop)` for every frame of the wait, so an 80-step dwell looked exactly like a 1-frame `immediate_ik` drop and the three modes were indistinguishable on screen. The banner now reads `PHASE: DROP immediate_ik`, `PHASE: DWELL continue_then_ik 48/80`, or `PHASE: DWELL reset_then_ik 48/80 (queue cleared)`. `examples/faults/compare_post_drop_modes.py` stitches several episode videos into one labeled side-by-side mp4/gif.
 
@@ -592,3 +606,13 @@ Three-mode comparison recorded at seed 9300, mid band, `soup_xy_offset=(0, 0)`, 
 Artifacts: `outputs/modes_immediate`, `outputs/modes_continue`, `outputs/modes_reset`, comparison in `outputs/modes_compare/post_drop_modes.mp4`. Pass `copy_demo_gif=False` when recording proofs; the default copies the episode gif over `docs/assets/demo/full_pipeline_drop_recovery.gif`.
 
 **Regression fix (manual demo):** Post-dwell `on_step` treated any `triggered` episode with default `post_drop_dwell_steps=0` like an automatic drop and started IK on the next step, breaking `examples/faults/run_manual_drop_recovery.py`. Added `_EnvDropState.awaiting_manual_recovery`: `trigger_manual_drop` sets it; `on_step` passes proposed actions through until `request_recovery` clears it and starts the planner. Manual Drop waits indefinitely; manual Recover (R) starts IK immediately. No policy reset and no SmolVLA in that script.
+
+### 12.6 User decision (2026-09-23) — recipe mix + `ever_held_midair`
+
+**Supersedes** §0 “100% continue”, §12 items 2–3 (reset weight 0 / continue-only default), §10 “raise reset weight”, §12.2 table rows that said weight 0 / no `annotation.py` edit, §12.4 “no edit to `annotation.py`”, §12.5 “weight 0 until you say otherwise”, and the old §12.3–12.4 recipe weight lines.
+
+- **`reset_then_ik` is required** in the recording mix (not weight 0).
+- Shared recipe: **`continue_then_ik` 0.5**, **`reset_then_ik` 0.5**, **`immediate_ik` 0.0**, dwell **80**.
+- Reset dwell labeling unchanged: `is_failure=true`, `PHASE_POST_FAULT` until IK begins, then `PHASE_RECOVERY`.
+- Export **`ever_held_midair`** (bool, shape `(1,)`) from the annotator’s existing `_ever_held` latch in recorded dataset/info features (oracle/sim history for downstream failure-head training). Latch semantics and **`_cleared_after_failure`** unchanged — recovery place release is still not a second failure.
+- No in-repo failure-head trainer or proprioceptive estimator in this slice.
