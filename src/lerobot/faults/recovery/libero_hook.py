@@ -27,7 +27,7 @@ def install_libero_control_freq_hook(control_freq: int) -> bool:
         return True
 
     try:
-        from lerobot.envs.libero import LiberoEnv
+        from lerobot.envs.libero import LiberoEnv, disable_gui_renderer
         from libero.libero.envs import OffScreenRenderEnv
     except ImportError:
         return False
@@ -46,6 +46,7 @@ def install_libero_control_freq_hook(control_freq: int) -> bool:
         if freq is not None:
             kwargs["control_freq"] = freq
         env = OffScreenRenderEnv(**kwargs)
+        disable_gui_renderer(env)
         env.reset()
         self._env = env
 

@@ -35,6 +35,24 @@ from lerobot.lerobot_types import RobotObservation
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
 
+def disable_gui_renderer(env: Any) -> None:
+    """Turn off the on-screen OpenCV renderer that LIBERO forces on.
+
+    ``OffScreenRenderEnv`` hardcodes ``has_renderer=True``, so robosuite calls
+    ``cv2.destroyAllWindows()`` on every hard reset. Headless ``cv2`` builds
+    raise there, and LIBERO's reset retry loop swallows the exception and spins
+    forever. Observations come from the offscreen renderer, which stays on.
+
+    Must run before the first reset, and the viewer is dropped rather than
+    closed because closing it is the call that raises.
+    """
+    inner = getattr(env, "env", None)
+    if inner is None:
+        return
+    inner.has_renderer = False
+    inner.viewer = None
+
+
 def _get_suite(name: str) -> benchmark.Benchmark:
     """Instantiate a LIBERO suite by name with clear validation."""
     bench = benchmark.get_benchmark_dict()
@@ -299,6 +317,7 @@ class LiberoEnv(gym.Env):
             # because settle steps can make their observations differ from hard resets.
             hard_reset=self.hard_reset,
         )
+        disable_gui_renderer(env)
         env.reset()
         self._env = env
 

@@ -51,6 +51,61 @@ def _mock_rs_env(grasped: bool = True) -> MagicMock:
     return rs_env
 
 
+def test_explicit_recovery_motion_profile_is_stored_per_env():
+    inj = MidAirDropFault(_cfg(), num_envs=2)
+
+    inj.set_recovery_motion_profile(
+        1,
+        speed_multiplier=0.87,
+        pickup_offset_xy_m=(0.01, -0.02),
+        transport_offset_m=-0.05,
+        posture_bias_rad=(0.01, 0.02, -0.03),
+    )
+
+    assert inj._states[0].recovery_motion_override is None
+    override = inj._states[1].recovery_motion_override
+    assert override is not None
+    assert override.speed_multiplier == 0.87
+    assert override.pickup_offset_xy_m == (0.01, -0.02)
+    assert override.transport_offset_m == -0.05
+
+
+def test_recovery_motion_profile_rejects_invalid_values():
+    inj = MidAirDropFault(_cfg(), num_envs=1)
+
+    with pytest.raises(ValueError, match="env_idx"):
+        inj.set_recovery_motion_profile(
+            1,
+            speed_multiplier=1.0,
+            pickup_offset_xy_m=(0.0, 0.0),
+            transport_offset_m=0.0,
+            posture_bias_rad=(0.0, 0.0, 0.0),
+        )
+    with pytest.raises(ValueError, match="speed_multiplier"):
+        inj.set_recovery_motion_profile(
+            0,
+            speed_multiplier=0.0,
+            pickup_offset_xy_m=(0.0, 0.0),
+            transport_offset_m=0.0,
+            posture_bias_rad=(0.0, 0.0, 0.0),
+        )
+
+
+def test_reset_clears_recovery_motion_profile():
+    inj = MidAirDropFault(_cfg(), num_envs=1)
+    inj.set_recovery_motion_profile(
+        0,
+        speed_multiplier=1.0,
+        pickup_offset_xy_m=(0.01, 0.0),
+        transport_offset_m=0.02,
+        posture_bias_rad=(0.0, 0.0, 0.0),
+    )
+
+    inj.reset()
+
+    assert inj._states[0].recovery_motion_override is None
+
+
 @patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
 @patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
 def test_does_not_trigger_before_grasp_when_required(mock_grasped, mock_get_rs):

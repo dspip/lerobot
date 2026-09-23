@@ -33,7 +33,7 @@ from lerobot.faults.sim.libero import (
     seat_object_in_basket_if_above,
 )
 from lerobot.faults.logging import FaultEventLogger
-from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
+from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 
 # Never inject a drop closer than this XY distance to the basket (meters).
 # ``min_drop_distance_from_basket_m`` is a skip radius: if the object is still
@@ -48,6 +48,14 @@ def _body_xpos_safe(rs_env: Any, name: str) -> np.ndarray | None:
         return _body_xpos(rs_env, name)
     except Exception:
         return None
+
+
+@dataclass
+class _RecoveryMotionOverride:
+    speed_multiplier: float
+    pickup_offset_xy_m: tuple[float, float]
+    transport_offset_m: float
+    posture_bias_rad: tuple[float, float, float]
 
 
 @dataclass
@@ -78,6 +86,7 @@ class _EnvDropState:
     waypoint_noise_m: float | None = None
     recovery_action_noise_std: float | None = None
     arm_posture_noise_rad: np.ndarray | None = None
+    recovery_motion_override: _RecoveryMotionOverride | None = None
     last_impulse_lin: np.ndarray | None = None
     last_impulse_ang: np.ndarray | None = None
     # Planar object→basket distance at the moment of the drop.
@@ -114,6 +123,29 @@ class MidAirDropFault:
     @property
     def enabled(self) -> bool:
         return bool(self.config.enabled)
+
+    def set_recovery_motion_profile(
+        self,
+        env_idx: int,
+        *,
+        speed_multiplier: float,
+        pickup_offset_xy_m: tuple[float, float],
+        transport_offset_m: float,
+        posture_bias_rad: tuple[float, float, float],
+    ) -> None:
+        """Set exact episode-level recovery motion values for one environment."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        if speed_multiplier <= 0:
+            raise ValueError("speed_multiplier must be positive")
+        pickup = tuple(float(v) for v in np.asarray(pickup_offset_xy_m).reshape(2))
+        posture = tuple(float(v) for v in np.asarray(posture_bias_rad).reshape(3))
+        self._states[env_idx].recovery_motion_override = _RecoveryMotionOverride(
+            speed_multiplier=float(speed_multiplier),
+            pickup_offset_xy_m=pickup,
+            transport_offset_m=float(transport_offset_m),
+            posture_bias_rad=posture,
+        )
 
     def reset(
         self,
@@ -408,11 +440,32 @@ class MidAirDropFault:
 
         episode_seed = _episode_seed(self.config.seed, state.episode_id)
         ep_rng = np.random.default_rng(episode_seed)
-        speed_multiplier = float(
-            ep_rng.uniform(self.config.speed_multiplier_min, self.config.speed_multiplier_max)
-        )
-        arm_noise_rad = float(np.deg2rad(self.config.arm_posture_noise_deg))
-        arm_posture_noise = ep_rng.uniform(-arm_noise_rad, arm_noise_rad, size=3)
+        override = state.recovery_motion_override
+        if override is None:
+            speed_multiplier = float(
+                ep_rng.uniform(self.config.speed_multiplier_min, self.config.speed_multiplier_max)
+            )
+            arm_noise_rad = float(np.deg2rad(self.config.arm_posture_noise_deg))
+            arm_posture_noise = ep_rng.uniform(-arm_noise_rad, arm_noise_rad, size=3)
+            pickup_radius = float(self.config.pickup_via_offset_m) * float(
+                np.sqrt(ep_rng.random())
+            )
+            pickup_angle = float(ep_rng.uniform(-np.pi, np.pi))
+            pickup_offset_xy_m = (
+                pickup_radius * float(np.cos(pickup_angle)),
+                pickup_radius * float(np.sin(pickup_angle)),
+            )
+            transport_offset_m = float(
+                ep_rng.uniform(
+                    -self.config.transport_via_offset_m,
+                    self.config.transport_via_offset_m,
+                )
+            )
+        else:
+            speed_multiplier = override.speed_multiplier
+            arm_posture_noise = np.asarray(override.posture_bias_rad, dtype=np.float64)
+            pickup_offset_xy_m = override.pickup_offset_xy_m
+            transport_offset_m = override.transport_offset_m
 
         state.episode_seed = episode_seed
         state.speed_multiplier = speed_multiplier
@@ -425,6 +478,13 @@ class MidAirDropFault:
             speed_multiplier=speed_multiplier,
             waypoint_noise_m=self.config.waypoint_noise_m,
             arm_posture_noise_rad=arm_posture_noise,
+            pickup_via_offset_xy_m=pickup_offset_xy_m,
+            transport_via_offset_m=transport_offset_m,
+            waypoint_blend_radius_m=self.config.waypoint_blend_radius_m,
+            basket_keepout_m=max(
+                float(self.config.min_drop_distance_from_basket_m),
+                HARD_BASKET_KEEPOUT_M,
+            ),
             side_grasp_enabled=self.config.side_grasp_enabled,
             seed=episode_seed,
         )
@@ -499,7 +559,7 @@ class MidAirDropFault:
                 state.destination_pos = np.asarray(live_dest, dtype=np.float64).copy()
                 state.planner.retarget_basket(live_dest)
 
-            carrying = phase in ("lift", "to_basket_hover")
+            carrying = phase in CARRY_PHASES
             grasped_now = is_object_grasped(rs_env, self.config.object_name)
             obj_z_now = float(object_pos[2]) if object_pos is not None else 0.0
 

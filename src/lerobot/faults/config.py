@@ -122,6 +122,9 @@ class FaultInjectionConfig:
     speed_multiplier_min: float = 0.8
     speed_multiplier_max: float = 1.2
     arm_posture_noise_deg: float = 3.0
+    pickup_via_offset_m: float = 0.0
+    transport_via_offset_m: float = 0.0
+    waypoint_blend_radius_m: float = 0.0
     # object_slip: Gaussian std for position / yaw (rad) nudge.
     slip_pos_std: float = 0.02
     slip_yaw_std: float = 0.15
@@ -277,6 +280,12 @@ class FaultInjectionConfig:
                 if self.arm_posture_noise_deg < 0:
                     raise ValueError(
                         f"arm_posture_noise_deg must be >= 0 (got {self.arm_posture_noise_deg})."
+                    )
+                if self.pickup_via_offset_m < 0 or self.transport_via_offset_m < 0:
+                    raise ValueError("trajectory via offsets must be >= 0.")
+                if self.waypoint_blend_radius_m < 0:
+                    raise ValueError(
+                        f"waypoint_blend_radius_m must be >= 0 (got {self.waypoint_blend_radius_m})."
                     )
         if self.env_ids is not None:
             if len(self.env_ids) == 0:

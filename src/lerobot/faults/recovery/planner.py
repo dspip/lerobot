@@ -12,13 +12,26 @@ from dataclasses import dataclass
 import numpy as np
 
 from lerobot.faults.recovery.fps import SMOLVLA_LIBERO_TARGET_FPS
+from lerobot.faults.recovery.trajectory import (
+    CarryPath,
+    ResolvedPickupVia,
+    build_carry_path,
+    build_pickup_via,
+)
 
 # Phases where rotating the wrist is safe (before the fingers hold anything).
-_YAW_PHASES = ("retract", "approach_hover", "descend_grasp")
+_YAW_PHASES = ("retract", "pickup_via", "approach_hover", "descend_grasp")
 # Phases that must not be left with the fingers crossed over a tipped can.
 _YAW_GATED_PHASES = ("approach_hover", "descend_grasp")
 # |axis·z| above this means the can is standing; a cylinder is then yaw-invariant.
 _UPRIGHT_DOT = 0.6
+# Every phase in which the gripper is carrying the object.
+CARRY_PHASES = frozenset({"lift", "to_basket_via", "to_basket_hover"})
+# Free-space legs that only route the arm. Stopping dead on them is what makes
+# the motion look stepwise, so they may be passed through within a blend radius.
+# Grasp, release, and pre-grasp alignment phases are deliberately excluded: they
+# need the exact endpoint and the settling time.
+BLENDABLE_PHASES = frozenset({"retract", "pickup_via", "lift", "to_basket_via"})
 
 
 def _wrap_to_half_pi(angle: float) -> float:
@@ -39,6 +52,8 @@ class SimpleIKRecoveryPlanner:
     """Plan a pick-place recovery trajectory as normalized 7D delta-OSC actions."""
 
     _WORKSPACE_XY_LIMIT_M = 0.7
+    # Largest share of a leg that may be cut by the pass-through radius.
+    _BLEND_LEG_FRACTION = 0.4
 
     def __init__(
         self,
@@ -62,6 +77,11 @@ class SimpleIKRecoveryPlanner:
         yaw_stall_multiplier: float = 3.0,
         waypoint_noise_m: float = 0.0,
         arm_posture_noise_rad: np.ndarray | float | None = None,
+        pickup_via_offset_xy_m: tuple[float, float] = (0.0, 0.0),
+        transport_via_offset_m: float = 0.0,
+        basket_keepout_m: float = 0.20,
+        # Pass-through radius for free-space via points. 0 stops at every one.
+        waypoint_blend_radius_m: float = 0.0,
         arrive_tol: float = 0.02,
         basket_xy_tol: float = 0.012,
         grasp_hold_steps: int = 20,
@@ -90,6 +110,16 @@ class SimpleIKRecoveryPlanner:
         self.yaw_stall_multiplier = float(yaw_stall_multiplier)
         self.yaw_stall_advances = 0
         self.waypoint_noise_m = float(waypoint_noise_m)
+        self.pickup_via_offset_xy_m = tuple(
+            float(v) for v in np.asarray(pickup_via_offset_xy_m).reshape(2)
+        )
+        self.transport_via_offset_m = float(transport_via_offset_m)
+        self.basket_keepout_m = float(basket_keepout_m)
+        if self.basket_keepout_m < 0:
+            raise ValueError("basket_keepout_m must be non-negative")
+        self.waypoint_blend_radius_m = float(waypoint_blend_radius_m)
+        if self.waypoint_blend_radius_m < 0:
+            raise ValueError("waypoint_blend_radius_m must be non-negative")
         self.arrive_tol = float(arrive_tol)
         self.basket_xy_tol = float(basket_xy_tol)
         self.grasp_hold_steps = int(grasp_hold_steps)
@@ -103,11 +133,14 @@ class SimpleIKRecoveryPlanner:
         )
 
         self._waypoints: list[_Waypoint] = []
+        self._plan_start_pos = np.zeros(3, dtype=np.float64)
         self._wp_idx = 0
         self._hold_left = 0
         self._wp_steps = 0
         self._object_pos = np.zeros(3, dtype=np.float64)
         self._destination_pos = np.zeros(3, dtype=np.float64)
+        self._carry_path: CarryPath | None = None
+        self._pickup_via: ResolvedPickupVia | None = None
         self._actions: np.ndarray | None = None  # open-loop cache for tests / logging
         self._index = 0
         self._closed_loop = True
@@ -128,6 +161,8 @@ class SimpleIKRecoveryPlanner:
         self._hold_left = 0
         self._wp_steps = 0
         self._actions = None
+        self._carry_path = None
+        self._pickup_via = None
         self._index = 0
         self._done = False
         self._phase_name = ""
@@ -170,6 +205,7 @@ class SimpleIKRecoveryPlanner:
         self._object_pos = object_pos.copy()
         self._destination_pos = destination_pos.copy()
         self._waypoints = self._build_waypoints(eef_pos, object_pos, destination_pos, gripper_open)
+        self._plan_start_pos = eef_pos.copy()
         self._wp_idx = 0
         self._hold_left = self._waypoints[0].hold_steps if self._waypoints else 0
         self._wp_steps = 0
@@ -227,6 +263,16 @@ class SimpleIKRecoveryPlanner:
     @property
     def phase_name(self) -> str:
         return self._phase_name
+
+    @property
+    def carry_path(self) -> CarryPath | None:
+        """Object-centric carry geometry, finalized when lift begins."""
+        return self._carry_path
+
+    @property
+    def pickup_via(self) -> ResolvedPickupVia | None:
+        """Requested/resolved pickup bend for logging and verification."""
+        return self._pickup_via
 
     @property
     def object_lying(self) -> bool:
@@ -343,6 +389,10 @@ class SimpleIKRecoveryPlanner:
         self._rot_bias_remaining = self._rot_bias_remaining - cmd * self.max_rot_step
         action[3:6] = cmd.astype(np.float32)
 
+    def _transit_hold(self, hold_steps: int) -> int:
+        """Blended transit legs are passed through, so they never dwell."""
+        return 0 if self.waypoint_blend_radius_m > 0.0 else int(hold_steps)
+
     def _build_waypoints(
         self,
         eef_pos: np.ndarray,
@@ -356,6 +406,13 @@ class SimpleIKRecoveryPlanner:
         obj_hover = self._maybe_noise(object_pos + np.array([0.0, 0.0, self.hover_offset]))
         obj_grasp = object_pos + np.array([0.0, 0.0, self.grasp_z_offset])
         obj_lift = self._maybe_noise(object_pos + np.array([0.0, 0.0, self.lift_height]))
+        self._pickup_via = build_pickup_via(
+            obj_hover,
+            self.pickup_via_offset_xy_m,
+            workspace_xy_limit_m=self._WORKSPACE_XY_LIMIT_M,
+            basket_xy=destination_pos[:2],
+            basket_keepout_m=self.basket_keepout_m,
+        )
 
         # Place: carry HIGH above basket rim (~0.15), then release.
         dest_hover = self._maybe_noise(
@@ -367,18 +424,75 @@ class SimpleIKRecoveryPlanner:
 
         retract = self._maybe_noise(eef_pos + np.array([0.0, 0.0, 0.05]))
 
-        return [
-            _Waypoint(retract, start_grip, hold_steps=2, name="retract"),
-            # Track only while approaching; freeze at grasp so we don't chase/push the can.
+        waypoints = [
+            _Waypoint(retract, start_grip, hold_steps=self._transit_hold(2), name="retract"),
+        ]
+        if np.linalg.norm(self._pickup_via.resolved_offset_xy_m) > 1e-12:
+            waypoints.append(
+                _Waypoint(
+                    np.asarray(self._pickup_via.position_xyz),
+                    g_open,
+                    hold_steps=self._transit_hold(2),
+                    track_object=True,
+                    name="pickup_via",
+                )
+            )
+        # Track only while approaching; freeze at grasp so we don't chase/push the can.
+        waypoints.extend([
             _Waypoint(obj_hover, g_open, hold_steps=3, track_object=True, name="approach_hover"),
             _Waypoint(obj_grasp, g_open, hold_steps=4, track_object=True, name="descend_grasp"),
             _Waypoint(obj_grasp, g_close, hold_steps=self.grasp_hold_steps, track_object=False, name="close_grasp"),
-            _Waypoint(obj_lift, g_close, hold_steps=6, track_object=False, name="lift"),
+            _Waypoint(
+                obj_lift,
+                g_close,
+                hold_steps=self._transit_hold(6),
+                track_object=False,
+                name="lift",
+            ),
+        ])
+        initial_path = self._make_carry_path(object_pos)
+        if len(initial_path.segments) == 3:
+            waypoints.append(
+                _Waypoint(
+                    np.asarray(initial_path.segments[1].end_xyz),
+                    g_close,
+                    hold_steps=self._transit_hold(2),
+                    name="to_basket_via",
+                )
+            )
+        waypoints.extend([
             _Waypoint(dest_hover, g_close, hold_steps=12, name="to_basket_hover"),
             # Open high above the basket — never descend into the rim while holding.
             _Waypoint(dest_hover.copy(), g_open, hold_steps=max(self.place_hold_steps, 20), name="open_place"),
             _Waypoint(dest_retract, g_open, hold_steps=10, name="retract_done"),
-        ]
+        ])
+        return waypoints
+
+    def _make_carry_path(self, object_pos: np.ndarray) -> CarryPath:
+        start = np.asarray(object_pos, dtype=np.float64).reshape(3)
+        lifted = start + np.array([0.0, 0.0, self.lift_height])
+        basket_hover = np.array(
+            [self._destination_pos[0], self._destination_pos[1], lifted[2]],
+            dtype=np.float64,
+        )
+        return build_carry_path(
+            start,
+            lifted,
+            basket_hover,
+            self.transport_via_offset_m,
+            workspace_xy_limit_m=self._WORKSPACE_XY_LIMIT_M,
+            basket_xy=self._destination_pos[:2],
+            basket_keepout_m=self.basket_keepout_m,
+        )
+
+    def _refresh_carry_path(self, object_pos: np.ndarray) -> None:
+        """Finalize carry geometry from the live object pose at lift entry."""
+        self._carry_path = self._make_carry_path(object_pos)
+        segment_by_name = {segment.name: segment for segment in self._carry_path.segments}
+        for wp in self._waypoints[self._wp_idx :]:
+            segment = segment_by_name.get(wp.name)
+            if segment is not None:
+                wp.pos = np.asarray(segment.end_xyz, dtype=np.float64)
 
     def retarget_basket(self, destination_pos: np.ndarray) -> None:
         """Update remaining place waypoints to a live basket pose (keep high Z)."""
@@ -421,8 +535,13 @@ class SimpleIKRecoveryPlanner:
         if wp.track_object and object_pos is not None:
             # Follow object XY while approaching; keep commanded height offsets.
             refreshed = wp.pos.copy()
-            refreshed[0] = object_pos[0]
-            refreshed[1] = object_pos[1]
+            if wp.name == "pickup_via" and self._pickup_via is not None:
+                refreshed[0] = object_pos[0] + self._pickup_via.resolved_offset_xy_m[0]
+                refreshed[1] = object_pos[1] + self._pickup_via.resolved_offset_xy_m[1]
+                refreshed[2] = object_pos[2] + self.hover_offset
+            else:
+                refreshed[0] = object_pos[0]
+                refreshed[1] = object_pos[1]
             if wp.name == "descend_grasp":
                 refreshed[2] = object_pos[2] + self.grasp_z_offset
             elif wp.name == "approach_hover":
@@ -430,14 +549,18 @@ class SimpleIKRecoveryPlanner:
             return _Waypoint(refreshed, wp.gripper_open, wp.hold_steps, wp.track_object, wp.name)
         # Place phases: put the OBJECT over the basket (EEF may be offset while holding).
         if (
-            wp.name in ("to_basket_hover", "open_place")
+            wp.name in ("to_basket_via", "to_basket_hover", "open_place")
             and object_pos is not None
             and eef_pos is not None
         ):
             refreshed = wp.pos.copy()
             offset_xy = eef_pos[:2] - object_pos[:2]
-            refreshed[0] = self._destination_pos[0] + float(offset_xy[0])
-            refreshed[1] = self._destination_pos[1] + float(offset_xy[1])
+            if wp.name == "to_basket_via" and self._carry_path is not None:
+                target_xy = np.asarray(self._carry_path.segments[1].end_xyz[:2])
+            else:
+                target_xy = self._destination_pos[:2]
+            refreshed[0] = target_xy[0] + float(offset_xy[0])
+            refreshed[1] = target_xy[1] + float(offset_xy[1])
             return _Waypoint(refreshed, wp.gripper_open, wp.hold_steps, wp.track_object, wp.name)
         return wp
 
@@ -455,6 +578,7 @@ class SimpleIKRecoveryPlanner:
                 wp.pos = object_pos + np.array([0.0, 0.0, self.grasp_z_offset])
             else:
                 wp.pos = object_pos + np.array([0.0, 0.0, self.lift_height])
+                self._refresh_carry_path(object_pos)
             self._object_pos = object_pos.copy()
         self._hold_left = wp.hold_steps
         self._phase_name = wp.name
@@ -485,7 +609,7 @@ class SimpleIKRecoveryPlanner:
             arrived = dist <= tol and (yaw_aligned or wp.name not in _YAW_GATED_PHASES)
             # Never stuck-advance off the basket hover — that causes early releases.
             # open_place may stuck-advance after the hold so recovery can finish.
-            allow_stuck = wp.name != "to_basket_hover"
+            allow_stuck = wp.name not in ("to_basket_via", "to_basket_hover")
             budget = self.max_steps_per_waypoint
             misaligned_pregrasp = wp.name in _YAW_GATED_PHASES and not yaw_aligned
             if misaligned_pregrasp:
@@ -535,6 +659,33 @@ class SimpleIKRecoveryPlanner:
         self._phase_name = wp.name
         return action
 
+    def _blend_radius_for(self, wp: _Waypoint) -> float:
+        """Pass-through radius for ``wp``, capped so short legs survive.
+
+        A radius comparable to the leg itself would erase that leg's geometry —
+        the 5 cm retract in particular, whose loss wrecks the grasp approach.
+        """
+        if self.waypoint_blend_radius_m <= 0.0 or wp.name not in BLENDABLE_PHASES:
+            return 0.0
+        return min(self.waypoint_blend_radius_m, self._BLEND_LEG_FRACTION * self._leg_length(wp))
+
+    def _leg_length(self, wp: _Waypoint) -> float:
+        # Match by name: object-tracking phases hand out refreshed copies.
+        idx = next((i for i, w in enumerate(self._waypoints) if w.name == wp.name), None)
+        if idx is None:
+            return 0.0
+        start = self._waypoints[idx - 1].pos if idx > 0 else self._plan_start_pos
+        return float(np.linalg.norm(wp.pos - start))
+
+    def _arrival_tol(self, wp: _Waypoint, exact_tol: float) -> float:
+        """Retarget a transit leg a blend radius early so speed never decays.
+
+        The commanded delta is proportional to the remaining distance, so
+        creeping all the way onto a via point drives the command to zero and the
+        arm visibly stops there. Handing over early keeps the corner rounded.
+        """
+        return max(exact_tol, self._blend_radius_for(wp))
+
     def _phase_distance_tol(
         self,
         wp: _Waypoint,
@@ -543,14 +694,18 @@ class SimpleIKRecoveryPlanner:
     ) -> tuple[float, float]:
         if wp.name == "approach_hover":
             return float(np.linalg.norm(wp.pos[:2] - eef_pos[:2])), self.arrive_tol
-        if wp.name in ("to_basket_hover", "open_place"):
+        if wp.name in ("to_basket_via", "to_basket_hover", "open_place"):
             # Arrive when the OBJECT (not EEF) is over the basket.
             if object_pos is not None:
-                dist = float(np.linalg.norm(object_pos[:2] - self._destination_pos[:2]))
+                if wp.name == "to_basket_via" and self._carry_path is not None:
+                    target_xy = np.asarray(self._carry_path.segments[1].end_xyz[:2])
+                else:
+                    target_xy = self._destination_pos[:2]
+                dist = float(np.linalg.norm(object_pos[:2] - target_xy))
             else:
                 dist = float(np.linalg.norm(wp.pos[:2] - eef_pos[:2]))
-            return dist, self.basket_xy_tol
-        return float(np.linalg.norm(wp.pos - eef_pos)), self.arrive_tol
+            return dist, self._arrival_tol(wp, self.basket_xy_tol)
+        return float(np.linalg.norm(wp.pos - eef_pos)), self._arrival_tol(wp, self.arrive_tol)
 
     def _waypoints_to_actions(
         self,
