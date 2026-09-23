@@ -235,8 +235,23 @@ def run_simple_ik_episode_loop(
                             trigger_pose,
                             int(state.dwell_steps_completed),
                         )
+                    if (
+                        paired_plan is not None
+                        and not paired_plan.drop_decision.drop
+                        and not dropped
+                    ):
+                        return _paired_nominal_no_drop_facts(
+                            rs_env,
+                            object_name=object_name,
+                            basket_name=basket_name,
+                            reason=paired_plan.drop_decision.reason,
+                            trigger_pose=trigger_pose,
+                        )
+                    in_basket = is_object_in_basket(
+                        rs_env, object_name, basket_name=basket_name, z_max=0.14
+                    )
                     return SimpleIKEpisodeFacts(
-                        False,
+                        bool(in_basket),
                         "nominal_completed_without_drop",
                         _drop_trigger_payload(decision, path_trigger),
                         trigger_pose,
@@ -273,12 +288,49 @@ def run_simple_ik_episode_loop(
                     dwell_before_recovery,
                 )
 
+    if (
+        paired_plan is not None
+        and not paired_plan.drop_decision.drop
+        and not dropped
+    ):
+        return _paired_nominal_no_drop_facts(
+            rs_env,
+            object_name=object_name,
+            basket_name=basket_name,
+            reason=paired_plan.drop_decision.reason,
+            trigger_pose=trigger_pose,
+        )
+
     return SimpleIKEpisodeFacts(
         False,
         "max_steps_exceeded",
         _drop_trigger_payload(decision, path_trigger),
         trigger_pose,
         dwell_before_recovery,
+    )
+
+
+def _paired_skipped_drop_trigger(reason: str) -> dict[str, Any]:
+    return {"kind": "paired_skipped", "reason": reason}
+
+
+def _paired_nominal_no_drop_facts(
+    rs_env: Any,
+    *,
+    object_name: str,
+    basket_name: str,
+    reason: str,
+    trigger_pose: list[float] | None,
+) -> SimpleIKEpisodeFacts:
+    in_basket = is_object_in_basket(
+        rs_env, object_name, basket_name=basket_name, z_max=0.14
+    )
+    return SimpleIKEpisodeFacts(
+        bool(in_basket),
+        "nominal_no_drop",
+        _paired_skipped_drop_trigger(reason),
+        trigger_pose,
+        0,
     )
 
 

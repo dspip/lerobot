@@ -78,12 +78,15 @@ def test_drop_u_maps_to_real_planner_path_with_keepout() -> None:
     carry = CarryPath(
         segments=(
             PathSegment("lift", (0.55, 0.05, 0.20), (0.10, 0.05, 0.25)),
-            PathSegment("to_basket_hover", (0.10, 0.05, 0.25), (0.02, 0.02, 0.22)),
+            PathSegment("to_basket_via", (0.10, 0.05, 0.25), (0.06, 0.04, 0.24)),
+            PathSegment("to_basket_hover", (0.06, 0.04, 0.24), (0.02, 0.02, 0.22)),
         ),
         requested_transport_offset_m=0.06,
         resolved_transport_offset_m=0.06,
         fallback=False,
     )
+    segment_names = [segment.name for segment in carry.segments]
+    assert segment_names == ["lift", "to_basket_via", "to_basket_hover"]
     basket_xy = np.array([0.0, 0.0])
     drop_recipe = legacy_drop_recipe(recipe)
     keepout = keepout_m(
@@ -99,6 +102,8 @@ def test_drop_u_maps_to_real_planner_path_with_keepout() -> None:
     assert trigger is not None
     path = eligible_path(carry, basket_xy=basket_xy, keepout_m=keepout)
     assert path.total > 0.0
+    assert trigger.segment_name == carry.segments[trigger.segment_order].name
+    assert segment_names.index(trigger.segment_name) == trigger.segment_order
     segment = carry.segments[trigger.segment_order]
     start = np.asarray(segment.start_xyz, dtype=np.float64)
     end = np.asarray(segment.end_xyz, dtype=np.float64)

@@ -42,10 +42,8 @@ class SmolVLADatagenAdapter:
         manifest = request.manifest
         plan = request.paired_plan
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
-        paired_drop = bool(plan.drop_decision.drop)
-        drop_fields = smolvla_fault_drop_fields(plan.smolvla_target) if paired_drop else None
 
-        pipeline_kwargs: dict[str, Any] = {
+        base_pipeline_kwargs: dict[str, Any] = {
             "policy_path": recipe.smolvla.policy_path,
             "device": request.device,
             "seed": manifest.controller_seed,
@@ -59,25 +57,14 @@ class SmolVLADatagenAdapter:
             "wipe_output_dir": True,
             "raise_on_failure": False,
             "copy_demo_gif": False,
-            "episode_kind": "drop" if paired_drop else "nominal",
         }
-        if paired_drop and drop_fields is not None:
-            pipeline_kwargs.update(
-                {
-                    "drop_xy_band_min": drop_fields["drop_xy_band_min"],
-                    "drop_xy_band_max": drop_fields["drop_xy_band_max"],
-                    "drop_xy_target_m": drop_fields["drop_xy_target_m"],
-                    "fault_overrides": {
-                        "object_name": request.object_name,
-                        "basket_name": recipe.basket_name,
-                        "probability": 1.0,
-                    },
-                }
+
+        if not plan.drop_decision.drop:
+            summary = self._pipeline_runner(
+                request.output_dir,
+                **base_pipeline_kwargs,
+                episode_kind="nominal",
             )
-
-        summary = self._pipeline_runner(request.output_dir, **pipeline_kwargs)
-
-        if not paired_drop:
             success = bool(summary.get("behavioral_success", summary.get("success", False)))
             return EpisodeResult.from_run(
                 request,
@@ -88,8 +75,21 @@ class SmolVLADatagenAdapter:
                 pipeline_summary=summary,
             )
 
+        drop_fields = smolvla_fault_drop_fields(plan.smolvla_target)
+        summary = self._pipeline_runner(
+            request.output_dir,
+            **base_pipeline_kwargs,
+            episode_kind="drop",
+            drop_xy_band_min=drop_fields["drop_xy_band_min"],
+            drop_xy_band_max=drop_fields["drop_xy_band_max"],
+            drop_xy_target_m=drop_fields["drop_xy_target_m"],
+            fault_overrides={
+                "object_name": request.object_name,
+                "basket_name": recipe.basket_name,
+                "probability": 1.0,
+            },
+        )
         success = bool(summary.get("success", summary.get("behavioral_success", False)))
-        assert drop_fields is not None
         return EpisodeResult.from_run(
             request,
             success=success,
