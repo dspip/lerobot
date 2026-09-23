@@ -506,6 +506,10 @@ def run_pipeline(
                 libero_env.init_state_id = int(ep_seed) % n_init
 
         observation, info = env.reset(seed=ep_seed)
+        if task_description is None:
+            from lerobot.faults.datagen.task_label import read_libero_task_description
+
+            log_task = read_libero_task_description(vec)
         rs = get_robosuite_env(env)
         if control_hz is not None:
             sim_hz = int(round(read_control_freq(rs)))

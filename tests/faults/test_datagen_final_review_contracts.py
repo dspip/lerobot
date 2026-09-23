@@ -178,6 +178,70 @@ def test_smolvla_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_in
     assert captured["motion_profile"] == plan.motion_profile
 
 
+@pytest.mark.parametrize("manifest_index", (0, 1))
+def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_index: int) -> None:
+    from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
+    manifest = manifests[manifest_index]
+    assert manifest.controller == DatagenController.SIMPLE_IK
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    captured: dict = {}
+
+    def _fake_loop(*_args, **kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        from lerobot.faults.datagen.controllers import simple_ik as mod
+
+        return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
+
+    import lerobot.faults.datagen.controllers.simple_ik as simple_ik_mod
+
+    adapter = SimpleIKDatagenAdapter(recipe)
+    mock_env = MagicMock()
+    mock_env.fault = MagicMock()
+    mock_env.fault.set_recovery_motion_profile = MagicMock()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(simple_ik_mod, "run_simple_ik_episode_loop", _fake_loop)
+        mp.setattr(simple_ik_mod, "make_env", lambda *a, **k: {"libero_object": {0: MagicMock()}})
+        mp.setattr(simple_ik_mod, "DropRecoveryEnvWrapper", lambda *a, **k: mock_env)
+        mp.setattr(
+            simple_ik_mod,
+            "unwrap_libero_env",
+            lambda v: MagicMock(_init_states=[0], init_state_id=0),
+        )
+        mp.setattr(simple_ik_mod, "get_robosuite_env", lambda e, i=0: MagicMock())
+        mp.setattr(simple_ik_mod, "apply_serializable_layout", lambda *a, **k: None)
+        mp.setattr(simple_ik_mod, "read_control_freq", lambda rs: recipe.control_hz)
+        mp.setattr(simple_ik_mod, "read_libero_task_description", lambda v: LIBERO_TASK_DESCRIPTION)
+        mp.setattr(simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock(phase_name="lift", carry_path=None))
+        mock_env.reset = MagicMock(return_value=({}, {}))
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        )
+        adapter.run_episode(request)
+    mock_env.fault.set_recovery_motion_profile.assert_called_once()
+    profile_call = mock_env.fault.set_recovery_motion_profile.call_args
+    assert profile_call.kwargs["speed_multiplier"] == plan.motion_profile.speed_multiplier
+    mock_env.reset.assert_called_once_with(seed=plan.episode_seed)
+    import numpy as np
+
+    drop_rng = captured["drop_rng"]
+    assert isinstance(drop_rng, np.random.Generator)
+    np.testing.assert_array_equal(
+        drop_rng.integers(0, 100, size=3),
+        np.random.default_rng(plan.drop_seed).integers(0, 100, size=3),
+    )
+    assert captured["task"] == LIBERO_TASK_DESCRIPTION
+
+
 def test_run_manifest_tracks_in_progress_and_aborted(tmp_path: Path) -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     recipe = recipe.__class__(
