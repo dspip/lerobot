@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from lerobot.faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
+from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.episode import EpisodeRequest
 from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
@@ -107,3 +109,37 @@ def test_smolvla_adapter_propagates_real_pipeline_exceptions(tmp_path: Path) -> 
 
     with pytest.raises(RuntimeError, match="pipeline exploded"):
         adapter.run_episode(request)
+
+
+def test_smolvla_adapter_nominal_when_paired_plan_skips_drop(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    plan = replace(
+        plan,
+        drop_decision=DropDecision(False, None, "paired_no_drop"),
+    )
+    captured: dict = {}
+
+    def _nominal_pipeline(output_dir: Path, **kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return {"behavioral_success": True}
+
+    adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_nominal_pipeline)
+    request = EpisodeRequest(
+        recipe=recipe,
+        manifest=manifest,
+        object_name="alphabet_soup_1",
+        output_dir=tmp_path,
+        paired_plan=plan,
+        shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        device="cpu",
+    )
+    result = adapter.run_episode(request)
+    assert result.outcome == "nominal_no_drop"
+    assert result.drop_trigger == {"kind": "paired_skipped", "reason": "paired_no_drop"}
+    assert captured["episode_kind"] == "nominal"
+    assert "drop_xy_target_m" not in captured
+    assert "fault_overrides" not in captured

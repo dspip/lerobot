@@ -67,6 +67,7 @@ class _EnvDropState:
     triggered: bool = False
     recovery_active: bool = False
     drop_injection_step: bool = False
+    mark_drop_injection_on_next_step: bool = False
     planner: SimpleIKRecoveryPlanner | None = None
     last_recovery_action: np.ndarray | None = None
     episode_id: int | None = None
@@ -238,7 +239,11 @@ class MidAirDropFault:
                 self._states[env_idx].episode_id = episode_ids[env_idx]
 
             state = self._states[env_idx]
-            state.drop_injection_step = False
+            if state.mark_drop_injection_on_next_step:
+                state.drop_injection_step = True
+                state.mark_drop_injection_on_next_step = False
+            else:
+                state.drop_injection_step = False
             if env_idx not in self._selected or state.finished:
                 continue
 
@@ -430,6 +435,7 @@ class MidAirDropFault:
             state.externally_scheduled_drop = True
         elif state.recovery_active:
             state.pending_first_recovery_action = np.asarray(executed, dtype=np.float32).copy()
+        state.mark_drop_injection_on_next_step = True
         return executed
 
     def _trigger_drop(

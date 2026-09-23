@@ -105,3 +105,9 @@ def test_drop_u_maps_to_real_planner_path_with_keepout() -> None:
     point = start + trigger.target_t * (end - start)
     dist_xy = float(np.linalg.norm(point[:2] - basket_xy))
     assert dist_xy >= keepout - 1e-6
+    np.testing.assert_allclose(point, start + trigger.target_t * (end - start))
+    seg_vec = end - start
+    denom = float(np.dot(seg_vec, seg_vec))
+    if denom > 1e-15:
+        t_on_segment = float(np.clip(np.dot(point - start, seg_vec) / denom, 0.0, 1.0))
+        assert abs(t_on_segment - trigger.target_t) <= 1e-9

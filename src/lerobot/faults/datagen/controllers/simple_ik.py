@@ -172,14 +172,17 @@ def run_simple_ik_episode_loop(
                     basket_xy=basket[:2],
                     keepout_m=keepout,
                 )
-                if paired_plan is not None and paired_plan.drop_decision.drop:
+                if paired_plan is not None:
                     decision = paired_plan.drop_decision
-                    path_trigger = resolve_path_drop_trigger(
-                        paired_plan,
-                        planner.carry_path,
-                        basket_xy=basket[:2],
-                        keepout_m=keepout,
-                    )
+                    if paired_plan.drop_decision.drop and paired_plan.drop_u is not None:
+                        path_trigger = resolve_path_drop_trigger(
+                            paired_plan,
+                            planner.carry_path,
+                            basket_xy=basket[:2],
+                            keepout_m=keepout,
+                        )
+                    else:
+                        path_trigger = None
                 else:
                     decision, path_trigger = sample_path_drop(q, path, drop_rng)
 

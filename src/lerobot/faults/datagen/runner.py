@@ -90,6 +90,12 @@ def run_drop_datagen_matrix(
     if logical_episode_indices is None:
         episodes_per_variant = recipe.experiment_matrix[0].episodes
         logical_episode_indices = tuple(range(int(episodes_per_variant)))
+    try:
+        num_init_states = int(init_count_fn(recipe))
+    except Exception as exc:
+        raise DropDatagenRunnerError(
+            f"could not resolve LIBERO init state count: {exc}"
+        ) from exc
     results: list[EpisodeResult] = []
     for logical_index in logical_episode_indices:
         manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
@@ -98,12 +104,6 @@ def run_drop_datagen_matrix(
                 f"No manifests for logical episode index {logical_index}"
             )
         object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
-        try:
-            num_init_states = int(init_count_fn(recipe))
-        except Exception as exc:
-            raise DropDatagenRunnerError(
-                f"logical episode {logical_index}: could not resolve LIBERO init state count: {exc}"
-            ) from exc
         paired_plan = build_paired_episode_plan(
             recipe,
             manifest=manifests[0],

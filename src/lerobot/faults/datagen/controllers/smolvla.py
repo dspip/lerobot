@@ -42,33 +42,54 @@ class SmolVLADatagenAdapter:
         manifest = request.manifest
         plan = request.paired_plan
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
-        drop_fields = smolvla_fault_drop_fields(plan.smolvla_target)
+        paired_drop = bool(plan.drop_decision.drop)
+        drop_fields = smolvla_fault_drop_fields(plan.smolvla_target) if paired_drop else None
 
-        summary = self._pipeline_runner(
-            request.output_dir,
-            policy_path=recipe.smolvla.policy_path,
-            device=request.device,
-            seed=manifest.controller_seed,
-            post_grasp_delay_steps=recipe.smolvla.post_grasp_delay_steps,
-            post_drop_dwell_steps=dwell_steps,
-            post_drop_mode=manifest.post_drop_mode.value,
-            min_drop_distance_from_basket_m=recipe.smolvla.min_drop_distance_from_basket_m,
-            drop_xy_band_min=drop_fields["drop_xy_band_min"],
-            drop_xy_band_max=drop_fields["drop_xy_band_max"],
-            drop_xy_target_m=drop_fields["drop_xy_target_m"],
-            object_name=request.object_name,
-            init_state_id=plan.init_state_id,
-            shared_layout=request.shared_layout,
-            wipe_output_dir=True,
-            raise_on_failure=False,
-            copy_demo_gif=False,
-            fault_overrides={
-                "object_name": request.object_name,
-                "basket_name": recipe.basket_name,
-                "probability": 1.0,
-            },
-        )
+        pipeline_kwargs: dict[str, Any] = {
+            "policy_path": recipe.smolvla.policy_path,
+            "device": request.device,
+            "seed": manifest.controller_seed,
+            "post_grasp_delay_steps": recipe.smolvla.post_grasp_delay_steps,
+            "post_drop_dwell_steps": dwell_steps,
+            "post_drop_mode": manifest.post_drop_mode.value,
+            "min_drop_distance_from_basket_m": recipe.smolvla.min_drop_distance_from_basket_m,
+            "object_name": request.object_name,
+            "init_state_id": plan.init_state_id,
+            "shared_layout": request.shared_layout,
+            "wipe_output_dir": True,
+            "raise_on_failure": False,
+            "copy_demo_gif": False,
+            "episode_kind": "drop" if paired_drop else "nominal",
+        }
+        if paired_drop and drop_fields is not None:
+            pipeline_kwargs.update(
+                {
+                    "drop_xy_band_min": drop_fields["drop_xy_band_min"],
+                    "drop_xy_band_max": drop_fields["drop_xy_band_max"],
+                    "drop_xy_target_m": drop_fields["drop_xy_target_m"],
+                    "fault_overrides": {
+                        "object_name": request.object_name,
+                        "basket_name": recipe.basket_name,
+                        "probability": 1.0,
+                    },
+                }
+            )
+
+        summary = self._pipeline_runner(request.output_dir, **pipeline_kwargs)
+
+        if not paired_drop:
+            success = bool(summary.get("behavioral_success", summary.get("success", False)))
+            return EpisodeResult.from_run(
+                request,
+                success=success,
+                outcome="nominal_no_drop",
+                drop_trigger={"kind": "paired_skipped", "reason": plan.drop_decision.reason},
+                actual_dwell_steps=0,
+                pipeline_summary=summary,
+            )
+
         success = bool(summary.get("success", summary.get("behavioral_success", False)))
+        assert drop_fields is not None
         return EpisodeResult.from_run(
             request,
             success=success,

@@ -164,6 +164,42 @@ class _FakeAdapter:
         return EpisodeResult.from_run(request, success=True, outcome="ok")
 
 
+def test_init_state_count_provider_called_once_per_matrix_run(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    matrix_two_episodes = tuple(
+        variant.__class__(**{**variant.__dict__, "episodes": 2})
+        for variant in recipe.experiment_matrix
+    )
+    recipe = recipe.__class__(
+        **{
+            **recipe.__dict__,
+            "recording": recipe.recording.__class__(
+                base_seed=9000,
+                output_dir=str(tmp_path / "datagen"),
+                dataset_fps=10,
+            ),
+            "experiment_matrix": matrix_two_episodes,
+        }
+    )
+    calls: list[int] = []
+
+    def _count_once(_recipe) -> int:
+        calls.append(1)
+        return 50
+
+    run_drop_datagen_matrix(
+        recipe,
+        logical_episode_indices=(0, 1),
+        adapter_factories={
+            DatagenController.SIMPLE_IK: lambda _recipe: _FakeAdapter(),
+            DatagenController.SMOLVLA: lambda _recipe: _FakeAdapter(),
+        },
+        layout_provider=_fake_layout_provider,
+        init_state_count_provider=_count_once,
+    )
+    assert len(calls) == 1
+
+
 def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     captured: list = []

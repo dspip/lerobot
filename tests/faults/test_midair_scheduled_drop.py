@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from lerobot.faults.annotation import injector_injection_active
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from tests.faults.test_midair_drop_fault import _action, _cfg, _mock_rs_env, _setup_drop_mocks
@@ -110,3 +111,55 @@ def test_zero_dwell_scheduled_drop_executes_first_recovery_once(
     second = inj.on_step(env, _action(1, 7, 99.0))
     np.testing.assert_allclose(first, second[0])
     assert inj._states[0].pending_first_recovery_action is None
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+@pytest.mark.parametrize(
+    ("dwell_steps", "post_drop_mode"),
+    [(0, "immediate_ik"), (2, "continue_then_ik")],
+)
+def test_scheduled_external_drop_marks_physical_injection_step(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+    dwell_steps: int,
+    post_drop_mode: str,
+) -> None:
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    inj = MidAirDropFault(
+        _cfg(
+            post_drop_dwell_steps=dwell_steps,
+            post_drop_mode=post_drop_mode,
+            require_grasp=False,
+        ),
+        num_envs=1,
+    )
+    env = MagicMock()
+    proposed = _action(1, 7, 7.0)[0]
+    inj.trigger_scheduled_drop(env, 0, proposed, reason="path_uniform")
+    assert inj._states[0].mark_drop_injection_on_next_step
+
+    inj.on_step(env, _action(1, 7, 8.0))
+    assert inj._states[0].drop_injection_step
+    assert inj.loss_mask_for_env(0) == 0.0
+    assert injector_injection_active(inj, 0)
+
+    inj.on_step(env, _action(1, 7, 9.0))
+    assert not inj._states[0].drop_injection_step
+    assert not injector_injection_active(inj, 0)
+    if dwell_steps == 0:
+        assert inj.loss_mask_for_env(0) == 1.0
+    else:
+        assert inj.loss_mask_for_env(0) == 0.0
