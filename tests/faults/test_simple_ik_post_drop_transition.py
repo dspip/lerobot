@@ -101,10 +101,6 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
             "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=False,
         ),
-        patch(
-            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-            return_value=False,
-        ),
     ):
         run_simple_ik_episode_loop(
             env,
@@ -245,10 +241,6 @@ def test_paired_no_drop_never_resamples_or_schedules(
             "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=False,
         ),
-        patch(
-            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-            return_value=False,
-        ),
     ):
         facts = run_simple_ik_episode_loop(
             env,
@@ -312,10 +304,6 @@ def test_paired_no_drop_success_when_object_in_basket(
         patch(
             "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=True,
-        ),
-        patch(
-            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-            return_value=False,
         ),
     ):
         facts = run_simple_ik_episode_loop(
@@ -381,10 +369,6 @@ def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
         patch(
             "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=True,
-        ),
-        patch(
-            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-            return_value=False,
         ),
     ):
         facts = run_simple_ik_episode_loop(
@@ -472,10 +456,6 @@ def test_loop_returns_skipped_recovery_outcome(
         ),
         patch(
             "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
-            return_value=False,
-        ),
-        patch(
-            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
             return_value=False,
         ),
     ):

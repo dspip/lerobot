@@ -87,7 +87,6 @@ def run_drop_datagen_matrix(
     *,
     logical_episode_indices: Sequence[int] | None = None,
     adapter_factories: dict[DatagenController, AdapterFactory] | None = None,
-    headless: bool = True,
     device: str = "cuda",
     layout_provider: SharedLayoutProvider | None = None,
     init_state_count_provider: InitStateCountProvider | None = None,
@@ -146,7 +145,6 @@ def run_drop_datagen_matrix(
                     output_dir=output_dir,
                     paired_plan=paired_plan,
                     shared_layout=shared_layout,
-                    headless=headless,
                     device=device,
                     episode_session=active_session,
                 )

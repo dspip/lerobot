@@ -28,7 +28,6 @@ from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.frame_logging import (
     DATAGEN_POST_STEP_ANNOTATION_KEY,
     DatagenPostStepLogContext,
-    build_datagen_post_step_log_context,
     should_log_sim_step,
 )
 from lerobot.faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
@@ -107,7 +106,6 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
             "lerobot.faults.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),
         ),
-        patch("lerobot.faults.datagen.controllers.simple_ik._pause_and_pump", return_value=False),
         patch("lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket", return_value=False),
         patch("lerobot.faults.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
         patch(
@@ -157,18 +155,6 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         )
         planner = MagicMock(phase_name="lift", carry_path=carry_path, done=False)
 
-        timeline: list[DatagenPostStepLogContext] = []
-
-        def _on_step_end(*, step: int, phase: str, **_kwargs) -> None:
-            timeline.append(
-                build_datagen_post_step_log_context(
-                    env,
-                    sim_step=step,
-                    phase=phase,
-                    is_drop_episode=True,
-                )
-            )
-
         run_simple_ik_episode_loop(
             env,
             rs_env,
@@ -187,7 +173,6 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
             gripper_settle_steps=0,
             episode_session=session,
             recording_stride=RECORDING_STRIDE,
-            on_step_end=_on_step_end,
         )
 
         scheduled.assert_called_once()
@@ -201,10 +186,6 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert injection_logged[0].sim_step % RECORDING_STRIDE == 1
         assert injection_logged[0].loss_mask == 0.0
 
-        dwell_timeline = [ctx for ctx in timeline if ctx.post_drop_dwell_step and not ctx.drop_injection_step]
-        assert len(dwell_timeline) == CONFIGURED_DWELL_STEPS
-        assert all(ctx.loss_mask == 0.0 for ctx in dwell_timeline)
-
         dwell_logged = [ctx for ctx in logged_ctx if ctx.post_drop_dwell_step]
         assert dwell_logged, "expected at least one logged dwell frame"
         assert all(ctx.loss_mask == 0.0 for ctx in dwell_logged)
@@ -213,16 +194,12 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert recovery_logged, "expected logged recovery frames"
         assert all(ctx.loss_mask == 1.0 for ctx in recovery_logged)
 
-        expected_logged = [
-            ctx
-            for ctx in timeline
-            if should_log_sim_step(
+        for ctx in logged_ctx:
+            assert should_log_sim_step(
                 ctx.sim_step,
                 recording_stride=RECORDING_STRIDE,
                 force_drop_injection=ctx.drop_injection_step,
             )
-        ]
-        assert [ctx.sim_step for ctx in logged_ctx] == [ctx.sim_step for ctx in expected_logged]
 
         injection_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.drop_injection_step)
         recovery_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.recovery_active)

@@ -58,12 +58,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default="cuda",
         help="Torch device for SmolVLA runs (e.g. cuda or cpu).",
     )
-    parser.add_argument(
-        "--headless",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Disable interactive viewers when supported.",
-    )
     return parser
 
 
@@ -116,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     results = run_drop_datagen_matrix(
         recipe,
-        headless=args.headless,
         device=str(args.device),
     )
     summary_path = Path(recipe.recording.output_dir) / "matrix_results.json"

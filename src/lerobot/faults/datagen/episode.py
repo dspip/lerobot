@@ -59,7 +59,6 @@ class EpisodeRequest:
     output_dir: Path
     paired_plan: PairedEpisodePlan
     shared_layout: dict[str, dict[str, list[float]]]
-    headless: bool = True
     device: str = "cuda"
     episode_session: DatagenEpisodeSession | None = None
 

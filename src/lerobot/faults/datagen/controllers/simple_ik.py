@@ -17,8 +17,6 @@
 from __future__ import annotations
 
 import os
-import time
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -80,16 +78,6 @@ class SimpleIKEpisodeFacts:
     layout: dict[str, Any] | None = None
 
 
-def _pause_and_pump(viewer: Any | None) -> bool:
-    if viewer is None:
-        return False
-    viewer.pump()
-    while viewer.pause and not viewer.quit_requested:
-        viewer.pump()
-        time.sleep(0.02)
-    return viewer.quit_requested
-
-
 def _nominal_action(
     planner: SimpleIKRecoveryPlanner,
     rs_env: Any,
@@ -129,8 +117,6 @@ def run_simple_ik_episode_loop(
     paired_plan: PairedEpisodePlan | None = None,
     max_steps: int = MAX_PLAN_STEPS,
     gripper_settle_steps: int = 0,
-    viewer: Any | None = None,
-    on_step_end: Callable[..., None] | None = None,
     episode_session: Any | None = None,
     recording_stride: int = 1,
     task: str = "pick up the alphabet soup and place it in the basket",
@@ -150,8 +136,6 @@ def run_simple_ik_episode_loop(
     dwell_before_recovery = 0
 
     for step in range(max_steps):
-        if _pause_and_pump(viewer):
-            return SimpleIKEpisodeFacts(False, "viewer_abort", None, trigger_pose, dwell_before_recovery)
         state = fault._states[0]
 
         if state.recovery_active:
@@ -301,16 +285,6 @@ def run_simple_ik_episode_loop(
                 phase=planner.phase_name,
                 is_drop_episode=is_drop_episode,
                 sim_step=step,
-            )
-        if on_step_end is not None:
-            on_step_end(
-                step=step,
-                phase=planner.phase_name,
-                path=path,
-                decision=decision,
-                path_trigger=path_trigger,
-                rs_env=rs_env,
-                observation=observation,
             )
 
         state = fault._states[0]
