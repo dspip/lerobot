@@ -46,7 +46,8 @@ from lerobot.faults.datagen.path_drop import (  # noqa: E402
     eligible_path,
     sample_path_drop,
 )
-from lerobot.faults.datagen.recipe import DatagenRecipe, load_recipe  # noqa: E402
+from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop  # noqa: E402
+from lerobot.faults.datagen.recipe import DatagenRecipe, PostDropMode, load_recipe  # noqa: E402
 from lerobot.faults.datagen.runtime import (  # noqa: E402
     movable_object_names,
     rotate_quat_about_world_z,
@@ -322,12 +323,7 @@ def _run_episode(
     motion_profile: EpisodeMotionProfile,
     gripper_settle_steps: int,
 ) -> bool:
-    """Execute one episode, choosing the drop point from the computed path.
-
-    The carry geometry is only accurate once the planner has frozen its lift
-    target, so the drop is sampled on the first ``lift`` frame rather than up
-    front.
-    """
+    """Execute one legacy SimpleIK episode (immediate recovery after drop)."""
     fault = env.fault
     fault.set_recovery_motion_profile(
         0,
@@ -353,251 +349,21 @@ def _run_episode(
         episode=episode,
         pickup_via=asdict(planner.pickup_via) if planner.pickup_via is not None else None,
     )
-
-    keepout = keepout_m(
-        recipe.drop.min_drop_distance_from_basket_m,
-        recipe.drop.hard_keepout_floor_m,
+    return run_simple_ik_episode_loop(
+        env,
+        rs_env,
+        fault=fault,
+        planner=planner,
+        recipe_drop=recipe.drop,
+        object_name=recipe.object_name,
+        basket_name=recipe.basket_name,
+        q=q,
+        drop_rng=drop_rng,
+        post_drop_mode=PostDropMode.IMMEDIATE_IK,
+        dwell_steps=0,
+        viewer=viewer,
+        gripper_settle_steps=gripper_settle_steps,
     )
-    path: EligiblePath | None = None
-    decision: DropDecision | None = None
-    trigger: PathTrigger | None = None
-    dropped = False
-    recovery_started = False
-    recovery_phase = ""
-    settle_left = POST_RECOVERY_SETTLE_STEPS
-    regrasped = False
-    landed_in_basket_logged = False
-    recovery_path_logged = False
-    nominal_phase = ""
-
-    for step in range(MAX_PLAN_STEPS):
-        if _pause_and_pump(viewer):
-            return False
-        if viewer is not None and viewer.next_episode:
-            viewer.next_episode = False
-            event_log.emit("episode_end", "user requested next episode", step=step)
-            return False
-
-        state = fault._states[0]
-        if recovery_started:
-            phase = state.planner.phase_name if state.planner is not None else "recovery"
-            if phase != recovery_phase:
-                recovery_phase = phase
-                event_log.emit("recovery", f"phase={phase}", step=step)
-            if (
-                not recovery_path_logged
-                and phase == LIFT_PHASE
-                and state.planner is not None
-                and state.planner.carry_path is not None
-            ):
-                recovery_path_logged = True
-                event_log.emit(
-                    "trajectory_path",
-                    "resolved recovery carry path",
-                    step=step,
-                    carry_path=asdict(state.planner.carry_path),
-                    pickup_via=(
-                        asdict(state.planner.pickup_via)
-                        if state.planner.pickup_via is not None
-                        else None
-                    ),
-                )
-            action = np.zeros((1, 7), dtype=np.float32)
-        else:
-            phase = planner.phase_name
-            obj = get_object_pose(rs_env, recipe.object_name)["pos"].copy()
-            if phase != nominal_phase:
-                nominal_phase = phase
-                eef, _ = get_eef_pose(rs_env)
-                event_log.emit(
-                    "trajectory_phase",
-                    f"nominal phase={phase}",
-                    step=step,
-                    object_xyz=obj,
-                    eef_xyz=eef,
-                    grasped=bool(is_object_grasped(rs_env, recipe.object_name)),
-                    held_midair=bool(
-                        is_object_held_midair(rs_env, recipe.object_name)
-                    ),
-                )
-            basket = get_place_destination(
-                rs_env,
-                recipe.object_name,
-                basket_name=recipe.basket_name,
-            )
-            distance = float(np.linalg.norm(obj[:2] - basket[:2]))
-
-            if decision is None and phase == LIFT_PHASE and planner.carry_path is not None:
-                path = eligible_path(
-                    planner.carry_path,
-                    basket_xy=basket[:2],
-                    keepout_m=keepout,
-                )
-                decision, trigger = sample_path_drop(q, path, drop_rng)
-                event_log.emit(
-                    "drop",
-                    decision.reason,
-                    step=step,
-                    episode=episode,
-                    q=q,
-                    eligible_len_m=round(path.total, 4),
-                    carry_path=asdict(planner.carry_path),
-                    eligible_by_segment={
-                        piece.segment_name: round(
-                            sum(
-                                item.length_m
-                                for item in path.pieces
-                                if item.segment_name == piece.segment_name
-                            ),
-                            4,
-                        )
-                        for piece in path.pieces
-                    },
-                    trigger_segment=None if trigger is None else trigger.segment_name,
-                    trigger_t=None if trigger is None else round(trigger.target_t, 4),
-                )
-                if planner.carry_path.fallback:
-                    event_log.emit(
-                        "trajectory_randomization_fallback",
-                        "transport via-point fell back to straight path",
-                        episode=episode,
-                    )
-
-            held_midair = bool(is_object_held_midair(rs_env, recipe.object_name))
-            fire = (
-                trigger is not None
-                and not dropped
-                and trigger.fires(
-                    phase=phase,
-                    object_xyz=obj,
-                    carry_path=planner.carry_path,
-                    held_midair=held_midair,
-                )
-            )
-            if fire and distance < keepout:
-                event_log.emit(
-                    "drop",
-                    "runtime keep-out reached first; skipping scheduled drop",
-                    step=step,
-                    distance_m=distance,
-                )
-                decision = DropDecision(False, None, "runtime_keepout")
-                trigger = None
-                fire = False
-
-            if fire:
-                pre_drop_object_xyz = obj.copy()
-                if not fault.trigger_manual_drop(env, 0, reason="path_uniform"):
-                    event_log.emit("recovery_failed", "manual drop trigger rejected", step=step)
-                    return False
-                dropped = True
-                drop_state = fault._states[0]
-                event_log.emit(
-                    "impulse",
-                    "path-sampled mid-air drop injected",
-                    step=step,
-                    phase=phase,
-                    distance_m=distance,
-                    object_xyz=pre_drop_object_xyz,
-                    trigger_segment=trigger.segment_name,
-                    trigger_t=trigger.target_t,
-                    impulse_lin=drop_state.last_impulse_lin,
-                    impulse_ang=drop_state.last_impulse_ang,
-                )
-                fault.request_recovery(
-                    env,
-                    0,
-                    reason="path_uniform",
-                    consume_first_action=False,
-                )
-                recovery_started = True
-                trigger = None
-                recovery_planner = fault._states[0].planner
-                event_log.emit(
-                    "recovery",
-                    "SimpleIK recovery started",
-                    step=step,
-                    pickup_via=(
-                        asdict(recovery_planner.pickup_via)
-                        if recovery_planner is not None
-                        and recovery_planner.pickup_via is not None
-                        else None
-                    ),
-                )
-                action = np.zeros((1, 7), dtype=np.float32)
-                phase = "recovery"
-            else:
-                nominal = _nominal_action(
-                    planner,
-                    rs_env,
-                    recipe,
-                    gripper_settle_steps=gripper_settle_steps,
-                )
-                if nominal is None or planner.done:
-                    event_log.emit("episode_end", "nominal SimpleIK plan completed", step=step)
-                    return True
-                action = nominal.reshape(1, 7)
-
-        _show(
-            viewer,
-            env,
-            episode=episode,
-            step=step,
-            phase=phase,
-            q=q,
-            path=path,
-            decision=decision,
-            trigger=trigger,
-            speed_multiplier=motion_profile.speed_multiplier,
-            rs_env=rs_env,
-            recipe=recipe,
-        )
-        result = env.step(action)
-
-        if recovery_started:
-            grasped_now = bool(is_object_grasped(rs_env, recipe.object_name))
-            regrasped = regrasped or grasped_now
-            if (
-                not regrasped
-                and not landed_in_basket_logged
-                and is_object_in_basket(
-                    rs_env,
-                    recipe.object_name,
-                    basket_name=recipe.basket_name,
-                    z_max=0.14,
-                )
-            ):
-                landed_in_basket_logged = True
-                event_log.emit(
-                    "drop_landed_in_basket",
-                    "drop landed in basket before recovery regrasp",
-                    step=step,
-                )
-
-        if recovery_started and state.planner is not None and state.planner.done:
-            settle_left -= 1
-            if settle_left <= 0:
-                in_basket = is_object_in_basket(
-                    rs_env,
-                    recipe.object_name,
-                    basket_name=recipe.basket_name,
-                    z_max=0.14,
-                )
-                if in_basket:
-                    event_log.emit("episode_end", "drop recovery completed in basket", step=step)
-                else:
-                    event_log.emit(
-                        "recovery_failed",
-                        "recovery ended with can outside basket",
-                        step=step,
-                    )
-                return in_basket
-        elif not recovery_started and _terminated(result):
-            event_log.emit("episode_end", "nominal environment terminated", step=step)
-            return True
-
-    event_log.emit("recovery_failed", f"execution exceeded {MAX_PLAN_STEPS} steps")
-    return False
 
 
 def _build_parser() -> argparse.ArgumentParser:
