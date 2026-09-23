@@ -39,6 +39,16 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _drop_phase_banner(mode: str, dwell_completed: int, dwell_total: int) -> str:
+    """Banner text for the drop / post-drop dwell segment (env step overlay)."""
+    if dwell_total > 0:
+        banner = f"PHASE: DWELL {mode} {dwell_completed}/{dwell_total}"
+        if mode == "reset_then_ik":
+            banner += " (queue cleared)"
+        return banner
+    return f"PHASE: DROP {mode}"
+
+
 def _overlay_banner(frame: np.ndarray, text: str, color: tuple[int, int, int]) -> np.ndarray:
     """Draw a simple top banner (no OpenCV dependency)."""
     out = frame.copy()
@@ -589,7 +599,12 @@ def run_pipeline(
                     )
             elif st.triggered or (triggered_at is not None and step >= triggered_at):
                 phase = "drop"
-                banner = "PHASE: DROP (midair_drop)"
+                mode = str(fault_cfg.post_drop_mode)
+                dwell_total = int(fault_cfg.post_drop_dwell_steps)
+                if dwell_total > 0 and not st.recovery_active:
+                    banner = _drop_phase_banner(mode, int(st.dwell_steps_completed), dwell_total)
+                else:
+                    banner = _drop_phase_banner(mode, 0, 0)
                 color = (200, 50, 50)
             else:
                 phase = "vla"

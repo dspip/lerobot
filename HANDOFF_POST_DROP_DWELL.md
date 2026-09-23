@@ -579,4 +579,16 @@ Not done, on purpose:
 
 **What is still a human gate:** whether reset episodes are worth mixing in (weight is 0 until you say otherwise). Both modes placed the can on this seed; that does not measure head precision on pre-grasp frames. Do not raise `reset_then_ik` weight on that one success.
 
+**Mode is now visible on the recorded video.** The drop-phase banner used to read `PHASE: DROP (midair_drop)` for every frame of the wait, so an 80-step dwell looked exactly like a 1-frame `immediate_ik` drop and the three modes were indistinguishable on screen. The banner now reads `PHASE: DROP immediate_ik`, `PHASE: DWELL continue_then_ik 48/80`, or `PHASE: DWELL reset_then_ik 48/80 (queue cleared)`. `examples/faults/compare_post_drop_modes.py` stitches several episode videos into one labeled side-by-side mp4/gif.
+
+Three-mode comparison recorded at seed 9300, mid band, `soup_xy_offset=(0, 0)`, all placed the can:
+
+| Mode | Drop step | IK starts | Regrasp | Dataset `loss_mask=0` |
+| --- | --- | --- | --- | --- |
+| `immediate_ik` | 80 | 80 (same step) | 142 | 1 frame |
+| `continue_then_ik` | 80 | 161 | 234 | 41 frames |
+| `reset_then_ik` | 80 | 161 | 216 | 41 frames |
+
+Artifacts: `outputs/modes_immediate`, `outputs/modes_continue`, `outputs/modes_reset`, comparison in `outputs/modes_compare/post_drop_modes.mp4`. Pass `copy_demo_gif=False` when recording proofs; the default copies the episode gif over `docs/assets/demo/full_pipeline_drop_recovery.gif`.
+
 **Regression fix (manual demo):** Post-dwell `on_step` treated any `triggered` episode with default `post_drop_dwell_steps=0` like an automatic drop and started IK on the next step, breaking `examples/faults/run_manual_drop_recovery.py`. Added `_EnvDropState.awaiting_manual_recovery`: `trigger_manual_drop` sets it; `on_step` passes proposed actions through until `request_recovery` clears it and starts the planner. Manual Drop waits indefinitely; manual Recover (R) starts IK immediately. No policy reset and no SmolVLA in that script.
