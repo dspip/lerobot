@@ -578,3 +578,5 @@ Not done, on purpose:
 **1 s wait before reset:** still no. Physics settle is inside the drop. Reset ran on step 80, VLA ran until step 161, then IK. The arm was not given a second of queued carry before the queue clear.
 
 **What is still a human gate:** whether reset episodes are worth mixing in (weight is 0 until you say otherwise). Both modes placed the can on this seed; that does not measure head precision on pre-grasp frames. Do not raise `reset_then_ik` weight on that one success.
+
+**Regression fix (manual demo):** Post-dwell `on_step` treated any `triggered` episode with default `post_drop_dwell_steps=0` like an automatic drop and started IK on the next step, breaking `examples/faults/run_manual_drop_recovery.py`. Added `_EnvDropState.awaiting_manual_recovery`: `trigger_manual_drop` sets it; `on_step` passes proposed actions through until `request_recovery` clears it and starts the planner. Manual Drop waits indefinitely; manual Recover (R) starts IK immediately. No policy reset and no SmolVLA in that script.

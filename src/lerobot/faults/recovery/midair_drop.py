@@ -87,6 +87,8 @@ class _EnvDropState:
     dwell_steps_completed: int = 0
     policy_reset_requested: bool = False
     suppress_grasp_skip: bool = False
+    # Set by trigger_manual_drop; hold policy actions until request_recovery.
+    awaiting_manual_recovery: bool = False
 
 
 def _episode_seed(config_seed: int | None, episode_id: int | None) -> int:
@@ -207,6 +209,10 @@ class MidAirDropFault:
                 continue
 
             if state.triggered and not state.recovery_active:
+                if state.awaiting_manual_recovery:
+                    executed[env_idx] = actions[env_idx]
+                    state.episode_step += 1
+                    continue
                 rs_env = get_robosuite_env(env, env_idx=env_idx)
                 grasped = is_object_grasped(rs_env, self.config.object_name)
                 in_basket = is_object_in_basket(
@@ -372,6 +378,7 @@ class MidAirDropFault:
         state.drop_trigger_reason = reason
         telemetry, rs_env = self._drop_object(env, env_idx, state)
         state.triggered = True
+        state.awaiting_manual_recovery = True
         self._log_event(
             env_idx=env_idx,
             status="manual_triggered",
@@ -439,6 +446,7 @@ class MidAirDropFault:
             return self._next_recovery_action(env_idx, env=env)
 
         state.drop_trigger_reason = reason
+        state.awaiting_manual_recovery = False
         destination = self._start_recovery_planner(env, env_idx, state)
         recovery_action = (
             self._next_recovery_action(env_idx, env=env) if consume_first_action else None
@@ -462,6 +470,7 @@ class MidAirDropFault:
     ) -> np.ndarray:
         """Build ``SimpleIKRecoveryPlanner`` from current EEF and object poses."""
         rs_env = get_robosuite_env(env, env_idx=env_idx)
+        state.awaiting_manual_recovery = False
         state.recovery_active = True
 
         episode_seed = _episode_seed(self.config.seed, state.episode_id)

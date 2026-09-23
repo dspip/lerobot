@@ -377,7 +377,7 @@ def main() -> None:
             )
             overlay = (
                 f"phase: {phase}  ep: {replay_episode_id}  step: {global_step}\n"
-                f"d=Drop  r=Recover  q/Esc=quit"
+                f"d=Drop (hold)  r=Recover (IK now)  q/Esc=quit"
             )
             frames.append(_overlay(images["image"], overlay))
             ui.show(frames[-1])

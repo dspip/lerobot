@@ -186,9 +186,68 @@ def test_manual_drop_uses_fault_lifecycle_without_starting_recovery(
 
     state = inj._states[0]
     assert state.triggered
+    assert state.awaiting_manual_recovery
     assert not state.recovery_active
     assert state.last_impulse_lin is not None
     mock_drop.assert_called_once()
     event = json.loads((tmp_path / "faults.jsonl").read_text())
     assert event["status"] == "manual_triggered"
     assert event["drop_trigger_reason"] == "manual"
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.is_object_in_basket")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+def test_manual_drop_waits_until_request_recovery(
+    mock_get_rs,
+    mock_arm_q,
+    mock_drop,
+    mock_grasped,
+    mock_in_basket,
+    mock_dest,
+):
+    mock_get_rs.return_value = _mock_rs_env()
+    mock_arm_q.return_value = np.zeros(7)
+    mock_drop.return_value = {"object_pose_after": {"pos": [0.0, 0.0, 0.0]}}
+    mock_grasped.return_value = False
+    mock_in_basket.return_value = False
+    mock_dest.return_value = np.array([0.3, 0.2, 0.9])
+
+    with patch("lerobot.faults.recovery.midair_drop.get_object_pose") as mock_obj_pose, patch(
+        "lerobot.faults.recovery.midair_drop.get_eef_pose"
+    ) as mock_eef:
+        mock_obj_pose.return_value = {
+            "pos": np.zeros(3),
+            "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),
+        }
+        mock_eef.return_value = (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
+
+        inj = MidAirDropFault(_cfg(), num_envs=1)
+        env = MagicMock()
+        assert inj.trigger_manual_drop(env, 0)
+        state = inj._states[0]
+        assert state.awaiting_manual_recovery
+        assert not state.policy_reset_requested
+
+        proposed_a = _action(1, 7, 11.0)
+        proposed_b = _action(1, 7, 22.0)
+        out_a = inj.on_step(env, proposed_a)
+        out_b = inj.on_step(env, proposed_b)
+
+        assert np.allclose(out_a, proposed_a)
+        assert np.allclose(out_b, proposed_b)
+        assert not state.recovery_active
+        mock_dest.assert_not_called()
+
+        assert inj.request_recovery(env, 0, reason="manual", consume_first_action=False) is None
+        assert state.recovery_active
+        assert not state.awaiting_manual_recovery
+        assert not state.policy_reset_requested
+        mock_dest.assert_called_once()
+
+        out_planner = inj.on_step(env, _action(1, 7, 99.0))
+        assert not np.allclose(out_planner, [[99.0] * 7])
+        assert out_planner[0, 6] in (-1.0, 1.0)
