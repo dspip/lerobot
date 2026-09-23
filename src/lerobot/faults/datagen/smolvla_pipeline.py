@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -81,8 +82,8 @@ def _write_mp4(path: Path, frames: list[np.ndarray], fps: int = 10) -> None:
 
         write_video(str(path), np.stack(frames), fps)
         return
-    except Exception:
-        pass
+    except (ImportError, OSError, RuntimeError, ValueError):
+        pass  # fall back to imageio when lerobot video backend is unavailable
     try:
         import imageio.v2 as imageio
 
@@ -146,7 +147,7 @@ def _final_proof_shot(rs: Any, out_path: Path) -> str | None:
     for camera in ("agentview", "frontview", "birdview", "sideview"):
         try:
             img = rs.sim.render(height=384, width=384, camera_name=camera)
-        except Exception:
+        except Exception:  # nosec B112 — optional proof cameras may be absent in some scenes
             continue
         shots.append(np.asarray(img, dtype=np.uint8)[::-1])
     if not shots:
@@ -305,7 +306,7 @@ def run_pipeline(
 ) -> dict:
     """Run SmolVLA nominal and drop-recovery in LIBERO with optional dataset logging."""
     os.environ.setdefault("MUJOCO_GL", "egl")
-    os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba_cache"))
 
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.envs.configs import LiberoEnv
@@ -722,8 +723,8 @@ def run_pipeline(
                                 flush=True,
                             )
                         regrasped_after_drop = True
-                except Exception:
-                    pass
+                except (RuntimeError, ValueError) as exc:
+                    print(f"[pipeline] regrasp check skipped: {exc}", flush=True)
 
             if is_drop_episode and st.triggered and triggered_at is None:
                 triggered_at = step

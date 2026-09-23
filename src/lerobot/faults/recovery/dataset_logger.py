@@ -273,7 +273,7 @@ class FaultRecoveryDatasetLogger:
             return None
         index = self.dataset_episode_index_on_commit()
         # Disable parallel camera encoding: ProcessPool encoding can race with
-        # image-path stats (FileNotFoundError on frame PNGs during merge/export).
+        # image-path stats (FileNotFoundError on frame PNG files during merge/export).
         self.dataset.save_episode(episode_data, parallel_encoding=False)
         self._episode_open = False
         return index

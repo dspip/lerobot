@@ -42,7 +42,7 @@ Shared helpers:
 
 ## Steps
 
-1. **Design** — start/stop, proposed vs executed, proof (`fault_events.jsonl`, video, diag PNGs).
+1. **Design** — start/stop, proposed vs executed, proof (`fault_events.jsonl`, video, diag PNG files).
 2. **Config** — `src/lerobot/faults/config.py`: add to `_SUPPORTED_TYPES`, fields, `validate()`.
    Keep `enabled=False` default on `FaultInjectionConfig`.
 3. **Injector** — per-env state, `reset()`, `notify_dones()`, never mutate inputs, JSONL via

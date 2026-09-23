@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 import types
 from pathlib import Path
 from typing import Any
@@ -405,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     os.environ.setdefault("MUJOCO_GL", "egl")
-    os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba_cache"))
 
     seeds = _parse_seeds(args.seeds)
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -42,11 +42,11 @@ no `lerobot-faults` CLI in this repo.
 | `injected` | `outputs/eval/fault_smoke_injected/fault_events.jsonl` | Hold events around steps 20–27 |
 | `delay` | `outputs/eval/fault_smoke_delay/fault_events.jsonl` | `action_delay` after warm-up |
 | `jitter` | `outputs/eval/fault_smoke_jitter/fault_events.jsonl` | `proposed_action` ≠ jittered action |
-| `sensor` | JSONL + `outputs/eval/fault_smoke_sensor/diag/*.png` | Black diag PNGs during blackout |
+| `sensor` | JSONL + `outputs/eval/fault_smoke_sensor/diag/*.png` | Black diag PNG files during blackout |
 
 If `fault_events.jsonl` is missing on an injected run, `maybe_wrap_env_tree` did not wrap the env.
 
 ## Troubleshooting
 
 - `lerobot-eval: command not found` → use `uv run lerobot-eval` (script does this).
-- Sensor video looks fine but policy is blind → open **diag PNGs** under `--fault.diag_dir`.
+- Sensor video looks fine but policy is blind → open **diag PNG files** under `--fault.diag_dir`.

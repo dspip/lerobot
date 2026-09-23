@@ -23,7 +23,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -53,8 +55,9 @@ from lerobot.faults.sim.libero import (  # noqa: E402
 )
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 
-AUDIT_REPORT = Path("/tmp/xy_band_mix_60ep_extract/audit_report.json")
-DATASET_ROOT = Path("/tmp/xy_band_mix_60ep_extract/dataset/data/chunk-000")
+_XY60_EXTRACT_ROOT = Path(tempfile.gettempdir()) / "xy_band_mix_60ep_extract"
+AUDIT_REPORT = _XY60_EXTRACT_ROOT / "audit_report.json"
+DATASET_ROOT = _XY60_EXTRACT_ROOT / "dataset" / "data" / "chunk-000"
 DEFAULT_OUTPUT = REPO / "reports" / "xy60_verify" / "manual_drop_recovery"
 DEFAULT_REPLAY_EPISODE = 12
 OBJECT_NAME = "alphabet_soup_1"
@@ -227,9 +230,12 @@ def _recovery_planner_done(fault: MidAirDropFault) -> bool:
 def _write_video(output: Path, frames: list[np.ndarray]) -> None:
     if not frames:
         return
+    ffmpeg_exe = shutil.which("ffmpeg")
+    if ffmpeg_exe is None:
+        raise RuntimeError("ffmpeg not found on PATH; install ffmpeg to write recovery videos")
     ffmpeg = subprocess.run(
         [
-            "ffmpeg",
+            ffmpeg_exe,
             "-y",
             "-f",
             "rawvideo",
