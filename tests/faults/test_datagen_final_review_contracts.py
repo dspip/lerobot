@@ -216,7 +216,9 @@ def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_
         mp.setattr(simple_ik_mod, "apply_serializable_layout", lambda *a, **k: None)
         mp.setattr(simple_ik_mod, "read_control_freq", lambda rs: recipe.control_hz)
         mp.setattr(simple_ik_mod, "read_libero_task_description", lambda v: LIBERO_TASK_DESCRIPTION)
-        mp.setattr(simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock(phase_name="lift", carry_path=None))
+        mp.setattr(
+            simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock(phase_name="lift", carry_path=None)
+        )
         mock_env.reset = MagicMock(return_value=({}, {}))
         request = EpisodeRequest(
             recipe=recipe,
