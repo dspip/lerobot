@@ -29,7 +29,7 @@ def test_cli_rejects_non_positive_episodes_override() -> None:
     assert code == 2
 
 
-def test_example_pipeline_wrapper_imports() -> None:
-    from examples.faults import run_full_drop_recovery_pipeline as wrapper
+def test_smolvla_pipeline_run_pipeline_is_in_package() -> None:
+    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 
-    assert wrapper.run_pipeline.__module__ == "lerobot.faults.datagen.smolvla_pipeline"
+    assert callable(run_pipeline)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Can-only SimpleIK episode-generation helpers."""
+"""Unified drop-datagen helpers (recipe, runner, controllers)."""
 
 from lerobot.faults.datagen.drop_timing import (
     DropDecision,
@@ -24,13 +24,11 @@ from lerobot.faults.datagen.events import DatagenEventLog, LogEvent
 from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
 from lerobot.faults.datagen.recipe import (
     DatagenController,
-    DatagenRecipe,
     DropDatagenRecipe,
     DropRecipe,
     DropXYBand,
     EpisodeSeedManifest,
     ExpandedMatrixRun,
-    LegacyPostDropConfig,
     MatrixVariant,
     PlacementRecipe,
     PostDropMode,
@@ -44,27 +42,20 @@ from lerobot.faults.datagen.recipe import (
     expand_experiment_matrix,
     legacy_drop_recipe,
     load_drop_datagen_recipe,
-    load_legacy_post_drop_recipe,
-    load_legacy_simple_ik_recipe,
-    load_recipe,
     paired_episode_seed_manifests,
-    sample_post_drop_mode,
     validate_controller_mode_pair,
     validate_experiment_matrix_entries,
-    validate_post_drop_mode_weights,
 )
 
 __all__ = [
     "DatagenController",
     "DatagenEventLog",
-    "DatagenRecipe",
     "DropDatagenRecipe",
     "DropDecision",
     "DropRecipe",
     "DropXYBand",
     "EpisodeSeedManifest",
     "ExpandedMatrixRun",
-    "LegacyPostDropConfig",
     "LogEvent",
     "MatrixVariant",
     "ObjectPose2d",
@@ -82,14 +73,9 @@ __all__ = [
     "expand_experiment_matrix",
     "legacy_drop_recipe",
     "load_drop_datagen_recipe",
-    "load_legacy_post_drop_recipe",
-    "load_legacy_simple_ik_recipe",
-    "load_recipe",
     "paired_episode_seed_manifests",
     "sample_drop",
     "sample_layout",
-    "sample_post_drop_mode",
     "validate_controller_mode_pair",
     "validate_experiment_matrix_entries",
-    "validate_post_drop_mode_weights",
 ]

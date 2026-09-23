@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Typed JSON recipes for drop datagen and legacy SimpleIK generation."""
+"""Typed JSON recipes for unified drop datagen."""
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-from lerobot.faults.config import POST_DROP_MODES
 
 _LAYOUT_SEED_TAG = 0x4C41594F
 _DROP_SEED_TAG = 0x44524F50
@@ -173,24 +171,6 @@ class DropDatagenRecipe:
     post_drop: PostDropRecipe
     recording: RecordingRecipe
     experiment_matrix: tuple[MatrixVariant, ...]
-
-
-@dataclass(frozen=True)
-class LegacyPostDropConfig:
-    dwell_steps: int
-    mode_weights: dict[str, float]
-
-
-@dataclass(frozen=True)
-class DatagenRecipe:
-    """Legacy can-only SimpleIK recipe (``object_name`` singular)."""
-
-    q: float
-    object_name: str
-    basket_name: str
-    placement: PlacementRecipe
-    drop: DropRecipe
-    simple_ik: SimpleIKRecipe
 
 
 def _required(mapping: dict[str, Any], key: str, *, section: str = "recipe") -> Any:
@@ -468,26 +448,6 @@ def _parse_simple_ik_path_drop(path_drop_raw: dict[str, Any]) -> SimpleIKPathDro
     )
 
 
-def _parse_drop(drop_raw: dict[str, Any]) -> DropRecipe:
-    phases = tuple(str(v).strip() for v in _required(drop_raw, "eligible_phases", section="drop"))
-    if not phases or any(not phase for phase in phases):
-        raise RecipeError("drop.eligible_phases must be non-empty")
-    drop = DropRecipe(
-        eligible_phases=phases,
-        min_drop_distance_from_basket_m=float(
-            _required(drop_raw, "min_drop_distance_from_basket_m", section="drop")
-        ),
-        hard_keepout_floor_m=float(
-            _required(drop_raw, "hard_keepout_floor_m", section="drop")
-        ),
-    )
-    if drop.min_drop_distance_from_basket_m < 0:
-        raise RecipeError("drop.min_drop_distance_from_basket_m must be >= 0")
-    if drop.hard_keepout_floor_m < 0:
-        raise RecipeError("drop.hard_keepout_floor_m must be >= 0")
-    return drop
-
-
 def _parse_simple_ik(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
     speed_values = tuple(
         float(v)
@@ -759,85 +719,3 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         recording=recording,
         experiment_matrix=experiment_matrix,
     )
-
-
-def load_legacy_simple_ik_recipe(path: Path | str) -> DatagenRecipe:
-    """Load and strictly validate a can-only SimpleIK datagen recipe."""
-    raw = _load_json_object(Path(path))
-
-    q = float(_required(raw, "q"))
-    if not 0.0 <= q <= 1.0:
-        raise RecipeError(f"q must be in [0, 1], got {q}")
-    object_name = str(_required(raw, "object_name")).strip()
-    basket_name = str(_required(raw, "basket_name")).strip()
-    if not object_name:
-        raise RecipeError("object_name must be non-empty")
-    if not basket_name:
-        raise RecipeError("basket_name must be non-empty")
-
-    placement_raw = _required(raw, "placement")
-    drop_raw = _required(raw, "drop")
-    simple_ik_raw = _required(raw, "simple_ik")
-    if not all(isinstance(value, dict) for value in (placement_raw, drop_raw, simple_ik_raw)):
-        raise RecipeError("placement, drop, and simple_ik must be JSON objects")
-
-    return DatagenRecipe(
-        q=q,
-        object_name=object_name,
-        basket_name=basket_name,
-        placement=_parse_placement(placement_raw),
-        drop=_parse_drop(drop_raw),
-        simple_ik=_parse_simple_ik(simple_ik_raw),
-    )
-
-
-def load_recipe(path: Path | str) -> DatagenRecipe:
-    """Backward-compatible alias for :func:`load_legacy_simple_ik_recipe`."""
-    return load_legacy_simple_ik_recipe(path)
-
-
-def validate_post_drop_mode_weights(weights: dict[str, Any]) -> None:
-    total = 0.0
-    for key, value in weights.items():
-        if key not in POST_DROP_MODES:
-            raise RecipeError(f"Unknown post_drop mode {key!r}; expected one of {POST_DROP_MODES}.")
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise RecipeError(f"Weight for {key!r} must be a number (got {value!r}).")
-        w = float(value)
-        if w < 0:
-            raise RecipeError(f"Weight for {key!r} must be >= 0 (got {w}).")
-        total += w
-    if total <= 0:
-        raise RecipeError("post_drop.mode_weights must sum to a value > 0.")
-
-
-def load_legacy_post_drop_recipe(path: Path | str) -> LegacyPostDropConfig:
-    """Load ``post_drop`` dwell and mode weights from a legacy union recipe JSON."""
-    raw = _load_json_object(Path(path))
-    post_drop = raw.get("post_drop")
-    if not isinstance(post_drop, dict):
-        raise RecipeError("Recipe must contain a post_drop object.")
-    dwell = post_drop.get("dwell_steps")
-    if not isinstance(dwell, int) or isinstance(dwell, bool) or dwell < 0:
-        raise RecipeError(f"post_drop.dwell_steps must be an int >= 0 (got {dwell!r}).")
-    weights = post_drop.get("mode_weights")
-    if not isinstance(weights, dict):
-        raise RecipeError("post_drop.mode_weights must be an object.")
-    validate_post_drop_mode_weights(weights)
-    mode_weights = {str(k): float(v) for k, v in weights.items()}
-    return LegacyPostDropConfig(dwell_steps=int(dwell), mode_weights=mode_weights)
-
-
-def sample_post_drop_mode(rng: np.random.Generator, weights: dict[str, float]) -> str:
-    """Sample a post-drop mode from non-zero weights."""
-    validate_post_drop_mode_weights(weights)
-    modes: list[str] = []
-    probs: list[float] = []
-    for mode in POST_DROP_MODES:
-        w = float(weights.get(mode, 0.0))
-        if w > 0:
-            modes.append(mode)
-            probs.append(w)
-    total = sum(probs)
-    idx = int(rng.choice(len(modes), p=[p / total for p in probs]))
-    return modes[idx]

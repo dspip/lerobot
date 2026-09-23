@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
-from lerobot.faults.datagen.recipe import DatagenRecipe, DropDatagenRecipe
+from lerobot.faults.datagen.recipe import DropDatagenRecipe
 from lerobot.faults.datagen.runtime import movable_object_names, rotate_quat_about_world_z
 from lerobot.faults.sim.libero import get_object_pose, get_place_destination, set_object_pose
 
@@ -94,20 +94,6 @@ def sample_object_layout(
         basket_name=recipe.basket_name,
         placement=recipe.placement,
         target_object_name=object_name,
-        rng=rng,
-    )
-
-
-def sample_object_layout_legacy(
-    rs_env: Any,
-    recipe: DatagenRecipe,
-    rng: np.random.Generator,
-) -> dict[str, ObjectLayoutPose] | None:
-    return _sample_layout_poses(
-        rs_env,
-        basket_name=recipe.basket_name,
-        placement=recipe.placement,
-        target_object_name=recipe.object_name,
         rng=rng,
     )
 

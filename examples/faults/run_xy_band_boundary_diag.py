@@ -34,13 +34,9 @@ BOUNDARY_TARGETS: list[tuple[str, float, float, float, float]] = [
 
 
 def _load_run_pipeline():
-    path = REPO_ROOT / "examples" / "faults" / "run_full_drop_recovery_pipeline.py"
-    spec = importlib.util.spec_from_file_location("run_full_drop_recovery_pipeline", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load pipeline module from {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.run_pipeline
+    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
+
+    return run_pipeline
 
 
 def main(argv: list[str] | None = None) -> int:

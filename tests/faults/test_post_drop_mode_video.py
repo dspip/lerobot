@@ -37,7 +37,9 @@ def _load_module(name: str, filename: str):
 
 @pytest.fixture(scope="module")
 def pipeline_mod():
-    return _load_module("run_full_drop_recovery_pipeline", "run_full_drop_recovery_pipeline.py")
+    from lerobot.faults.datagen import smolvla_pipeline
+
+    return smolvla_pipeline
 
 
 @pytest.fixture(scope="module")

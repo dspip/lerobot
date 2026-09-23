@@ -21,16 +21,10 @@ This module is the recipe for **datasets we might train on**.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-from lerobot.faults.datagen.recipe import (
-    load_legacy_post_drop_recipe,
-    sample_post_drop_mode as _sample_post_drop_mode,
-)
 
 # 20 Hz LIBERO control: 20 steps = 1.0 s of carry after first mid-air grasp.
 DEFAULT_POST_GRASP_DELAY_MIN = 20
@@ -109,19 +103,3 @@ def training_midair_drop_kwargs(
         ),
         "post_drop_mode": str(post_drop_mode),
     }
-
-
-def load_datagen_recipe(path: Path | str) -> dict[str, Any]:
-    """Load a legacy union datagen recipe JSON (validates ``post_drop`` via datagen.recipe)."""
-    recipe_path = Path(path)
-    load_legacy_post_drop_recipe(recipe_path)
-    with recipe_path.open(encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError(f"Recipe root must be a JSON object (got {type(data).__name__}).")
-    return data
-
-
-def sample_post_drop_mode(rng: np.random.Generator, weights: dict[str, float]) -> str:
-    """Sample a post-drop mode from non-zero weights."""
-    return _sample_post_drop_mode(rng, weights)

@@ -25,7 +25,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 **Recorders**
 
 1. Eval: `lerobot_eval.py` `rollout()` when `--eval.recording=true` (pre-step images, post-step labels — same as `next.reward`).
-2. Drop-recovery: `FaultRecoveryDatasetLogger` used by `examples/faults/run_full_drop_recovery_pipeline.py` (**post-step** obs + labels).
+2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `lerobot.faults.datagen`) (**post-step** obs + labels).
 3. Hardware `lerobot-record`: not wired.
 
 **Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`.
@@ -41,7 +41,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 | A. Frame-level Parquet labels | **Done** | Five columns from live GT; `loss_mask=0` only on injection frame |
 | B. Training-grade **data recipe** | **Done (this change)** | Carry delay, no seat teleport, settle in Parquet |
 | C. Re-verify **one** CUDA episode with the new recipe | **Done (user verified)** | `carry_steps=24`, `seat_assisted=false`, `n_settle_logged=5` on recipe run |
-| D. Small mixed set (tens of episodes) | **In progress** | `examples/faults/run_failure_mix.py` — drop + nominal into one dataset |
+| D. Small mixed set (tens of episodes) | **In progress** | `examples/faults/run_drop_datagen.py` + `can_drop_datagen.json` experiment matrix |
 | E. Smoke fine-tune | After D | Short SmolVLA run using `loss_mask`; eval with faults off then on |
 | F. Scale | After E | Only if unaided recoveries look right on video **and** parquet |
 | G. Jetson / extra sensors | After F | New schema; not a missing column in current verify |
@@ -70,7 +70,7 @@ Branch: `feature/failure-annotation-parquet`
 | File | Role |
 | ---- | ---- |
 | `src/lerobot/faults/recovery/recording_recipe.py` | Sample delay `[20,60]`, `seat_assist_enabled=False` |
-| `examples/faults/run_full_drop_recovery_pipeline.py` | Uses recipe; logs settle; fails if seat assist or no carry |
+| `examples/faults/run_drop_datagen.py` | Public CLI; matrix of controller × post-drop mode variants |
 | `tests/faults/test_recording_recipe.py` | No-sim tests |
 
 Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and `seat_assist_enabled=True` so injector unit tests stay valid. **Training datasets must go through the pipeline recipe (or equivalent kwargs).**
@@ -104,33 +104,15 @@ Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and 
 # Unit tests (no GPU)
 uv run pytest tests/faults/test_failure_annotation.py tests/faults/test_recording_recipe.py tests/faults/test_mix_recording.py -q
 
-# Mixed drop + nominal dataset (GPU + LIBERO). Fresh dir, or --append to add episodes.
+# Unified drop-datagen matrix (GPU + LIBERO). Edit recipe episodes/output first.
 export MUJOCO_GL=egl
-uv run python examples/faults/run_failure_mix.py \
-  --output-dir outputs/failure_mix_small \
-  --policy-path lerobot/smolvla_libero \
-  --device cuda \
-  --n-drop 8 \
-  --n-nominal 8 \
-  --seed-start 2000 \
-  --repo-id local/failure_mix_small
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/can_drop_datagen.json \
+  --device cuda
 
-# Verify Parquet under the shared dataset root
+# Verify Parquet under a variant dataset root (path depends on matrix entry)
 uv run python examples/faults/verify_failure_parquet.py \
-  --root outputs/failure_mix_small/dataset
-# Nominal-only mix (no drops): add --allow-nominal
-
-# Training-grade one-episode verify (GPU + LIBERO). Use a NEW output dir.
-export MUJOCO_GL=egl
-uv run python examples/faults/run_full_drop_recovery_pipeline.py \
-  --output-dir outputs/failure_annotation_recipe \
-  --policy-path lerobot/smolvla_libero \
-  --device cuda \
-  --seed 1000
-
-# Schema + nonzero failure columns
-uv run python examples/faults/verify_failure_parquet.py \
-  --root outputs/failure_annotation_recipe/dataset
+  --root outputs/can_drop_datagen/smolvla/continue_then_ik/dataset
 ```
 
 Fixed delay (no sample): `--post-grasp-delay-steps 40`. Old demo teleport: `--allow-seat-assist` (do not train on that).

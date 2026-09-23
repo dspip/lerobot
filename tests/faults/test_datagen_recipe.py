@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from lerobot.faults.datagen.recipe import (
@@ -28,17 +27,11 @@ from lerobot.faults.datagen.recipe import (
     expand_experiment_matrix,
     legacy_drop_recipe,
     load_drop_datagen_recipe,
-    load_legacy_simple_ik_recipe,
-    load_legacy_post_drop_recipe,
     paired_episode_seed_manifests,
-    sample_post_drop_mode,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
-LEGACY_SIMPLEIK_RECIPE = (
-    REPO_ROOT / "examples" / "faults" / "recipes" / "can_simpleik_datagen.json"
-)
 
 
 def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
@@ -287,156 +280,3 @@ def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
     _write_recipe(path, payload)
     with pytest.raises(RecipeError, match="drop"):
         load_drop_datagen_recipe(path)
-
-
-# --- Legacy SimpleIK-only recipe (run_can_simpleik_datagen) ---
-
-
-def _legacy_simple_ik_recipe(**overrides: object) -> dict[str, object]:
-    recipe: dict[str, object] = {
-        "q": 0.5,
-        "object_name": "alphabet_soup_1",
-        "basket_name": "basket_1",
-        "placement": {
-            "xy_range_m": 0.12,
-            "min_basket_clearance_m": 0.35,
-            "distractor_basket_clearance_m": 0.15,
-            "min_pairwise_clearance_m": 0.08,
-            "yaw_range_deg": [-180, 180],
-            "max_attempts": 200,
-        },
-        "drop": {
-            "eligible_phases": ["lift", "to_container"],
-            "min_drop_distance_from_basket_m": 0.30,
-            "hard_keepout_floor_m": 0.22,
-        },
-        "simple_ik": {
-            "trajectory_randomization_enabled": False,
-            "pickup_via_offset_m": 0.03,
-            "transport_via_offset_m": 0.06,
-            "arm_posture_noise_deg": 3.0,
-            "speed_multiplier_range": [0.8, 1.2],
-            "waypoint_blend_radius_m": 0.04,
-        },
-    }
-    recipe.update(overrides)
-    return recipe
-
-
-def test_load_legacy_simple_ik_recipe_reads_q_and_object(tmp_path: Path) -> None:
-    path = tmp_path / "recipe.json"
-    _write_recipe(path, _legacy_simple_ik_recipe())
-    recipe = load_legacy_simple_ik_recipe(path)
-    assert recipe.q == 0.5
-    assert recipe.object_name == "alphabet_soup_1"
-    assert recipe.drop.eligible_phases == ("lift", "to_container")
-
-
-def test_load_legacy_simple_ik_recipe_missing_file() -> None:
-    with pytest.raises(RecipeError, match="not found"):
-        load_legacy_simple_ik_recipe(Path("/no/such/recipe.json"))
-
-
-@pytest.mark.parametrize("q", [-0.01, 1.01])
-def test_load_legacy_simple_ik_recipe_rejects_q_out_of_range(tmp_path: Path, q: float) -> None:
-    path = tmp_path / "recipe.json"
-    _write_recipe(path, _legacy_simple_ik_recipe(q=q))
-    with pytest.raises(RecipeError, match="q"):
-        load_legacy_simple_ik_recipe(path)
-
-
-def test_load_legacy_simple_ik_recipe_requires_object_name(tmp_path: Path) -> None:
-    path = tmp_path / "recipe.json"
-    payload = _legacy_simple_ik_recipe()
-    del payload["object_name"]
-    _write_recipe(path, payload)
-    with pytest.raises(RecipeError, match="object_name"):
-        load_legacy_simple_ik_recipe(path)
-
-
-def test_load_legacy_simple_ik_recipe_reads_trajectory_randomization(tmp_path: Path) -> None:
-    path = tmp_path / "recipe.json"
-    _write_recipe(path, _legacy_simple_ik_recipe())
-    recipe = load_legacy_simple_ik_recipe(path)
-    assert recipe.simple_ik.trajectory_randomization_enabled is False
-    assert recipe.simple_ik.speed_multiplier_range == (0.8, 1.2)
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("pickup_via_offset_m", -0.01),
-        ("transport_via_offset_m", -0.01),
-        ("arm_posture_noise_deg", -1.0),
-        ("waypoint_blend_radius_m", -0.01),
-    ],
-)
-def test_load_legacy_simple_ik_recipe_rejects_negative_motion_values(
-    tmp_path: Path,
-    field: str,
-    value: float,
-) -> None:
-    path = tmp_path / "recipe.json"
-    payload = _legacy_simple_ik_recipe()
-    payload["simple_ik"][field] = value
-    _write_recipe(path, payload)
-    with pytest.raises(RecipeError, match=field):
-        load_legacy_simple_ik_recipe(path)
-
-
-# --- Legacy post_drop JSON (checkpoint runners) ---
-
-
-def test_load_legacy_post_drop_recipe_from_simpleik_union() -> None:
-    cfg = load_legacy_post_drop_recipe(LEGACY_SIMPLEIK_RECIPE)
-    assert cfg.dwell_steps == 80
-    assert cfg.mode_weights == {
-        "continue_then_ik": 0.5,
-        "reset_then_ik": 0.5,
-        "immediate_ik": 0.0,
-    }
-
-
-def test_sample_post_drop_mode_fifty_fifty_from_legacy_recipe() -> None:
-    cfg = load_legacy_post_drop_recipe(LEGACY_SIMPLEIK_RECIPE)
-    rng = np.random.default_rng(42)
-    seen = {sample_post_drop_mode(rng, cfg.mode_weights) for _ in range(64)}
-    assert seen == {"continue_then_ik", "reset_then_ik"}
-
-
-def test_sample_post_drop_mode_seeded() -> None:
-    cfg = load_legacy_post_drop_recipe(LEGACY_SIMPLEIK_RECIPE)
-    rng_a = np.random.default_rng(7)
-    rng_b = np.random.default_rng(7)
-    assert sample_post_drop_mode(rng_a, cfg.mode_weights) == sample_post_drop_mode(
-        rng_b, cfg.mode_weights
-    )
-
-
-def test_sample_reset_only() -> None:
-    weights = {"continue_then_ik": 0.0, "reset_then_ik": 1.0, "immediate_ik": 0.0}
-    rng = np.random.default_rng(1)
-    for _ in range(10):
-        assert sample_post_drop_mode(rng, weights) == "reset_then_ik"
-
-
-def test_invalid_post_drop_weights_raise() -> None:
-    base = {"continue_then_ik": 1.0, "reset_then_ik": 0.0, "immediate_ik": 0.0}
-    rng = np.random.default_rng(0)
-    with pytest.raises(RecipeError, match="Weight"):
-        sample_post_drop_mode(rng, {**base, "reset_then_ik": -0.1})
-    with pytest.raises(RecipeError, match="sum"):
-        sample_post_drop_mode(
-            rng, {"continue_then_ik": 0.0, "reset_then_ik": 0.0, "immediate_ik": 0.0}
-        )
-    with pytest.raises(RecipeError, match="Unknown"):
-        sample_post_drop_mode(rng, {**base, "hover_wander": 1.0})
-
-
-def test_legacy_post_drop_recipe_ignores_extra_top_level_keys(tmp_path: Path) -> None:
-    data = json.loads(LEGACY_SIMPLEIK_RECIPE.read_text(encoding="utf-8"))
-    data["teammate_pose_block"] = {"note": "future merge"}
-    path = tmp_path / "recipe.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    cfg = load_legacy_post_drop_recipe(path)
-    assert cfg.dwell_steps == 80

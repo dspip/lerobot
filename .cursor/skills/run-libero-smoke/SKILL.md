@@ -9,7 +9,7 @@ description: >-
 # Run LIBERO fault smoke evals
 
 Smoke covers hold/delay/jitter/sensor only. **Drop-middle (`midair_drop`) is not a
-smoke mode** — follow `test-fault` and `examples/faults/run_full_drop_recovery_pipeline.py`.
+smoke mode** — follow `test-fault` and `examples/faults/run_drop_datagen.py`.
 
 ## Prerequisites
 

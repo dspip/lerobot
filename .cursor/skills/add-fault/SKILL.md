@@ -91,5 +91,6 @@ uv run lerobot-eval \
 - Sim-inject: `src/lerobot/faults/sim/object_slip.py`, `eef_bump.py`
 - Recovery: `src/lerobot/faults/recovery/midair_drop.py`
 - Integration: `src/lerobot/scripts/lerobot_eval.py` (`maybe_wrap_env_tree` only)
-- Drop pipeline demos: `examples/faults/run_drop_recovery_demo.py`,
-  `examples/faults/run_full_drop_recovery_pipeline.py`
+- Drop datagen: `examples/faults/run_drop_datagen.py` +
+  `examples/faults/recipes/can_drop_datagen.json`; dry-run demo:
+  `examples/faults/run_drop_recovery_demo.py`

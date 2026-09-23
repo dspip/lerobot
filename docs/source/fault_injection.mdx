@@ -111,27 +111,20 @@ Mid-air drop + recovery is **not** covered by LIBERO smoke scripts. Use teammate
 # CI-safe dry-run (no LIBERO)
 uv run python examples/faults/run_drop_recovery_demo.py --dry-run
 
-# Full SmolVLA → grasp → **carry** → drop → recovery → video (GPU + LIBERO)
+# Unified drop-datagen matrix (GPU + LIBERO, recipe-driven)
 export MUJOCO_GL=egl
-uv run python examples/faults/run_full_drop_recovery_pipeline.py \
-  --output-dir outputs/full_pipeline_demo \
-  --policy-path lerobot/smolvla_libero \
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/can_drop_datagen.json \
   --device cuda
 ```
 
-Training-grade defaults: sampled `post_grasp_delay_steps` in `[20, 60]` (1–3 s of
-mid-air carry at 20 Hz), `seat_assist_enabled=false`, post-release settle frames
-written to Parquet. Demo-only teleport: `--allow-seat-assist`.
+The sole checked-in recipe drives SimpleIK and SmolVLA variants (controller ×
+post-drop mode) under `recording.output_dir`. Training-grade SmolVLA kwargs live
+in `src/lerobot/faults/recovery/recording_recipe.py` (`seat_assist_enabled=false`,
+XY-band drops, dwell steps from the recipe).
 
-Pass criteria: `fault_events.jsonl` contains `"event": "midair_drop"`; `pipeline_log.json`
-reports behavioral success (grasp, **carry before drop**, drop, unaided in-basket).
-
-**Multi-episode mix:** `examples/faults/run_failure_mix.py` appends many
-drop-recovery and nominal (no-fault) successes into one shared
-`output_dir/dataset` via `FaultRecoveryDatasetLogger.append`. Failed attempts
-call `clear_open_episode()` so bad trajectories are not saved. Per-attempt logs
-and videos live under `output_dir/episodes/seed_<n>/`; `mix_log.json` records
-kept seeds and failed checks.
+Pass criteria per variant: episode logs under the variant output tree;
+`matrix_results.json` summarizes success counts at the recipe output root.
 
 ## Evidence of injection
 
