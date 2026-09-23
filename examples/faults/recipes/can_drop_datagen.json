@@ -1,0 +1,55 @@
+{
+  "name": "can_drop_datagen",
+  "task": "libero_object",
+  "task_id": 0,
+  "control_hz": 20,
+  "q": 1.0,
+  "object_names": ["alphabet_soup_1"],
+  "basket_name": "basket_1",
+  "placement": {
+    "xy_range_m": 0.12,
+    "min_basket_clearance_m": 0.35,
+    "distractor_basket_clearance_m": 0.15,
+    "min_pairwise_clearance_m": 0.08,
+    "yaw_range_deg": [-180.0, 180.0],
+    "max_attempts": 200
+  },
+  "drop": {
+    "eligible_phases": ["lift", "to_container"],
+    "min_drop_distance_from_basket_m": 0.30,
+    "hard_keepout_floor_m": 0.22
+  },
+  "simple_ik": {
+    "trajectory_randomization_enabled": true,
+    "pickup_via_offset_m": 0.03,
+    "transport_via_offset_m": 0.06,
+    "arm_posture_noise_deg": 3.0,
+    "speed_multiplier_range": [0.9, 1.1],
+    "waypoint_blend_radius_m": 0.02
+  },
+  "smolvla": {
+    "policy_path": "lerobot/smolvla_libero",
+    "post_grasp_delay_steps": 0,
+    "drop_xy_bands": [
+      {"name": "lift", "min_m": 0.48, "max_m": 0.52},
+      {"name": "early", "min_m": 0.42, "max_m": 0.46},
+      {"name": "mid", "min_m": 0.34, "max_m": 0.38},
+      {"name": "late", "min_m": 0.30, "max_m": 0.33}
+    ]
+  },
+  "post_drop": {
+    "dwell_steps": 80
+  },
+  "recording": {
+    "base_seed": 9000,
+    "output_dir": "outputs/can_drop_datagen",
+    "dataset_fps": 10
+  },
+  "experiment_matrix": [
+    {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "episodes": 1},
+    {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "episodes": 1},
+    {"controller": "smolvla", "post_drop_mode": "immediate_ik", "episodes": 1},
+    {"controller": "smolvla", "post_drop_mode": "continue_then_ik", "episodes": 1},
+    {"controller": "smolvla", "post_drop_mode": "reset_then_ik", "episodes": 1}
+  ]
+}

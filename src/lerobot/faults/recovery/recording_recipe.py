@@ -27,7 +27,10 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.faults.config import POST_DROP_MODES
+from lerobot.faults.datagen.recipe import (
+    load_legacy_post_drop_recipe,
+    sample_post_drop_mode as _sample_post_drop_mode,
+)
 
 # 20 Hz LIBERO control: 20 steps = 1.0 s of carry after first mid-air grasp.
 DEFAULT_POST_GRASP_DELAY_MIN = 20
@@ -105,50 +108,16 @@ def training_midair_drop_kwargs(
 
 
 def load_datagen_recipe(path: Path | str) -> dict[str, Any]:
-    """Load a shared datagen recipe JSON (requires ``post_drop`` block only)."""
+    """Load a legacy union datagen recipe JSON (validates ``post_drop`` via datagen.recipe)."""
     recipe_path = Path(path)
+    load_legacy_post_drop_recipe(recipe_path)
     with recipe_path.open(encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError(f"Recipe root must be a JSON object (got {type(data).__name__}).")
-    post_drop = data.get("post_drop")
-    if not isinstance(post_drop, dict):
-        raise ValueError("Recipe must contain a post_drop object.")
-    dwell = post_drop.get("dwell_steps")
-    if not isinstance(dwell, int) or isinstance(dwell, bool) or dwell < 0:
-        raise ValueError(f"post_drop.dwell_steps must be an int >= 0 (got {dwell!r}).")
-    weights = post_drop.get("mode_weights")
-    if not isinstance(weights, dict):
-        raise ValueError("post_drop.mode_weights must be an object.")
-    _validate_post_drop_mode_weights(weights)
     return data
-
-
-def _validate_post_drop_mode_weights(weights: dict[str, Any]) -> None:
-    total = 0.0
-    for key, value in weights.items():
-        if key not in POST_DROP_MODES:
-            raise ValueError(f"Unknown post_drop mode {key!r}; expected one of {POST_DROP_MODES}.")
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise ValueError(f"Weight for {key!r} must be a number (got {value!r}).")
-        w = float(value)
-        if w < 0:
-            raise ValueError(f"Weight for {key!r} must be >= 0 (got {w}).")
-        total += w
-    if total <= 0:
-        raise ValueError("post_drop.mode_weights must sum to a value > 0.")
 
 
 def sample_post_drop_mode(rng: np.random.Generator, weights: dict[str, float]) -> str:
     """Sample a post-drop mode from non-zero weights."""
-    _validate_post_drop_mode_weights(weights)
-    modes: list[str] = []
-    probs: list[float] = []
-    for mode in POST_DROP_MODES:
-        w = float(weights.get(mode, 0.0))
-        if w > 0:
-            modes.append(mode)
-            probs.append(w)
-    total = sum(probs)
-    idx = int(rng.choice(len(modes), p=[p / total for p in probs]))
-    return modes[idx]
+    return _sample_post_drop_mode(rng, weights)
