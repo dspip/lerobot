@@ -77,6 +77,17 @@ class PlacementRecipe:
 
 @dataclass(frozen=True)
 class DropRecipe:
+    """Legacy top-level drop settings (SimpleIK step-index sampling)."""
+
+    eligible_phases: tuple[str, ...]
+    min_drop_distance_from_basket_m: float
+    hard_keepout_floor_m: float
+
+
+@dataclass(frozen=True)
+class SimpleIKPathDropRecipe:
+    """Planned-path drop sampling settings for unified SimpleIK runs."""
+
     eligible_phases: tuple[str, ...]
     min_drop_distance_from_basket_m: float
     hard_keepout_floor_m: float
@@ -90,6 +101,7 @@ class SimpleIKRecipe:
     arm_posture_noise_deg: float
     speed_multiplier_range: tuple[float, float]
     waypoint_blend_radius_m: float
+    path_drop: SimpleIKPathDropRecipe | None = None
 
 
 @dataclass(frozen=True)
@@ -155,7 +167,6 @@ class DropDatagenRecipe:
     object_names: tuple[str, ...]
     basket_name: str
     placement: PlacementRecipe
-    drop: DropRecipe
     simple_ik: SimpleIKRecipe
     smolvla: SmolVLARecipe
     post_drop: PostDropRecipe
@@ -187,16 +198,53 @@ def _required(mapping: dict[str, Any], key: str, *, section: str = "recipe") -> 
     return mapping[key]
 
 
-def _parse_controller(value: object, *, section: str) -> DatagenController:
-    text = str(value).strip()
+def _require_json_bool(value: object, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise RecipeError(f"{field} must be a JSON boolean (got {value!r})")
+    return value
+
+
+def _require_json_str(
+    value: object, *, field: str, allow_empty: bool = False
+) -> str:
+    if not isinstance(value, str):
+        raise RecipeError(f"{field} must be a JSON string (got {value!r})")
+    text = value.strip()
+    if not allow_empty and not text:
+        raise RecipeError(f"{field} must be non-empty")
+    return text
+
+
+def _require_json_number(value: object, *, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RecipeError(f"{field} must be a JSON number (got {value!r})")
+    return float(value)
+
+
+def _require_json_int(value: object, *, field: str, min_value: int | None = None) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RecipeError(f"{field} must be a JSON int (got {value!r})")
+    if min_value is not None and value < min_value:
+        raise RecipeError(f"{field} must be >= {min_value}")
+    return value
+
+
+def _parse_controller(value: object, *, section: str, strict: bool) -> DatagenController:
+    if strict:
+        text = _require_json_str(value, field=f"{section}.controller")
+    else:
+        text = str(value).strip()
     try:
         return DatagenController(text)
     except ValueError as exc:
         raise RecipeError(f"{section} has unknown controller {text!r}") from exc
 
 
-def _parse_post_drop_mode(value: object, *, section: str) -> PostDropMode:
-    text = str(value).strip()
+def _parse_post_drop_mode(value: object, *, section: str, strict: bool) -> PostDropMode:
+    if strict:
+        text = _require_json_str(value, field=f"{section}.post_drop_mode")
+    else:
+        text = str(value).strip()
     try:
         return PostDropMode(text)
     except ValueError as exc:
@@ -218,6 +266,44 @@ def validate_controller_mode_pair(
         raise RecipeError(
             f"{section}: invalid controller/mode pair {controller.value} × {mode.value}"
         )
+
+
+def validate_experiment_matrix_entries(matrix: tuple[MatrixVariant, ...]) -> None:
+    """Require each approved controller/mode pair exactly once with equal episode counts."""
+    expected = len(_ALLOWED_CONTROLLER_MODES)
+    if len(matrix) != expected:
+        raise RecipeError(
+            f"experiment_matrix must contain exactly {expected} variants (got {len(matrix)})"
+        )
+    seen: set[tuple[DatagenController, PostDropMode]] = set()
+    episode_counts: set[int] = set()
+    for variant in matrix:
+        pair = (variant.controller, variant.post_drop_mode)
+        if pair in seen:
+            raise RecipeError(
+                "experiment_matrix: duplicate controller/mode pair "
+                f"{variant.controller.value} × {variant.post_drop_mode.value}"
+            )
+        seen.add(pair)
+        episode_counts.add(variant.episodes)
+    missing = _ALLOWED_CONTROLLER_MODES - seen
+    if missing:
+        labels = ", ".join(f"{c.value} × {m.value}" for c, m in missing)
+        raise RecipeError(f"experiment_matrix: missing controller/mode pair(s): {labels}")
+    if len(episode_counts) != 1:
+        raise RecipeError("experiment_matrix: all variants must have the same episodes count")
+
+
+def legacy_drop_recipe(recipe: DropDatagenRecipe) -> DropRecipe:
+    """Map unified SimpleIK path-drop settings to the legacy ``DropRecipe`` shape."""
+    path_drop = recipe.simple_ik.path_drop
+    if path_drop is None:
+        raise RecipeError("simple_ik.path_drop is required for unified drop datagen")
+    return DropRecipe(
+        eligible_phases=path_drop.eligible_phases,
+        min_drop_distance_from_basket_m=path_drop.min_drop_distance_from_basket_m,
+        hard_keepout_floor_m=path_drop.hard_keepout_floor_m,
+    )
 
 
 def effective_post_drop_dwell_steps(
@@ -283,23 +369,58 @@ def paired_episode_seed_manifests(
     return tuple(manifests)
 
 
-def _parse_placement(placement_raw: dict[str, Any]) -> PlacementRecipe:
-    yaw_values = tuple(float(v) for v in _required(placement_raw, "yaw_range_deg", section="placement"))
-    if len(yaw_values) != 2 or yaw_values[1] < yaw_values[0]:
+def _parse_placement(placement_raw: dict[str, Any], *, strict: bool = False) -> PlacementRecipe:
+    yaw_raw = _required(placement_raw, "yaw_range_deg", section="placement")
+    if not isinstance(yaw_raw, list) or len(yaw_raw) != 2:
+        raise RecipeError("placement.yaw_range_deg must be [min, max]")
+    if strict:
+        yaw_values = (
+            _require_json_number(yaw_raw[0], field="placement.yaw_range_deg[0]"),
+            _require_json_number(yaw_raw[1], field="placement.yaw_range_deg[1]"),
+        )
+        xy_range_m = _require_json_number(
+            _required(placement_raw, "xy_range_m", section="placement"),
+            field="placement.xy_range_m",
+        )
+        min_basket_clearance_m = _require_json_number(
+            _required(placement_raw, "min_basket_clearance_m", section="placement"),
+            field="placement.min_basket_clearance_m",
+        )
+        distractor_basket_clearance_m = _require_json_number(
+            _required(placement_raw, "distractor_basket_clearance_m", section="placement"),
+            field="placement.distractor_basket_clearance_m",
+        )
+        min_pairwise_clearance_m = _require_json_number(
+            _required(placement_raw, "min_pairwise_clearance_m", section="placement"),
+            field="placement.min_pairwise_clearance_m",
+        )
+        max_attempts = _require_json_int(
+            _required(placement_raw, "max_attempts", section="placement"),
+            field="placement.max_attempts",
+            min_value=1,
+        )
+    else:
+        yaw_values = tuple(float(v) for v in yaw_raw)
+        xy_range_m = float(_required(placement_raw, "xy_range_m", section="placement"))
+        min_basket_clearance_m = float(
+            _required(placement_raw, "min_basket_clearance_m", section="placement")
+        )
+        distractor_basket_clearance_m = float(
+            _required(placement_raw, "distractor_basket_clearance_m", section="placement")
+        )
+        min_pairwise_clearance_m = float(
+            _required(placement_raw, "min_pairwise_clearance_m", section="placement")
+        )
+        max_attempts = int(_required(placement_raw, "max_attempts", section="placement"))
+    if yaw_values[1] < yaw_values[0]:
         raise RecipeError("placement.yaw_range_deg must be [min, max] with max >= min")
     placement = PlacementRecipe(
-        xy_range_m=float(_required(placement_raw, "xy_range_m", section="placement")),
-        min_basket_clearance_m=float(
-            _required(placement_raw, "min_basket_clearance_m", section="placement")
-        ),
-        distractor_basket_clearance_m=float(
-            _required(placement_raw, "distractor_basket_clearance_m", section="placement")
-        ),
-        min_pairwise_clearance_m=float(
-            _required(placement_raw, "min_pairwise_clearance_m", section="placement")
-        ),
+        xy_range_m=xy_range_m,
+        min_basket_clearance_m=min_basket_clearance_m,
+        distractor_basket_clearance_m=distractor_basket_clearance_m,
+        min_pairwise_clearance_m=min_pairwise_clearance_m,
         yaw_range_deg=(yaw_values[0], yaw_values[1]),
-        max_attempts=int(_required(placement_raw, "max_attempts", section="placement")),
+        max_attempts=max_attempts,
     )
     if placement.xy_range_m < 0:
         raise RecipeError("placement.xy_range_m must be >= 0")
@@ -313,9 +434,37 @@ def _parse_placement(placement_raw: dict[str, Any]) -> PlacementRecipe:
         raise RecipeError(
             "placement.distractor_basket_clearance_m must be <= min_basket_clearance_m"
         )
-    if placement.max_attempts < 1:
+    if not strict and placement.max_attempts < 1:
         raise RecipeError("placement.max_attempts must be >= 1")
     return placement
+
+
+def _parse_simple_ik_path_drop(path_drop_raw: dict[str, Any]) -> SimpleIKPathDropRecipe:
+    section = "simple_ik.path_drop"
+    phases_raw = _required(path_drop_raw, "eligible_phases", section=section)
+    if not isinstance(phases_raw, list) or not phases_raw:
+        raise RecipeError(f"{section}.eligible_phases must be a non-empty array")
+    phases = tuple(
+        _require_json_str(value, field=f"{section}.eligible_phases[{idx}]")
+        for idx, value in enumerate(phases_raw)
+    )
+    min_dist = _require_json_number(
+        _required(path_drop_raw, "min_drop_distance_from_basket_m", section=section),
+        field=f"{section}.min_drop_distance_from_basket_m",
+    )
+    keepout = _require_json_number(
+        _required(path_drop_raw, "hard_keepout_floor_m", section=section),
+        field=f"{section}.hard_keepout_floor_m",
+    )
+    if min_dist < 0:
+        raise RecipeError(f"{section}.min_drop_distance_from_basket_m must be >= 0")
+    if keepout < 0:
+        raise RecipeError(f"{section}.hard_keepout_floor_m must be >= 0")
+    return SimpleIKPathDropRecipe(
+        eligible_phases=phases,
+        min_drop_distance_from_basket_m=min_dist,
+        hard_keepout_floor_m=keepout,
+    )
 
 
 def _parse_drop(drop_raw: dict[str, Any]) -> DropRecipe:
@@ -379,6 +528,57 @@ def _parse_simple_ik(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
     return simple_ik
 
 
+def _parse_simple_ik_unified(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
+    speed_raw = _required(simple_ik_raw, "speed_multiplier_range", section="simple_ik")
+    if not isinstance(speed_raw, list) or len(speed_raw) != 2:
+        raise RecipeError("simple_ik.speed_multiplier_range must contain [min, max]")
+    speed_values = (
+        _require_json_number(speed_raw[0], field="simple_ik.speed_multiplier_range[0]"),
+        _require_json_number(speed_raw[1], field="simple_ik.speed_multiplier_range[1]"),
+    )
+    path_drop_raw = _required(simple_ik_raw, "path_drop", section="simple_ik")
+    if not isinstance(path_drop_raw, dict):
+        raise RecipeError("simple_ik.path_drop must be a JSON object")
+    simple_ik = SimpleIKRecipe(
+        trajectory_randomization_enabled=_require_json_bool(
+            _required(simple_ik_raw, "trajectory_randomization_enabled", section="simple_ik"),
+            field="simple_ik.trajectory_randomization_enabled",
+        ),
+        pickup_via_offset_m=_require_json_number(
+            _required(simple_ik_raw, "pickup_via_offset_m", section="simple_ik"),
+            field="simple_ik.pickup_via_offset_m",
+        ),
+        transport_via_offset_m=_require_json_number(
+            _required(simple_ik_raw, "transport_via_offset_m", section="simple_ik"),
+            field="simple_ik.transport_via_offset_m",
+        ),
+        arm_posture_noise_deg=_require_json_number(
+            _required(simple_ik_raw, "arm_posture_noise_deg", section="simple_ik"),
+            field="simple_ik.arm_posture_noise_deg",
+        ),
+        speed_multiplier_range=speed_values,
+        waypoint_blend_radius_m=_require_json_number(
+            _required(simple_ik_raw, "waypoint_blend_radius_m", section="simple_ik"),
+            field="simple_ik.waypoint_blend_radius_m",
+        ),
+        path_drop=_parse_simple_ik_path_drop(path_drop_raw),
+    )
+    for field_name in (
+        "pickup_via_offset_m",
+        "transport_via_offset_m",
+        "arm_posture_noise_deg",
+        "waypoint_blend_radius_m",
+    ):
+        if getattr(simple_ik, field_name) < 0.0:
+            raise RecipeError(f"simple_ik.{field_name} must be >= 0")
+    speed_lo, speed_hi = simple_ik.speed_multiplier_range
+    if speed_lo <= 0.0 or speed_hi <= 0.0:
+        raise RecipeError("simple_ik.speed_multiplier_range values must be > 0")
+    if speed_hi < speed_lo:
+        raise RecipeError("simple_ik.speed_multiplier_range max must be >= min")
+    return simple_ik
+
+
 def _load_json_object(path: Path) -> dict[str, Any]:
     path = Path(path)
     if not path.is_file():
@@ -396,23 +596,26 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     """Load and strictly validate the unified drop datagen recipe."""
     raw = _load_json_object(Path(path))
 
-    q = float(_required(raw, "q"))
+    if "drop" in raw:
+        raise RecipeError(
+            "drop must not appear at the recipe root; use simple_ik.path_drop for SimpleIK"
+        )
+
+    q = _require_json_number(_required(raw, "q"), field="q")
     if not 0.0 <= q <= 1.0:
         raise RecipeError(f"q must be in [0, 1], got {q}")
 
     object_names_raw = _required(raw, "object_names")
     if not isinstance(object_names_raw, list) or not object_names_raw:
         raise RecipeError("object_names must be a non-empty array")
-    object_names = tuple(str(v).strip() for v in object_names_raw)
-    if any(not name for name in object_names):
-        raise RecipeError("object_names entries must be non-empty strings")
+    object_names = tuple(
+        _require_json_str(value, field=f"object_names[{idx}]")
+        for idx, value in enumerate(object_names_raw)
+    )
 
-    basket_name = str(_required(raw, "basket_name")).strip()
-    if not basket_name:
-        raise RecipeError("basket_name must be non-empty")
+    basket_name = _require_json_str(_required(raw, "basket_name"), field="basket_name")
 
     placement_raw = _required(raw, "placement")
-    drop_raw = _required(raw, "drop")
     simple_ik_raw = _required(raw, "simple_ik")
     smolvla_raw = _required(raw, "smolvla")
     post_drop_raw = _required(raw, "post_drop")
@@ -420,7 +623,6 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     matrix_raw = _required(raw, "experiment_matrix")
     for key, value in (
         ("placement", placement_raw),
-        ("drop", drop_raw),
         ("simple_ik", simple_ik_raw),
         ("smolvla", smolvla_raw),
         ("post_drop", post_drop_raw),
@@ -431,9 +633,8 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     if not isinstance(matrix_raw, list) or not matrix_raw:
         raise RecipeError("experiment_matrix must be a non-empty array")
 
-    placement = _parse_placement(placement_raw)
-    drop = _parse_drop(drop_raw)
-    simple_ik = _parse_simple_ik(simple_ik_raw)
+    placement = _parse_placement(placement_raw, strict=True)
+    simple_ik = _parse_simple_ik_unified(simple_ik_raw)
 
     bands_raw = _required(smolvla_raw, "drop_xy_bands", section="smolvla")
     if not isinstance(bands_raw, list) or not bands_raw:
@@ -442,51 +643,66 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     for idx, band in enumerate(bands_raw):
         if not isinstance(band, dict):
             raise RecipeError(f"smolvla.drop_xy_bands[{idx}] must be an object")
-        name = str(_required(band, "name", section=f"smolvla.drop_xy_bands[{idx}]")).strip()
-        lo = float(_required(band, "min_m", section=f"smolvla.drop_xy_bands[{idx}]"))
-        hi = float(_required(band, "max_m", section=f"smolvla.drop_xy_bands[{idx}]"))
+        band_section = f"smolvla.drop_xy_bands[{idx}]"
+        name = _require_json_str(
+            _required(band, "name", section=band_section),
+            field=f"{band_section}.name",
+        )
+        lo = _require_json_number(
+            _required(band, "min_m", section=band_section),
+            field=f"{band_section}.min_m",
+        )
+        hi = _require_json_number(
+            _required(band, "max_m", section=band_section),
+            field=f"{band_section}.max_m",
+        )
         if lo < 0 or hi < 0 or hi < lo:
-            raise RecipeError(f"smolvla.drop_xy_bands[{idx}] must have 0 <= min_m <= max_m")
+            raise RecipeError(f"{band_section} must have 0 <= min_m <= max_m")
         bands.append(DropXYBand(name=name, min_m=lo, max_m=hi))
 
-    delay = _required(smolvla_raw, "post_grasp_delay_steps", section="smolvla")
-    if not isinstance(delay, int) or isinstance(delay, bool) or delay < 0:
-        raise RecipeError("smolvla.post_grasp_delay_steps must be an int >= 0")
-    policy_path = str(_required(smolvla_raw, "policy_path", section="smolvla")).strip()
-    if not policy_path:
-        raise RecipeError("smolvla.policy_path must be non-empty")
+    delay = _require_json_int(
+        _required(smolvla_raw, "post_grasp_delay_steps", section="smolvla"),
+        field="smolvla.post_grasp_delay_steps",
+        min_value=0,
+    )
+    policy_path = _require_json_str(
+        _required(smolvla_raw, "policy_path", section="smolvla"),
+        field="smolvla.policy_path",
+    )
     smolvla = SmolVLARecipe(
         policy_path=policy_path,
-        post_grasp_delay_steps=int(delay),
+        post_grasp_delay_steps=delay,
         drop_xy_bands=tuple(bands),
     )
 
-    dwell = _required(post_drop_raw, "dwell_steps", section="post_drop")
-    if not isinstance(dwell, int) or isinstance(dwell, bool) or dwell < 0:
-        raise RecipeError("post_drop.dwell_steps must be an int >= 0")
-    post_drop = PostDropRecipe(dwell_steps=int(dwell))
+    dwell = _require_json_int(
+        _required(post_drop_raw, "dwell_steps", section="post_drop"),
+        field="post_drop.dwell_steps",
+        min_value=0,
+    )
+    post_drop = PostDropRecipe(dwell_steps=dwell)
 
-    output_dir = str(_required(recording_raw, "output_dir", section="recording")).strip()
-    if not output_dir:
-        raise RecipeError("recording.output_dir must be non-empty")
-    base_seed = _required(recording_raw, "base_seed", section="recording")
-    if not isinstance(base_seed, int) or isinstance(base_seed, bool):
-        raise RecipeError("recording.base_seed must be an int")
-    dataset_fps = _required(recording_raw, "dataset_fps", section="recording")
-    if not isinstance(dataset_fps, int) or isinstance(dataset_fps, bool) or dataset_fps < 1:
-        raise RecipeError("recording.dataset_fps must be an int >= 1")
+    output_dir = _require_json_str(
+        _required(recording_raw, "output_dir", section="recording"),
+        field="recording.output_dir",
+    )
+    base_seed = _require_json_int(
+        _required(recording_raw, "base_seed", section="recording"),
+        field="recording.base_seed",
+    )
+    dataset_fps = _require_json_int(
+        _required(recording_raw, "dataset_fps", section="recording"),
+        field="recording.dataset_fps",
+        min_value=1,
+    )
     recording = RecordingRecipe(
-        base_seed=int(base_seed),
+        base_seed=base_seed,
         output_dir=output_dir,
-        dataset_fps=int(dataset_fps),
+        dataset_fps=dataset_fps,
     )
 
-    control_hz = _required(raw, "control_hz")
-    task_id = _required(raw, "task_id")
-    if not isinstance(control_hz, int) or isinstance(control_hz, bool) or control_hz < 1:
-        raise RecipeError("control_hz must be an int >= 1")
-    if not isinstance(task_id, int) or isinstance(task_id, bool) or task_id < 0:
-        raise RecipeError("task_id must be an int >= 0")
+    control_hz = _require_json_int(_required(raw, "control_hz"), field="control_hz", min_value=1)
+    task_id = _require_json_int(_required(raw, "task_id"), field="task_id", min_value=0)
 
     matrix: list[MatrixVariant] = []
     for idx, entry in enumerate(matrix_raw):
@@ -494,38 +710,46 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         if not isinstance(entry, dict):
             raise RecipeError(f"{section} must be an object")
         controller = _parse_controller(
-            _required(entry, "controller", section=section), section=section
+            _required(entry, "controller", section=section),
+            section=section,
+            strict=True,
         )
         mode = _parse_post_drop_mode(
-            _required(entry, "post_drop_mode", section=section), section=section
+            _required(entry, "post_drop_mode", section=section),
+            section=section,
+            strict=True,
         )
         validate_controller_mode_pair(controller, mode, section=section)
-        episodes = _required(entry, "episodes", section=section)
-        if not isinstance(episodes, int) or isinstance(episodes, bool) or episodes < 1:
-            raise RecipeError(f"{section}.episodes must be an int >= 1")
+        episodes = _require_json_int(
+            _required(entry, "episodes", section=section),
+            field=f"{section}.episodes",
+            min_value=1,
+        )
         matrix.append(
             MatrixVariant(
                 controller=controller,
                 post_drop_mode=mode,
-                episodes=int(episodes),
+                episodes=episodes,
             )
         )
 
+    experiment_matrix = tuple(matrix)
+    validate_experiment_matrix_entries(experiment_matrix)
+
     return DropDatagenRecipe(
-        name=str(_required(raw, "name")).strip(),
-        task=str(_required(raw, "task")).strip(),
-        task_id=int(task_id),
-        control_hz=int(control_hz),
+        name=_require_json_str(_required(raw, "name"), field="name"),
+        task=_require_json_str(_required(raw, "task"), field="task"),
+        task_id=task_id,
+        control_hz=control_hz,
         q=q,
         object_names=object_names,
         basket_name=basket_name,
         placement=placement,
-        drop=drop,
         simple_ik=simple_ik,
         smolvla=smolvla,
         post_drop=post_drop,
         recording=recording,
-        experiment_matrix=tuple(matrix),
+        experiment_matrix=experiment_matrix,
     )
 
 

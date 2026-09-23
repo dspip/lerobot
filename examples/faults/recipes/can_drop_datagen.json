@@ -14,18 +14,18 @@
     "yaw_range_deg": [-180.0, 180.0],
     "max_attempts": 200
   },
-  "drop": {
-    "eligible_phases": ["lift", "to_container"],
-    "min_drop_distance_from_basket_m": 0.30,
-    "hard_keepout_floor_m": 0.22
-  },
   "simple_ik": {
     "trajectory_randomization_enabled": true,
     "pickup_via_offset_m": 0.03,
     "transport_via_offset_m": 0.06,
     "arm_posture_noise_deg": 3.0,
     "speed_multiplier_range": [0.9, 1.1],
-    "waypoint_blend_radius_m": 0.02
+    "waypoint_blend_radius_m": 0.02,
+    "path_drop": {
+      "eligible_phases": ["lift", "to_container"],
+      "min_drop_distance_from_basket_m": 0.30,
+      "hard_keepout_floor_m": 0.22
+    }
   },
   "smolvla": {
     "policy_path": "lerobot/smolvla_libero",

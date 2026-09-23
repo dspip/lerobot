@@ -26,6 +26,7 @@ from lerobot.faults.datagen.recipe import (
     RecipeError,
     effective_post_drop_dwell_steps,
     expand_experiment_matrix,
+    legacy_drop_recipe,
     load_drop_datagen_recipe,
     load_legacy_simple_ik_recipe,
     load_legacy_post_drop_recipe,
@@ -57,11 +58,6 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "yaw_range_deg": [-180.0, 180.0],
             "max_attempts": 200,
         },
-        "drop": {
-            "eligible_phases": ["lift", "to_container"],
-            "min_drop_distance_from_basket_m": 0.30,
-            "hard_keepout_floor_m": 0.22,
-        },
         "simple_ik": {
             "trajectory_randomization_enabled": True,
             "pickup_via_offset_m": 0.03,
@@ -69,6 +65,11 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "arm_posture_noise_deg": 3.0,
             "speed_multiplier_range": [0.9, 1.1],
             "waypoint_blend_radius_m": 0.02,
+            "path_drop": {
+                "eligible_phases": ["lift", "to_container"],
+                "min_drop_distance_from_basket_m": 0.30,
+                "hard_keepout_floor_m": 0.22,
+            },
         },
         "smolvla": {
             "policy_path": "lerobot/smolvla_libero",
@@ -108,6 +109,10 @@ def test_can_drop_recipe_file_loads() -> None:
     assert recipe.smolvla.policy_path == "lerobot/smolvla_libero"
     assert recipe.post_drop.dwell_steps == 80
     assert len(recipe.experiment_matrix) == 5
+    path_drop = recipe.simple_ik.path_drop
+    assert path_drop is not None
+    assert path_drop.eligible_phases == ("lift", "to_container")
+    assert legacy_drop_recipe(recipe).hard_keepout_floor_m == 0.22
 
 
 def test_expand_matrix_stable_order_and_episode_count() -> None:
@@ -201,6 +206,86 @@ def test_object_names_schema_allows_multiple_without_recording_impl(tmp_path: Pa
     _write_recipe(path, payload)
     recipe = load_drop_datagen_recipe(path)
     assert recipe.object_names == ("alphabet_soup_1", "milk_1")
+
+
+def test_rejects_missing_experiment_matrix_pair(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    payload["experiment_matrix"] = payload["experiment_matrix"][:4]
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="exactly 5"):
+        load_drop_datagen_recipe(path)
+
+
+def test_rejects_duplicate_experiment_matrix_pair(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    matrix = list(payload["experiment_matrix"])
+    matrix[1] = dict(matrix[0])
+    payload["experiment_matrix"] = matrix
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="duplicate"):
+        load_drop_datagen_recipe(path)
+
+
+def test_rejects_unequal_matrix_episode_counts(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    matrix = list(payload["experiment_matrix"])
+    matrix[0] = {**matrix[0], "episodes": 2}
+    payload["experiment_matrix"] = matrix
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="same episodes"):
+        load_drop_datagen_recipe(path)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "bad_value"),
+    [
+        ("simple_ik.trajectory_randomization_enabled", "false"),
+        ("simple_ik.trajectory_randomization_enabled", 1),
+        ("name", 42),
+        ("q", "1.0"),
+        ("placement.xy_range_m", "0.12"),
+    ],
+)
+def test_unified_recipe_rejects_malformed_json_types(
+    tmp_path: Path,
+    field_path: str,
+    bad_value: object,
+) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    parts = field_path.split(".")
+    target: dict[str, object] = payload
+    for key in parts[:-1]:
+        target = target[key]  # type: ignore[index]
+    target[parts[-1]] = bad_value
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError):
+        load_drop_datagen_recipe(path)
+
+
+def test_unified_simple_ik_requires_path_drop_object(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    del payload["simple_ik"]["path_drop"]
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="path_drop"):
+        load_drop_datagen_recipe(path)
+
+
+def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    payload["drop"] = {
+        "eligible_phases": ["lift"],
+        "min_drop_distance_from_basket_m": 0.3,
+        "hard_keepout_floor_m": 0.22,
+    }
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="drop"):
+        load_drop_datagen_recipe(path)
 
 
 # --- Legacy SimpleIK-only recipe (run_can_simpleik_datagen) ---
