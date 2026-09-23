@@ -346,7 +346,6 @@ def run_pipeline(
         sample_post_grasp_delay_steps,
         training_midair_drop_kwargs,
     )
-    from lerobot.faults.annotation import default_failure_frame
     from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
     if episode_kind not in ("drop", "nominal"):
