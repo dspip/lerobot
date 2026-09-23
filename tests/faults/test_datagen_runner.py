@@ -26,6 +26,7 @@ from lerobot.faults.datagen.recipe import (
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
+from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.runner import (
     DropDatagenRunnerError,
     run_drop_datagen_matrix,
@@ -51,6 +52,44 @@ def _fake_init_count(_recipe) -> int:
     return 50
 
 
+class _NoopDatasetLogger:
+    def __init__(self, root: Path, repo_id: str, **_kwargs) -> None:
+        self.root = root
+
+    def log_step(self, *args, **kwargs) -> None:
+        del args, kwargs
+
+    def end_episode(self, *args, **kwargs) -> None:
+        del args, kwargs
+
+    def clear_open_episode(self) -> None:
+        return None
+
+    def finalize(self) -> None:
+        return None
+
+
+def _recipe_with_output(tmp_path: Path, *, base_seed: int = 9000):
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    return recipe.__class__(
+        **{
+            **recipe.__dict__,
+            "recording": recipe.recording.__class__(
+                base_seed=base_seed,
+                output_dir=str(tmp_path / "datagen"),
+                dataset_fps=10,
+            ),
+        }
+    )
+
+
+def _writer_for(recipe) -> RunDatasetWriter:
+    return RunDatasetWriter(
+        recipe,
+        logger_factory=lambda root, repo_id, **_kw: _NoopDatasetLogger(root, repo_id),
+    )
+
+
 def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     recipe = recipe.__class__(
@@ -71,17 +110,7 @@ def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
 
 
 def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
-    recipe = recipe.__class__(
-        **{
-            **recipe.__dict__,
-            "recording": recipe.recording.__class__(
-                base_seed=9000,
-                output_dir=str(tmp_path / "datagen"),
-                dataset_fps=10,
-            ),
-        }
-    )
+    recipe = _recipe_with_output(tmp_path)
     seen: list[tuple[DatagenController, PostDropMode]] = []
     layouts: list[dict] = []
 
@@ -101,6 +130,7 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
         adapter_factories=factories,
         layout_provider=_fake_layout_provider,
         init_state_count_provider=_fake_init_count,
+        dataset_writer=_writer_for(recipe),
     )
     assert len(results) == 5
     assert all(r.success for r in results)
@@ -108,8 +138,8 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
     assert all(layout == _FAKE_LAYOUT for layout in layouts)
 
 
-def test_run_matrix_fails_fast_on_missing_adapter_factory() -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+def test_run_matrix_fails_fast_on_missing_adapter_factory(tmp_path: Path) -> None:
+    recipe = _recipe_with_output(tmp_path)
     with pytest.raises(DropDatagenRunnerError, match="adapter factory"):
         run_drop_datagen_matrix(
             recipe,
@@ -117,11 +147,12 @@ def test_run_matrix_fails_fast_on_missing_adapter_factory() -> None:
             adapter_factories={},
             layout_provider=_fake_layout_provider,
             init_state_count_provider=_fake_init_count,
+            dataset_writer=_writer_for(recipe),
         )
 
 
 def test_run_matrix_wraps_adapter_exceptions_with_context(tmp_path: Path) -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    recipe = _recipe_with_output(tmp_path)
 
     class _BoomAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
@@ -138,11 +169,12 @@ def test_run_matrix_wraps_adapter_exceptions_with_context(tmp_path: Path) -> Non
             adapter_factories=factories,
             layout_provider=_fake_layout_provider,
             init_state_count_provider=_fake_init_count,
+            dataset_writer=_writer_for(recipe),
         )
 
 
 def test_run_matrix_raises_on_layout_provider_failure(tmp_path: Path) -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    recipe = _recipe_with_output(tmp_path)
 
     def _fail(_ctx: LayoutProviderContext) -> dict:
         raise RuntimeError("layout broke")
@@ -156,6 +188,7 @@ def test_run_matrix_raises_on_layout_provider_failure(tmp_path: Path) -> None:
             },
             layout_provider=_fail,
             init_state_count_provider=_fake_init_count,
+            dataset_writer=_writer_for(recipe),
         )
 
 
@@ -165,21 +198,13 @@ class _FakeAdapter:
 
 
 def test_init_state_count_provider_called_once_per_matrix_run(tmp_path: Path) -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    recipe = _recipe_with_output(tmp_path)
     matrix_two_episodes = tuple(
         variant.__class__(**{**variant.__dict__, "episodes": 2})
         for variant in recipe.experiment_matrix
     )
     recipe = recipe.__class__(
-        **{
-            **recipe.__dict__,
-            "recording": recipe.recording.__class__(
-                base_seed=9000,
-                output_dir=str(tmp_path / "datagen"),
-                dataset_fps=10,
-            ),
-            "experiment_matrix": matrix_two_episodes,
-        }
+        **{**recipe.__dict__, "experiment_matrix": matrix_two_episodes}
     )
     calls: list[int] = []
 
@@ -196,12 +221,13 @@ def test_init_state_count_provider_called_once_per_matrix_run(tmp_path: Path) ->
         },
         layout_provider=_fake_layout_provider,
         init_state_count_provider=_count_once,
+        dataset_writer=_writer_for(recipe),
     )
     assert len(calls) == 1
 
 
 def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
-    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    recipe = _recipe_with_output(tmp_path)
     captured: list = []
 
     class _SpyAdapter:
@@ -219,6 +245,7 @@ def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
         adapter_factories=factories,
         layout_provider=_fake_layout_provider,
         init_state_count_provider=_fake_init_count,
+        dataset_writer=_writer_for(recipe),
     )
     assert len(captured) == 5
     assert all(p.drop_u == captured[0].drop_u for p in captured)

@@ -23,6 +23,9 @@ from typing import Any, Callable
 
 import numpy as np
 
+from lerobot.envs.factory import make_env
+from lerobot.faults.wrappers import DropRecoveryEnvWrapper
+
 from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
@@ -34,6 +37,12 @@ from lerobot.faults.datagen.recipe import (
     legacy_drop_recipe,
 )
 from lerobot.faults.datagen.scene import apply_serializable_layout
+from lerobot.faults.datagen.frame_logging import (
+    annotation_for_datagen_env,
+    log_fault_recovery_step,
+    loss_mask_for_datagen_env,
+    should_log_sim_step,
+)
 from lerobot.faults.datagen.runtime import stabilize_carry_action
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
@@ -118,6 +127,9 @@ def run_simple_ik_episode_loop(
     gripper_settle_steps: int = 0,
     viewer: Any | None = None,
     on_step_end: Callable[..., None] | None = None,
+    episode_session: Any | None = None,
+    recording_stride: int = 1,
+    task: str = "pick up the object and place it in the basket",
 ) -> SimpleIKEpisodeFacts:
     keepout = keepout_m(
         recipe_drop.min_drop_distance_from_basket_m,
@@ -256,7 +268,36 @@ def run_simple_ik_episode_loop(
                     )
                 action = nominal.reshape(1, 7)
 
-        env.step(action)
+        step_out = env.step(action)
+        observation = step_out[0] if isinstance(step_out, tuple) and step_out else None
+        state = fault._states[0]
+        is_drop_episode = paired_plan is None or paired_plan.drop_decision.drop
+        drop_injection = bool(is_drop_episode and state.drop_injection_step)
+        if (
+            episode_session is not None
+            and observation is not None
+            and should_log_sim_step(
+            step,
+            recording_stride=recording_stride,
+                force_drop_injection=drop_injection,
+            )
+        ):
+            from lerobot.envs.utils import preprocess_observation
+            from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
+
+            executed = env.last_executed_action
+            if executed is None:
+                executed = action
+            frame_obs = libero_obs_to_frame(preprocess_observation(observation))
+            log_fault_recovery_step(
+                episode_session.logger,
+                observation_dict=frame_obs,
+                executed_action=np.asarray(executed),
+                task=task,
+                phase=planner.phase_name,
+                loss_mask=loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode),
+                annotation=annotation_for_datagen_env(env, is_drop_episode=is_drop_episode),
+            )
         if on_step_end is not None:
             on_step_end(
                 step=step,
@@ -265,6 +306,7 @@ def run_simple_ik_episode_loop(
                 decision=decision,
                 path_trigger=path_trigger,
                 rs_env=rs_env,
+                observation=observation,
             )
 
         state = fault._states[0]
@@ -353,9 +395,7 @@ class SimpleIKDatagenAdapter:
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
         os.environ.setdefault("MUJOCO_GL", "egl")
         from lerobot.envs.configs import LiberoEnv
-        from lerobot.envs.factory import make_env
         from lerobot.faults.config import FaultInjectionConfig
-        from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
         recipe = request.recipe
         manifest = request.manifest
@@ -420,6 +460,10 @@ class SimpleIKDatagenAdapter:
                 plan.motion_profile,
                 request.object_name,
             )
+            from lerobot.faults.recovery.fps import recording_stride
+
+            stride = recording_stride(recipe.control_hz, recipe.recording.dataset_fps)
+            task = f"pick up the {request.object_name} and place it in the {recipe.basket_name}"
             facts = run_simple_ik_episode_loop(
                 env,
                 rs_env,
@@ -432,6 +476,9 @@ class SimpleIKDatagenAdapter:
                 drop_rng=drop_rng,
                 paired_plan=plan,
                 gripper_settle_steps=config.gripper_settle_steps,
+                episode_session=request.episode_session,
+                recording_stride=stride,
+                task=task,
             )
             return EpisodeResult.from_run(
                 request,

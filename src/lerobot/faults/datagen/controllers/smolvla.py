@@ -21,6 +21,7 @@ from typing import Any
 
 from lerobot.faults.datagen.drop_trigger import smolvla_fault_drop_fields
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.dataset_writer import variant_dataset_directory
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, effective_post_drop_dwell_steps
 from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 
@@ -43,6 +44,7 @@ class SmolVLADatagenAdapter:
         plan = request.paired_plan
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
 
+        session = request.episode_session
         base_pipeline_kwargs: dict[str, Any] = {
             "policy_path": recipe.smolvla.policy_path,
             "device": request.device,
@@ -54,10 +56,19 @@ class SmolVLADatagenAdapter:
             "object_name": request.object_name,
             "init_state_id": plan.init_state_id,
             "shared_layout": request.shared_layout,
-            "wipe_output_dir": True,
+            "wipe_output_dir": session is None,
             "raise_on_failure": False,
             "copy_demo_gif": False,
         }
+        if session is not None:
+            base_pipeline_kwargs.update(
+                {
+                    "dataset_root": variant_dataset_directory(recipe, manifest),
+                    "ds_logger": session.logger,
+                    "defer_dataset_commit": True,
+                    "repo_id": session.repo_id,
+                }
+            )
 
         if not plan.drop_decision.drop:
             summary = self._pipeline_runner(

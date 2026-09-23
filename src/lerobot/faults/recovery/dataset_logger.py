@@ -256,13 +256,15 @@ class FaultRecoveryDatasetLogger:
         key = 1.0 if mask_val >= 0.5 else 0.0
         self._loss_mask_counts[key] = self._loss_mask_counts.get(key, 0) + 1
 
-    def end_episode(self) -> None:
+    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> None:
         """Flush the current episode buffer to disk."""
+        if episode_data is None:
+            episode_data = kwargs.get("episode_data")
         if not self._episode_open:
             return
         # Disable parallel camera encoding: ProcessPool encoding can race with
         # image-path stats (FileNotFoundError on frame PNGs during merge/export).
-        self.dataset.save_episode(parallel_encoding=False)
+        self.dataset.save_episode(episode_data, parallel_encoding=False)
         self._episode_open = False
 
     def clear_open_episode(self) -> None:

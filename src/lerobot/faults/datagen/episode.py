@@ -18,9 +18,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
 
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan
 from lerobot.faults.datagen.recipe import (
@@ -55,6 +58,8 @@ class EpisodeRequest:
     shared_layout: dict[str, dict[str, list[float]]]
     headless: bool = True
     device: str = "cuda"
+    episode_session: DatagenEpisodeSession | None = None
+    episode_session: Any | None = None
 
 
 @dataclass
@@ -76,6 +81,9 @@ class EpisodeResult:
     trigger_pose: list[float] | None = None
     actual_dwell_steps: int | None = None
     error: str | None = None
+    keep: bool | None = None
+    keep_reason: str | None = None
+    reject_reason: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod

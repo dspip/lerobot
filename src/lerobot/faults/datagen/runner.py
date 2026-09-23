@@ -27,6 +27,7 @@ from lerobot.faults.datagen.layout_provider import (
     libero_init_state_count,
     libero_shared_layout_provider,
 )
+from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
@@ -83,6 +84,7 @@ def run_drop_datagen_matrix(
     device: str = "cuda",
     layout_provider: SharedLayoutProvider | None = None,
     init_state_count_provider: InitStateCountProvider | None = None,
+    dataset_writer: RunDatasetWriter | None = None,
 ) -> tuple[EpisodeResult, ...]:
     factories = default_adapter_factories() if adapter_factories is None else adapter_factories
     layout_fn = layout_provider or libero_shared_layout_provider
@@ -96,52 +98,61 @@ def run_drop_datagen_matrix(
         raise DropDatagenRunnerError(
             f"could not resolve LIBERO init state count: {exc}"
         ) from exc
+    writer = dataset_writer if dataset_writer is not None else RunDatasetWriter(recipe)
     results: list[EpisodeResult] = []
-    for logical_index in logical_episode_indices:
-        manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
-        if not manifests:
-            raise DropDatagenRunnerError(
-                f"No manifests for logical episode index {logical_index}"
-            )
-        object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
-        paired_plan = build_paired_episode_plan(
-            recipe,
-            manifest=manifests[0],
-            object_name=object_name,
-            num_init_states=num_init_states,
-        )
-        layout_ctx = LayoutProviderContext(
-            recipe=recipe,
-            plan=paired_plan,
-            object_name=object_name,
-        )
-        try:
-            shared_layout = layout_fn(layout_ctx)
-        except Exception as exc:
-            raise DropDatagenRunnerError(
-                f"logical episode {logical_index}: shared layout failed: {exc}"
-            ) from exc
-        for manifest in manifests:
-            adapter = _adapter_for(manifest.controller, recipe, factories)
-            output_dir = variant_output_directory(recipe, manifest)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            request = EpisodeRequest(
-                recipe=recipe,
-                manifest=manifest,
+    try:
+        for logical_index in logical_episode_indices:
+            manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
+            if not manifests:
+                raise DropDatagenRunnerError(
+                    f"No manifests for logical episode index {logical_index}"
+                )
+            object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
+            paired_plan = build_paired_episode_plan(
+                recipe,
+                manifest=manifests[0],
                 object_name=object_name,
-                output_dir=output_dir,
-                paired_plan=paired_plan,
-                shared_layout=shared_layout,
-                headless=headless,
-                device=device,
+                num_init_states=num_init_states,
+            )
+            layout_ctx = LayoutProviderContext(
+                recipe=recipe,
+                plan=paired_plan,
+                object_name=object_name,
             )
             try:
-                results.append(adapter.run_episode(request))
+                shared_layout = layout_fn(layout_ctx)
             except Exception as exc:
                 raise DropDatagenRunnerError(
-                    f"{manifest.controller.value} × {manifest.post_drop_mode.value} "
-                    f"episode {manifest.logical_episode_index} failed: {exc}"
+                    f"logical episode {logical_index}: shared layout failed: {exc}"
                 ) from exc
+            for manifest in manifests:
+                adapter = _adapter_for(manifest.controller, recipe, factories)
+                output_dir = variant_output_directory(recipe, manifest)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                session = writer.open_episode_session(manifest)
+                request = EpisodeRequest(
+                    recipe=recipe,
+                    manifest=manifest,
+                    object_name=object_name,
+                    output_dir=output_dir,
+                    paired_plan=paired_plan,
+                    shared_layout=shared_layout,
+                    headless=headless,
+                    device=device,
+                    episode_session=session,
+                )
+                try:
+                    result = adapter.run_episode(request)
+                except Exception as exc:
+                    session.discard()
+                    raise DropDatagenRunnerError(
+                        f"{manifest.controller.value} × {manifest.post_drop_mode.value} "
+                        f"episode {manifest.logical_episode_index} failed: {exc}"
+                    ) from exc
+                writer.record_episode_outcome(request, result, session)
+                results.append(result)
+    finally:
+        writer.finalize()
     return tuple(results)
 
 

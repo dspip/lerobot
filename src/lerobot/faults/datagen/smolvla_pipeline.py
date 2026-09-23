@@ -546,27 +546,25 @@ def run_pipeline(
             flush=True,
         )
 
+        from lerobot.faults.datagen.frame_logging import (
+            annotation_for_datagen_env,
+            log_fault_recovery_step,
+            loss_mask_for_datagen_env,
+        )
+
         def _log_dataset_step(sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str) -> None:
-            executed = executed_action
-            if np.asarray(executed).ndim == 2:
-                executed = np.asarray(executed)[0]
-            if is_drop_episode:
-                mask = float(env.loss_mask())
-                annotation = env.failure_annotation(0)
-            else:
-                mask = 1.0
-                annotation = default_failure_frame()
             try:
                 from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
 
                 frame = libero_obs_to_frame(preprocess_observation(observation_t))
-                ds_logger.log_step(
-                    frame,
-                    executed,
-                    task,
-                    mask,
+                log_fault_recovery_step(
+                    ds_logger,
+                    observation_dict=frame,
+                    executed_action=np.asarray(executed_action),
+                    task=task,
                     phase=phase_name,
-                    annotation=annotation,
+                    loss_mask=loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode),
+                    annotation=annotation_for_datagen_env(env, is_drop_episode=is_drop_episode),
                 )
             except Exception as exc:  # noqa: BLE001
                 print(f"[pipeline] dataset log warning at step={sim_step}: {exc}", flush=True)
