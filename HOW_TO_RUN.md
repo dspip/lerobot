@@ -97,6 +97,45 @@ A real inject writes `"event": "midair_drop"` in `fault_events.jsonl`. Task succ
 
 If `config.json` lists `observation.images.image` (not `camera1`), remove `--policy.empty_cameras=1` and the `--env.camera_name_mapping=...` line only.
 
+### Manual keyboard drop + recovery
+
+This runs the no-checkpoint manual demo. It replays nominal episode 12, then lets you press `d` to drop the object and `r` to start IK recovery. The demo needs the `xy_band_mix_60ep` archive because it reads the recorded actions and nominal-episode audit report.
+
+Run this from the repository root. The first block finds the archive, including its current location in the desktop Trash, extracts it into the path expected by the script, and verifies both required inputs:
+
+```bash
+cd ~/Projects/lerobot
+
+ARCHIVE="$HOME/.local/share/Trash/files/xy_band_mix_60ep.tar.gz"
+if [ ! -f "$ARCHIVE" ]; then
+  ARCHIVE="$(find "$HOME" -type f -name 'xy_band_mix_60ep.tar.gz' -print -quit)"
+fi
+if [ -z "$ARCHIVE" ]; then
+  echo "Cannot find xy_band_mix_60ep.tar.gz under $HOME" >&2
+  exit 1
+fi
+
+rm -rf /tmp/xy_band_mix_60ep_extract
+mkdir -p /tmp/xy_band_mix_60ep_extract
+tar -xzf "$ARCHIVE" -C /tmp/xy_band_mix_60ep_extract
+
+test -f /tmp/xy_band_mix_60ep_extract/audit_report.json
+test -d /tmp/xy_band_mix_60ep_extract/dataset/data/chunk-000
+if [ ! -f /tmp/xy_band_mix_60ep_extract/audit_report.json ] || \
+   [ ! -d /tmp/xy_band_mix_60ep_extract/dataset/data/chunk-000 ]; then
+  echo "Dataset extraction is incomplete" >&2
+  exit 1
+fi
+```
+
+Start the UI:
+
+```bash
+uv run python examples/faults/run_manual_drop_recovery.py
+```
+
+Click the Tk window to focus it. Press `d` while the object is grasped, then `r` to recover. Press `q` or `Esc` to quit. The Robosuite private-macro warning is harmless for this demo.
+
 ## Optional flags
 
 | What you want | Flag | Otherwise |
