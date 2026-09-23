@@ -15,9 +15,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
 
+from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.layout_provider import LayoutProviderContext
 from lerobot.faults.datagen.recipe import (
@@ -55,18 +58,67 @@ def _fake_init_count(_recipe) -> int:
 class _NoopDatasetLogger:
     def __init__(self, root: Path, repo_id: str, **_kwargs) -> None:
         self.root = root
+        self._total_episodes = 0
 
     def log_step(self, *args, **kwargs) -> None:
         del args, kwargs
 
-    def end_episode(self, *args, **kwargs) -> None:
+    def dataset_episode_index_on_commit(self) -> int:
+        return self._total_episodes
+
+    def end_episode(self, *args, **kwargs) -> int:
         del args, kwargs
+        index = self._total_episodes
+        self._total_episodes += 1
+        return index
 
     def clear_open_episode(self) -> None:
         return None
 
     def finalize(self) -> None:
         return None
+
+
+class _TrackingDatasetLogger:
+    """Records commits/discards for runner failure-path tests."""
+
+    def __init__(self, root: Path, repo_id: str, **_kwargs) -> None:
+        self.root = root
+        self._open = False
+        self.committed = 0
+        self.discarded = 0
+        self._total = 0
+
+    def log_step(self, *args, **kwargs) -> None:
+        del args, kwargs
+        self._open = True
+
+    def dataset_episode_index_on_commit(self) -> int:
+        return self._total
+
+    def end_episode(self, *args, **kwargs) -> int:
+        del args, kwargs
+        index = self._total
+        self._total += 1
+        self.committed += 1
+        self._open = False
+        return index
+
+    def clear_open_episode(self) -> None:
+        self.discarded += 1
+        self._open = False
+
+    def finalize(self) -> None:
+        if self._open:
+            self.clear_open_episode()
+
+
+def _minimal_frame() -> dict[str, np.ndarray]:
+    return {
+        "observation.state": np.zeros(8, dtype=np.float32),
+        "observation.images.image": np.zeros((4, 4, 3), dtype=np.uint8),
+        "observation.images.image2": np.zeros((4, 4, 3), dtype=np.uint8),
+    }
 
 
 def _recipe_with_output(tmp_path: Path, *, base_seed: int = 9000):
@@ -88,6 +140,19 @@ def _writer_for(recipe) -> RunDatasetWriter:
         recipe,
         logger_factory=lambda root, repo_id, **_kw: _NoopDatasetLogger(root, repo_id),
     )
+
+
+def _tracking_writer_for(recipe) -> RunDatasetWriter:
+    loggers: list[_TrackingDatasetLogger] = []
+
+    def factory(root: Path, repo_id: str, **_kw: Any) -> _TrackingDatasetLogger:
+        logger = _TrackingDatasetLogger(root, repo_id)
+        loggers.append(logger)
+        return logger
+
+    writer = RunDatasetWriter(recipe, logger_factory=factory)
+    writer._test_loggers = loggers  # type: ignore[attr-defined]
+    return writer
 
 
 def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
@@ -118,6 +183,8 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             seen.append((request.manifest.controller, request.manifest.post_drop_mode))
             layouts.append(request.shared_layout)
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
             return EpisodeResult.from_run(request, success=True, outcome="ok")
 
     factories = {
@@ -194,6 +261,8 @@ def test_run_matrix_raises_on_layout_provider_failure(tmp_path: Path) -> None:
 
 class _FakeAdapter:
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+        if request.episode_session is not None:
+            request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
         return EpisodeResult.from_run(request, success=True, outcome="ok")
 
 
@@ -226,6 +295,81 @@ def test_init_state_count_provider_called_once_per_matrix_run(tmp_path: Path) ->
     assert len(calls) == 1
 
 
+def test_keyboard_interrupt_discards_partial_episode_keeps_prior_commits(tmp_path: Path) -> None:
+    recipe = _recipe_with_output(tmp_path)
+    writer = _tracking_writer_for(recipe)
+    variant_index = {"n": 0}
+
+    class _InterruptOnThirdAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            assert request.episode_session is not None
+            request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            n = variant_index["n"]
+            variant_index["n"] += 1
+            if n < 2:
+                return EpisodeResult.from_run(request, success=True, outcome="ok")
+            raise KeyboardInterrupt()
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _InterruptOnThirdAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _InterruptOnThirdAdapter(),
+    }
+    with pytest.raises(KeyboardInterrupt):
+        run_drop_datagen_matrix(
+            recipe,
+            logical_episode_indices=(0,),
+            adapter_factories=factories,
+            layout_provider=_fake_layout_provider,
+            init_state_count_provider=_fake_init_count,
+            dataset_writer=writer,
+        )
+    assert len(writer.episode_rows) == 2
+    manifest_path = Path(recipe.recording.output_dir) / "run_manifest.json"
+    assert not manifest_path.is_file()
+    loggers: list[_TrackingDatasetLogger] = writer._test_loggers  # type: ignore[attr-defined]
+    assert sum(logger.committed for logger in loggers) == 2
+    assert all(logger.discarded <= 1 for logger in loggers)
+
+
+def test_record_episode_outcome_commit_failure_leaves_no_manifest_row(tmp_path: Path) -> None:
+    recipe = _recipe_with_output(tmp_path)
+    writer = _tracking_writer_for(recipe)
+    commit_attempts = {"n": 0}
+    original_commit = DatagenEpisodeSession.commit
+
+    def commit_fail_on_third(self: DatagenEpisodeSession) -> int:
+        commit_attempts["n"] += 1
+        if commit_attempts["n"] == 3:
+            raise RuntimeError("commit failed")
+        return original_commit(self)
+
+    class _AlwaysLogAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            assert request.episode_session is not None
+            request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _AlwaysLogAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _AlwaysLogAdapter(),
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(DatagenEpisodeSession, "commit", commit_fail_on_third)
+        with pytest.raises(RuntimeError, match="commit failed"):
+            run_drop_datagen_matrix(
+                recipe,
+                logical_episode_indices=(0,),
+                adapter_factories=factories,
+                layout_provider=_fake_layout_provider,
+                init_state_count_provider=_fake_init_count,
+                dataset_writer=writer,
+            )
+    assert len(writer.episode_rows) == 2
+    assert not (Path(recipe.recording.output_dir) / "run_manifest.json").is_file()
+    loggers: list[_TrackingDatasetLogger] = writer._test_loggers  # type: ignore[attr-defined]
+    assert sum(logger.committed for logger in loggers) == 2
+
+
 def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
     recipe = _recipe_with_output(tmp_path)
     captured: list = []
@@ -233,6 +377,8 @@ def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
     class _SpyAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             captured.append(request.paired_plan)
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
             return EpisodeResult.from_run(request, success=True, outcome="ok")
 
     factories = {

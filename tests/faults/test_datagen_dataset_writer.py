@@ -136,6 +136,8 @@ class _RecordingLogger:
         self._open = False
 
     def finalize(self) -> None:
+        if self._open:
+            self.clear_open_episode()
         self.finalized = True
 
 
@@ -198,6 +200,28 @@ def test_refuses_non_empty_run_output_dir(tmp_path: Path) -> None:
     (root / "leftover.txt").write_text("prior run")
     with pytest.raises(StaleRunOutputError):
         RunDatasetWriter(recipe)
+
+
+def test_record_keep_without_logged_frames_raises(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    writer = RunDatasetWriter(recipe, logger_factory=lambda root, repo_id, **_kw: _RecordingLogger(root))
+    session = writer.open_episode_session(manifest)
+    req, res = _request_and_result(recipe, manifest, success=True, outcome="ok", tmp_path=tmp_path)
+    with pytest.raises(ValueError, match="no logged frames"):
+        writer.record_episode_outcome(req, res, session)
+    assert not session.is_open
+    assert session.logger.committed == 0
+
+
+def test_finalize_discards_open_episode_without_commit(tmp_path: Path) -> None:
+    logger = _RecordingLogger(tmp_path / "ds")
+    logger.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    assert logger._open
+    logger.finalize()
+    assert logger.committed == 0
+    assert logger.discarded == 1
+    assert not logger._open
 
 
 def test_record_outcome_keep_then_reject(tmp_path: Path) -> None:

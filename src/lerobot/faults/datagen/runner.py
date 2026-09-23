@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from lerobot.faults.datagen.controllers.base import DatagenControllerAdapter
+from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession, RunDatasetWriter
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult, select_episode_object
 from lerobot.faults.datagen.layout_provider import (
     LayoutProviderContext,
@@ -27,7 +29,6 @@ from lerobot.faults.datagen.layout_provider import (
     libero_init_state_count,
     libero_shared_layout_provider,
 )
-from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
@@ -75,6 +76,13 @@ def _adapter_for(
     return factory(recipe)
 
 
+def _finalize_writer_after_run(writer: RunDatasetWriter, *, run_ok: bool) -> None:
+    if run_ok:
+        writer.finalize()
+    else:
+        writer.finalize_loggers_only()
+
+
 def run_drop_datagen_matrix(
     recipe: DropDatagenRecipe,
     *,
@@ -101,6 +109,7 @@ def run_drop_datagen_matrix(
     writer = dataset_writer if dataset_writer is not None else RunDatasetWriter(recipe)
     results: list[EpisodeResult] = []
     run_ok = False
+    active_session: DatagenEpisodeSession | None = None
     try:
         for logical_index in logical_episode_indices:
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
@@ -130,7 +139,7 @@ def run_drop_datagen_matrix(
                 adapter = _adapter_for(manifest.controller, recipe, factories)
                 output_dir = variant_output_directory(recipe, manifest)
                 output_dir.mkdir(parents=True, exist_ok=True)
-                session = writer.open_episode_session(manifest)
+                active_session = writer.open_episode_session(manifest)
                 request = EpisodeRequest(
                     recipe=recipe,
                     manifest=manifest,
@@ -140,24 +149,43 @@ def run_drop_datagen_matrix(
                     shared_layout=shared_layout,
                     headless=headless,
                     device=device,
-                    episode_session=session,
+                    episode_session=active_session,
                 )
                 try:
                     result = adapter.run_episode(request)
-                except Exception as exc:
-                    session.discard()
-                    raise DropDatagenRunnerError(
-                        f"{manifest.controller.value} × {manifest.post_drop_mode.value} "
-                        f"episode {manifest.logical_episode_index} failed: {exc}"
-                    ) from exc
-                writer.record_episode_outcome(request, result, session)
+                except BaseException as exc:
+                    if active_session.is_open:
+                        active_session.discard()
+                    active_session = None
+                    if isinstance(exc, Exception):
+                        raise DropDatagenRunnerError(
+                            f"{manifest.controller.value} × {manifest.post_drop_mode.value} "
+                            f"episode {manifest.logical_episode_index} failed: {exc}"
+                        ) from exc
+                    raise
+                try:
+                    writer.record_episode_outcome(request, result, active_session)
+                except BaseException:
+                    if active_session.is_open:
+                        active_session.discard()
+                    active_session = None
+                    raise
+                active_session = None
                 results.append(result)
         run_ok = True
     finally:
-        if run_ok:
-            writer.finalize()
-        else:
-            writer.finalize_loggers_only()
+        if active_session is not None and active_session.is_open:
+            active_session.discard()
+        cleanup_error: BaseException | None = None
+        try:
+            _finalize_writer_after_run(writer, run_ok=run_ok)
+        except BaseException as exc:
+            cleanup_error = exc
+        if cleanup_error is not None:
+            primary = sys.exc_info()[1]
+            if primary is not None and primary is not cleanup_error:
+                raise primary from cleanup_error
+            raise cleanup_error
     return tuple(results)
 
 

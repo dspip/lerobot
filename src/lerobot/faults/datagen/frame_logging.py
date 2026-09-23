@@ -28,7 +28,6 @@ __all__ = [
     "DatasetStepLogger",
     "log_fault_recovery_step",
     "log_post_step_to_session",
-    "log_step_from_recovery_env",
     "loss_mask_for_datagen_env",
     "should_log_sim_step",
 ]
@@ -123,35 +122,4 @@ def log_post_step_to_session(
         mask,
         phase=phase,
         annotation=annotation,
-    )
-
-
-def log_step_from_recovery_env(
-    session: DatagenEpisodeSession,
-    env: Any,
-    *,
-    post_step_observation: dict[str, Any] | None,
-    executed_action: np.ndarray | list[float],
-    task: str,
-    phase: str | None,
-    sim_step: int,
-    recording_stride: int,
-    is_drop_episode: bool,
-    env_idx: int = 0,
-) -> None:
-    state = env.fault._states[env_idx]
-    is_drop_frame = bool(is_drop_episode and state.drop_injection_step)
-    if sim_step % recording_stride != 0 and not is_drop_frame:
-        return
-    if post_step_observation is None:
-        return
-    log_post_step_to_session(
-        session,
-        env=env,
-        post_step_observation=post_step_observation,
-        executed_action=executed_action,
-        task=task,
-        phase=phase or "",
-        is_drop_episode=is_drop_episode,
-        env_idx=env_idx,
     )

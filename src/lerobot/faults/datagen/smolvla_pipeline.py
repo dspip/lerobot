@@ -1053,21 +1053,18 @@ def run_pipeline(
 
         episode_committed = False
         loss_counts: dict[float, int] = {}
-        try:
-            if defer_dataset_commit:
-                # Leave the open episode for the caller to commit or discard.
-                episode_committed = False
-            else:
-                commit_keep = bool(behavioral_success)
-                commit_or_discard(ds_logger, keep=commit_keep)
-                episode_committed = commit_keep
-            if behavioral_success:
-                assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
-            loss_counts = dict(ds_logger.loss_mask_counts)
-            if own_logger and behavioral_success and not defer_dataset_commit:
-                ds_logger.finalize()
-        except Exception:
-            raise
+        if defer_dataset_commit:
+            # Leave the open episode for the caller to commit or discard.
+            episode_committed = False
+        else:
+            commit_keep = bool(behavioral_success)
+            commit_or_discard(ds_logger, keep=commit_keep)
+            episode_committed = commit_keep
+        if behavioral_success:
+            assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
+        loss_counts = dict(ds_logger.loss_mask_counts)
+        if own_logger and behavioral_success and not defer_dataset_commit:
+            ds_logger.finalize()
 
     finally:
         env.close()

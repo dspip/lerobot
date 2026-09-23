@@ -291,6 +291,6 @@ class FaultRecoveryDatasetLogger:
     def finalize(self) -> None:
         """Finalize parquet/video writers and assert dataset FPS matches policy FPS."""
         if self._episode_open:
-            self.end_episode()
+            self.clear_open_episode()
         assert_dataset_fps(self.dataset.fps, self.policy_fps)
         self.dataset.finalize()

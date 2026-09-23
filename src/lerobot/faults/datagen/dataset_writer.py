@@ -202,11 +202,12 @@ class RunDatasetWriter:
     ) -> EpisodeMetadataRow:
         keep, reason = evaluate_datagen_keep(request, result)
         dataset_episode_index: int | None = None
-        if session.is_open:
-            if keep:
-                dataset_episode_index = session.commit()
-            else:
-                session.discard()
+        if keep:
+            if not session.is_open:
+                raise ValueError("cannot keep datagen episode with no logged frames")
+            dataset_episode_index = session.commit()
+        elif session.is_open:
+            session.discard()
         row = build_episode_metadata_row(
             request,
             result,
