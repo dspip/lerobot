@@ -325,6 +325,69 @@ def test_paired_no_drop_success_when_object_in_basket(
     }
 
 
+@patch("lerobot.faults.datagen.controllers.simple_ik.sample_path_drop")
+@patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=None)
+def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
+    _mock_nominal: MagicMock,
+    mock_sample_path_drop: MagicMock,
+) -> None:
+    fault = _fault_continue()
+    scheduled = MagicMock(wraps=fault.trigger_scheduled_drop)
+    fault.trigger_scheduled_drop = scheduled
+    env = MagicMock()
+    rs_env = MagicMock()
+    paired_plan = SimpleNamespace(
+        drop_decision=DropDecision(True, None, "injected"),
+        drop_u=0.99,
+    )
+    carry_path = CarryPath(
+        segments=(PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+        requested_transport_offset_m=0.0,
+        resolved_transport_offset_m=0.0,
+        fallback=False,
+    )
+    with patch(
+        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+        return_value={"pos": np.array([0.1, 0.0, 0.2])},
+    ), patch(
+        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+        return_value=np.array([0.0, 0.0, 0.0]),
+    ), patch(
+        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+        return_value=True,
+    ), patch(
+        "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+        return_value=True,
+    ), patch(
+        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+        return_value=False,
+    ):
+        facts = run_simple_ik_episode_loop(
+            env,
+            rs_env,
+            fault=fault,
+            planner=MagicMock(phase_name="lift", carry_path=carry_path, done=True),
+            recipe_drop=MagicMock(
+                min_drop_distance_from_basket_m=0.3,
+                hard_keepout_floor_m=0.22,
+            ),
+            object_name="alphabet_soup_1",
+            basket_name="basket_1",
+            q=1.0,
+            drop_rng=np.random.default_rng(0),
+            paired_plan=paired_plan,
+            max_steps=3,
+            gripper_settle_steps=0,
+        )
+    mock_sample_path_drop.assert_not_called()
+    scheduled.assert_not_called()
+    assert facts.outcome == "nominal_completed_without_drop"
+    assert facts.success is False
+    assert facts.drop_trigger is not None
+    assert facts.drop_trigger["kind"] == "simple_ik_path"
+    assert facts.drop_trigger["drop"] is True
+
+
 @patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")

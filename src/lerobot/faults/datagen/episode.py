@@ -115,10 +115,8 @@ class EpisodeResult:
 
     @classmethod
     def ok(cls, request: EpisodeRequest, *, outcome: str = "completed", **details: Any) -> EpisodeResult:
-        dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
         return cls.from_run(request, success=True, outcome=outcome, **details)
 
     @classmethod
     def failed(cls, request: EpisodeRequest, *, outcome: str, error: str) -> EpisodeResult:
-        dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
         return cls.from_run(request, success=False, outcome=outcome, error=error)

@@ -23,9 +23,8 @@ import numpy as np
 from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.drop_trigger import BandDistanceTarget, sample_smolvla_band_target
 from lerobot.faults.datagen.motion_profile import EpisodeMotionProfile, sample_episode_motion_profile
-from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger, eligible_path, path_trigger_at_drop_u
-from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest, legacy_drop_recipe
-from lerobot.faults.datagen.drop_timing import keepout_m
+from lerobot.faults.datagen.path_drop import PathTrigger, eligible_path, path_trigger_at_drop_u
+from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest
 from lerobot.faults.recovery.trajectory import CarryPath
 
 __all__ = [

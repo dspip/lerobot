@@ -247,11 +247,8 @@ def run_simple_ik_episode_loop(
                             reason=paired_plan.drop_decision.reason,
                             trigger_pose=trigger_pose,
                         )
-                    in_basket = is_object_in_basket(
-                        rs_env, object_name, basket_name=basket_name, z_max=0.14
-                    )
                     return SimpleIKEpisodeFacts(
-                        bool(in_basket),
+                        False,
                         "nominal_completed_without_drop",
                         _drop_trigger_payload(decision, path_trigger),
                         trigger_pose,
