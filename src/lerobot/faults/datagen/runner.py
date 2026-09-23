@@ -184,7 +184,8 @@ def run_drop_datagen_matrix(
         if cleanup_error is not None:
             primary = sys.exc_info()[1]
             if primary is not None and primary is not cleanup_error:
-                raise primary from cleanup_error
+                primary.add_note(f"datagen cleanup failed: {cleanup_error}")
+                raise primary
             raise cleanup_error
     return tuple(results)
 

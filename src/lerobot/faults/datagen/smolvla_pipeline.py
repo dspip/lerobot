@@ -570,7 +570,6 @@ def run_pipeline(
         )
 
         def _log_dataset_step(sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str) -> None:
-            del sim_step
             executed = executed_action
             if is_drop_episode and hasattr(env, "last_executed_action") and env.last_executed_action is not None:
                 executed = env.last_executed_action
@@ -583,6 +582,7 @@ def run_pipeline(
                     task=task,
                     phase=phase_name,
                     is_drop_episode=is_drop_episode,
+                    sim_step=sim_step,
                 )
                 return
             from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame

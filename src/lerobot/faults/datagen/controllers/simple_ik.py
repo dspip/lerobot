@@ -289,6 +289,7 @@ def run_simple_ik_episode_loop(
                 task=task,
                 phase=planner.phase_name,
                 is_drop_episode=is_drop_episode,
+                sim_step=step,
             )
         if on_step_end is not None:
             on_step_end(

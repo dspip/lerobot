@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
+from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession, RunDatasetWriter
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.layout_provider import LayoutProviderContext
 from lerobot.faults.datagen.recipe import (
@@ -110,7 +110,7 @@ class _TrackingDatasetLogger:
 
     def finalize(self) -> None:
         if self._open:
-            self.clear_open_episode()
+            self.end_episode()
 
 
 def _minimal_frame() -> dict[str, np.ndarray]:
@@ -328,7 +328,41 @@ def test_keyboard_interrupt_discards_partial_episode_keeps_prior_commits(tmp_pat
     assert not manifest_path.is_file()
     loggers: list[_TrackingDatasetLogger] = writer._test_loggers  # type: ignore[attr-defined]
     assert sum(logger.committed for logger in loggers) == 2
-    assert all(logger.discarded <= 1 for logger in loggers)
+    assert sum(logger.discarded for logger in loggers) == 1
+
+
+def test_cleanup_failure_adds_note_without_replacing_primary_cause(tmp_path: Path) -> None:
+    recipe = _recipe_with_output(tmp_path)
+    writer = _writer_for(recipe)
+
+    class _FailAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            raise ValueError("primary failure")
+
+    def _boom_finalize_loggers_only(self: RunDatasetWriter) -> None:
+        raise RuntimeError("cleanup failed")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(RunDatasetWriter, "finalize_loggers_only", _boom_finalize_loggers_only)
+        with pytest.raises(DropDatagenRunnerError, match="primary failure") as exc_info:
+            run_drop_datagen_matrix(
+                recipe,
+                logical_episode_indices=(0,),
+                adapter_factories={
+                    DatagenController.SIMPLE_IK: lambda _r: _FailAdapter(),
+                    DatagenController.SMOLVLA: lambda _r: _FailAdapter(),
+                },
+                layout_provider=_fake_layout_provider,
+                init_state_count_provider=_fake_init_count,
+                dataset_writer=writer,
+            )
+    err = exc_info.value
+    assert isinstance(err.__cause__, ValueError)
+    assert str(err.__cause__) == "primary failure"
+    assert err.__cause__.__cause__ is None
+    assert any("datagen cleanup failed" in note and "cleanup failed" in note for note in err.__notes__)
 
 
 def test_record_episode_outcome_commit_failure_leaves_no_manifest_row(tmp_path: Path) -> None:

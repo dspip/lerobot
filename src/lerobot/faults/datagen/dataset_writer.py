@@ -204,7 +204,11 @@ class RunDatasetWriter:
         dataset_episode_index: int | None = None
         if keep:
             if not session.is_open:
-                raise ValueError("cannot keep datagen episode with no logged frames")
+                manifest = session.manifest
+                raise ValueError(
+                    "cannot keep datagen episode with no logged frames "
+                    f"({manifest.controller.value} × {manifest.post_drop_mode.value})"
+                )
             dataset_episode_index = session.commit()
         elif session.is_open:
             session.discard()

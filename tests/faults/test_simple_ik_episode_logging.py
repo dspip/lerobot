@@ -25,6 +25,12 @@ from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
 from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
 from lerobot.faults.datagen.drop_timing import DropDecision
+from lerobot.faults.datagen.frame_logging import (
+    DATAGEN_POST_STEP_ANNOTATION_KEY,
+    DatagenPostStepLogContext,
+    build_datagen_post_step_log_context,
+    should_log_sim_step,
+)
 from lerobot.faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper
@@ -33,6 +39,10 @@ from tests.faults.test_midair_drop_fault import _setup_drop_mocks
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
+
+RECORDING_STRIDE = 2
+CONFIGURED_DWELL_STEPS = 2
+DROP_SIM_STEP = 1
 
 
 class _MinimalInnerEnv:
@@ -55,7 +65,7 @@ class _MinimalInnerEnv:
         return None
 
 
-def _wrapped_continue_env(*, dwell: int = 2) -> DropRecoveryEnvWrapper:
+def _wrapped_continue_env(*, dwell: int = CONFIGURED_DWELL_STEPS) -> DropRecoveryEnvWrapper:
     cfg = FaultInjectionConfig(
         enabled=True,
         type="midair_drop",
@@ -73,7 +83,18 @@ def _wrapped_continue_env(*, dwell: int = 2) -> DropRecoveryEnvWrapper:
     return wrapped
 
 
+def _ctx_from_frame(frame: dict) -> DatagenPostStepLogContext:
+    raw = frame["annotation"][DATAGEN_POST_STEP_ANNOTATION_KEY]
+    return DatagenPostStepLogContext(**raw)
+
+
 def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
+    held_midair_checks = {"n": 0}
+
+    def _held_midair(*_args, **_kwargs) -> bool:
+        held_midair_checks["n"] += 1
+        return held_midair_checks["n"] > 1
+
     with (
         patch("lerobot.faults.recovery.midair_drop.get_place_destination") as mock_dest,
         patch("lerobot.faults.recovery.midair_drop.midair_drop") as mock_drop,
@@ -89,7 +110,10 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         patch("lerobot.faults.datagen.controllers.simple_ik._pause_and_pump", return_value=False),
         patch("lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket", return_value=False),
         patch("lerobot.faults.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
-        patch("lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair", return_value=True),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            side_effect=_held_midair,
+        ),
         patch("lerobot.faults.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
         patch("lerobot.faults.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
         patch("lerobot.envs.utils.preprocess_observation", side_effect=lambda obs: obs),
@@ -104,7 +128,7 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         mock_obj_pose_simple.return_value = {"pos": np.array([0.55, 0.0, 0.2])}
         mock_dest_simple.return_value = np.array([0.0, 0.0, 0.0])
 
-        env = _wrapped_continue_env(dwell=2)
+        env = _wrapped_continue_env(dwell=CONFIGURED_DWELL_STEPS)
         fault = env.fault
         scheduled = MagicMock(wraps=fault.trigger_scheduled_drop)
         fault.trigger_scheduled_drop = scheduled
@@ -133,6 +157,18 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         )
         planner = MagicMock(phase_name="lift", carry_path=carry_path, done=False)
 
+        timeline: list[DatagenPostStepLogContext] = []
+
+        def _on_step_end(*, step: int, phase: str, **_kwargs) -> None:
+            timeline.append(
+                build_datagen_post_step_log_context(
+                    env,
+                    sim_step=step,
+                    phase=phase,
+                    is_drop_episode=True,
+                )
+            )
+
         run_simple_ik_episode_loop(
             env,
             rs_env,
@@ -150,13 +186,50 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
             max_steps=24,
             gripper_settle_steps=0,
             episode_session=session,
-            recording_stride=2,
+            recording_stride=RECORDING_STRIDE,
+            on_step_end=_on_step_end,
         )
 
         scheduled.assert_called_once()
         assert session.is_open
         assert logger.frames, "expected session.log_step to record frames"
-        masks = [frame["loss_mask"] for frame in logger.frames]
-        assert 0.0 in masks, "expected dwell or drop-injection frames with loss_mask 0"
-        assert 1.0 in masks, "expected post-dwell recovery frames with loss_mask 1"
-        assert len(masks) < 24, "recording_stride>1 should skip most sim steps"
+
+        logged_ctx = [_ctx_from_frame(frame) for frame in logger.frames]
+        injection_logged = [ctx for ctx in logged_ctx if ctx.drop_injection_step]
+        assert len(injection_logged) == 1
+        assert injection_logged[0].sim_step == DROP_SIM_STEP
+        assert injection_logged[0].sim_step % RECORDING_STRIDE == 1
+        assert injection_logged[0].loss_mask == 0.0
+
+        dwell_timeline = [
+            ctx
+            for ctx in timeline
+            if ctx.post_drop_dwell_step and not ctx.drop_injection_step
+        ]
+        assert len(dwell_timeline) == CONFIGURED_DWELL_STEPS
+        assert all(ctx.loss_mask == 0.0 for ctx in dwell_timeline)
+
+        dwell_logged = [ctx for ctx in logged_ctx if ctx.post_drop_dwell_step]
+        assert dwell_logged, "expected at least one logged dwell frame"
+        assert all(ctx.loss_mask == 0.0 for ctx in dwell_logged)
+
+        recovery_logged = [ctx for ctx in logged_ctx if ctx.recovery_active]
+        assert recovery_logged, "expected logged recovery frames"
+        assert all(ctx.loss_mask == 1.0 for ctx in recovery_logged)
+
+        expected_logged = [
+            ctx
+            for ctx in timeline
+            if should_log_sim_step(
+                ctx.sim_step,
+                recording_stride=RECORDING_STRIDE,
+                force_drop_injection=ctx.drop_injection_step,
+            )
+        ]
+        assert [ctx.sim_step for ctx in logged_ctx] == [ctx.sim_step for ctx in expected_logged]
+
+        injection_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.drop_injection_step)
+        recovery_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.recovery_active)
+        assert injection_idx < recovery_idx
+        assert all(ctx.loss_mask == 0.0 for ctx in logged_ctx[injection_idx : recovery_idx])
+        assert logged_ctx[injection_idx - 1].loss_mask == 1.0 if injection_idx > 0 else True
