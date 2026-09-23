@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.faults.datagen.paired_context import PairedEpisodePlan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
     DropDatagenRecipe,
@@ -50,7 +51,10 @@ class EpisodeRequest:
     manifest: EpisodeSeedManifest
     object_name: str
     output_dir: Path
+    paired_plan: PairedEpisodePlan
+    shared_layout: dict[str, dict[str, list[float]]] | None = None
     headless: bool = True
+    device: str = "cuda"
 
 
 @dataclass
@@ -69,11 +73,24 @@ class EpisodeResult:
     outcome: str
     dwell_steps: int = 0
     drop_trigger: dict[str, Any] | None = None
+    trigger_pose: list[float] | None = None
+    actual_dwell_steps: int | None = None
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def ok(cls, request: EpisodeRequest, *, outcome: str = "completed", **details: Any) -> EpisodeResult:
+    def from_run(
+        cls,
+        request: EpisodeRequest,
+        *,
+        success: bool,
+        outcome: str,
+        drop_trigger: dict[str, Any] | None = None,
+        trigger_pose: list[float] | None = None,
+        actual_dwell_steps: int | None = None,
+        error: str | None = None,
+        **details: Any,
+    ) -> EpisodeResult:
         dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
         return cls(
             controller=request.manifest.controller,
@@ -86,28 +103,22 @@ class EpisodeResult:
             layout_seed=request.manifest.layout_seed,
             drop_seed=request.manifest.drop_seed,
             controller_seed=request.manifest.controller_seed,
-            success=True,
+            success=success,
             outcome=outcome,
             dwell_steps=dwell,
+            drop_trigger=drop_trigger,
+            trigger_pose=trigger_pose,
+            actual_dwell_steps=actual_dwell_steps,
+            error=error,
             details=dict(details),
         )
 
     @classmethod
+    def ok(cls, request: EpisodeRequest, *, outcome: str = "completed", **details: Any) -> EpisodeResult:
+        dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
+        return cls.from_run(request, success=True, outcome=outcome, **details)
+
+    @classmethod
     def failed(cls, request: EpisodeRequest, *, outcome: str, error: str) -> EpisodeResult:
         dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
-        return cls(
-            controller=request.manifest.controller,
-            post_drop_mode=request.manifest.post_drop_mode,
-            logical_episode_index=request.manifest.logical_episode_index,
-            episode_index=request.manifest.episode_index,
-            output_dir=request.output_dir,
-            object_name=request.object_name,
-            episode_seed=request.manifest.episode_seed,
-            layout_seed=request.manifest.layout_seed,
-            drop_seed=request.manifest.drop_seed,
-            controller_seed=request.manifest.controller_seed,
-            success=False,
-            outcome=outcome,
-            dwell_steps=dwell,
-            error=error,
-        )
+        return cls.from_run(request, success=False, outcome=outcome, error=error)

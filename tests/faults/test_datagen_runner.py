@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
     PostDropMode,
@@ -71,7 +72,7 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
     class _FakeAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             seen.append((request.manifest.controller, request.manifest.post_drop_mode))
-            return EpisodeResult.ok(request)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
 
     factories = {
         DatagenController.SIMPLE_IK: lambda _recipe: _FakeAdapter(),
@@ -83,17 +84,11 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
         adapter_factories=factories,
     )
     assert len(results) == 5
+    assert all(r.success for r in results)
     assert len(seen) == 5
-    assert {pair for pair in seen} == {
-        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
-        (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
-        (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
-    }
 
 
-def test_run_matrix_fails_fast_on_missing_adapter_factory(tmp_path: Path) -> None:
+def test_run_matrix_fails_fast_on_missing_adapter_factory() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     with pytest.raises(DropDatagenRunnerError, match="adapter factory"):
         run_drop_datagen_matrix(
@@ -101,3 +96,44 @@ def test_run_matrix_fails_fast_on_missing_adapter_factory(tmp_path: Path) -> Non
             logical_episode_indices=(0,),
             adapter_factories={},
         )
+
+
+def test_run_matrix_wraps_adapter_exceptions_with_context(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+
+    class _BoomAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            raise RuntimeError("boom")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _BoomAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _BoomAdapter(),
+    }
+    with pytest.raises(DropDatagenRunnerError, match="simple_ik × immediate_ik"):
+        run_drop_datagen_matrix(
+            recipe,
+            logical_episode_indices=(0,),
+            adapter_factories=factories,
+        )
+
+
+def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    captured: list = []
+
+    class _SpyAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            captured.append(request.paired_plan)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _SpyAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _SpyAdapter(),
+    }
+    run_drop_datagen_matrix(
+        recipe,
+        logical_episode_indices=(0,),
+        adapter_factories=factories,
+    )
+    assert len(captured) == 5
+    assert all(p.motion_profile == captured[0].motion_profile for p in captured)

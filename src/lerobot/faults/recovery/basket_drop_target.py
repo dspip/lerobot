@@ -12,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporary CLI wrapper around the in-package SmolVLA drop-recovery pipeline."""
-
-from __future__ import annotations
-
-from lerobot.faults.datagen.smolvla_pipeline import _drop_phase_banner, main, run_pipeline
-
-__all__ = ["_drop_phase_banner", "main", "run_pipeline"]
+"""Basket-distance target crossing helpers (no datagen package imports)."""
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def basket_distance_target_reached(
+    *,
+    prev_m: float,
+    curr_m: float,
+    target_m: float,
+    band_min_m: float,
+    band_max_m: float,
+    held_midair: bool,
+) -> bool:
+    if not held_midair:
+        return False
+    if prev_m <= curr_m:
+        return False
+    if curr_m <= target_m <= prev_m:
+        return True
+    if band_min_m <= curr_m <= band_max_m and curr_m <= target_m:
+        return True
+    return False

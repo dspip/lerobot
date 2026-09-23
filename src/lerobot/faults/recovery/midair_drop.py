@@ -26,6 +26,7 @@ from lerobot.faults.sim.libero import (
     get_robosuite_env,
     hold_gripper_closed,
     is_object_grasped,
+    is_object_held_midair,
     is_object_in_basket,
     midair_drop,
     object_basket_xy_distance,
@@ -34,6 +35,7 @@ from lerobot.faults.sim.libero import (
 )
 from lerobot.faults.logging import FaultEventLogger
 from lerobot.faults.recovery.loss_mask import loss_mask_from_fault
+from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 
 # Never inject a drop closer than this XY distance to the basket (meters).
@@ -93,6 +95,7 @@ class _EnvDropState:
     # Planar object→basket distance at the moment of the drop.
     drop_basket_xy_dist: float | None = None
     drop_trigger_reason: str | None = None
+    prev_basket_xy_dist: float | None = None
     dwell_steps_completed: int = 0
     policy_reset_requested: bool = False
     suppress_grasp_skip: bool = False
@@ -333,7 +336,34 @@ class MidAirDropFault:
         band_lo = self.config.drop_xy_band_min
         band_hi = self.config.drop_xy_band_max
         use_xy_band = band_lo is not None and band_hi is not None
-        if use_xy_band:
+        target_m = getattr(self.config, "drop_xy_target_m", None)
+        if use_xy_band and target_m is not None:
+            if basket_dist is None:
+                return False
+            prev = state.prev_basket_xy_dist
+            if prev is None:
+                state.prev_basket_xy_dist = float(basket_dist)
+                return False
+            held = bool(
+                is_object_held_midair(
+                    rs_env,
+                    self.config.object_name,
+                    min_object_z=float(self.config.min_object_z),
+                    max_eef_distance=0.08,
+                )
+            )
+            reached = basket_distance_target_reached(
+                prev_m=float(prev),
+                curr_m=float(basket_dist),
+                target_m=float(target_m),
+                band_min_m=float(band_lo),
+                band_max_m=float(band_hi),
+                held_midair=held,
+            )
+            state.prev_basket_xy_dist = float(basket_dist)
+            if not reached:
+                return False
+        elif use_xy_band:
             if basket_dist is None:
                 return False
             if not (float(band_lo) <= float(basket_dist) <= float(band_hi)):
@@ -350,8 +380,31 @@ class MidAirDropFault:
         # Record where/why only for the step that actually drops, so the logs
         # never describe a drop that did not happen.
         state.drop_basket_xy_dist = basket_dist
-        state.drop_trigger_reason = "xy_band" if use_xy_band else "delay_elapsed"
+        if use_xy_band and target_m is not None:
+            state.drop_trigger_reason = "xy_target"
+        else:
+            state.drop_trigger_reason = "xy_band" if use_xy_band else "delay_elapsed"
         return True
+
+    def trigger_scheduled_drop(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        proposed_action: np.ndarray,
+        *,
+        reason: str = "scheduled",
+    ) -> np.ndarray:
+        """Apply a scheduled drop using configured dwell/reset/recovery semantics."""
+        if not self.config.enabled:
+            return np.asarray(proposed_action, dtype=np.float32)
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished or state.triggered:
+            return np.asarray(proposed_action, dtype=np.float32)
+        state.drop_trigger_reason = str(reason)
+        state.will_activate = True
+        return self._trigger_drop(env, env_idx, state, proposed_action=np.asarray(proposed_action))
 
     def _trigger_drop(
         self,

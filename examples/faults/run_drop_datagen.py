@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
-from lerobot.faults.datagen.recipe import DropDatagenRecipe, load_drop_datagen_recipe
+from lerobot.faults.datagen.recipe import DropDatagenRecipe, RecipeError, load_drop_datagen_recipe
 from lerobot.faults.datagen.runner import run_drop_datagen_matrix
 
 
@@ -49,9 +50,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--episodes",
         type=int,
         default=None,
-        help="Override episodes count for every matrix variant.",
+        help="Override episodes count for every matrix variant (must be >= 1).",
     )
-    parser.add_argument("--headless", action="store_true", default=True)
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        help="Torch device for SmolVLA runs (e.g. cuda or cpu).",
+    )
+    parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Disable interactive viewers when supported.",
+    )
     return parser
 
 
@@ -62,6 +74,8 @@ def _apply_overrides(
     output: Path | None,
     episodes: int | None,
 ) -> DropDatagenRecipe:
+    if episodes is not None and int(episodes) <= 0:
+        raise RecipeError("episodes override must be >= 1")
     recording = recipe.recording
     if base_seed is not None:
         recording = recording.__class__(
@@ -114,14 +128,22 @@ def _serialize_result(result: object) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    recipe = load_drop_datagen_recipe(args.recipe)
-    recipe = _apply_overrides(
+    try:
+        recipe = load_drop_datagen_recipe(args.recipe)
+        recipe = _apply_overrides(
+            recipe,
+            base_seed=args.base_seed,
+            output=args.output,
+            episodes=args.episodes,
+        )
+    except RecipeError as exc:
+        print(f"Recipe error: {exc}", file=sys.stderr)
+        return 2
+    results = run_drop_datagen_matrix(
         recipe,
-        base_seed=args.base_seed,
-        output=args.output,
-        episodes=args.episodes,
+        headless=args.headless,
+        device=str(args.device),
     )
-    results = run_drop_datagen_matrix(recipe, headless=args.headless)
     summary_path = Path(recipe.recording.output_dir) / "matrix_results.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(

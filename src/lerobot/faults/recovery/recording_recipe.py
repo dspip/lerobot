@@ -66,6 +66,7 @@ def training_midair_drop_kwargs(
     min_drop_distance_from_basket_m: float | None = None,
     drop_xy_band_min: float | None = None,
     drop_xy_band_max: float | None = None,
+    drop_xy_target_m: float | None = None,
     post_drop_dwell_steps: int | None = None,
     post_drop_mode: str = "continue_then_ik",
 ) -> dict[str, Any]:
@@ -97,6 +98,9 @@ def training_midair_drop_kwargs(
         ),
         "drop_xy_band_max": (
             None if drop_xy_band_max is None else float(drop_xy_band_max)
+        ),
+        "drop_xy_target_m": (
+            None if drop_xy_target_m is None else float(drop_xy_target_m)
         ),
         "post_drop_dwell_steps": (
             DEFAULT_POST_DROP_DWELL_STEPS

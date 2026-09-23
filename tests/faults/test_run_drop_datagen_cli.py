@@ -12,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporary CLI wrapper around the in-package SmolVLA drop-recovery pipeline."""
-
 from __future__ import annotations
 
-from lerobot.faults.datagen.smolvla_pipeline import _drop_phase_banner, main, run_pipeline
+from pathlib import Path
 
-__all__ = ["_drop_phase_banner", "main", "run_pipeline"]
+from examples.faults import run_drop_datagen as cli
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def test_cli_rejects_non_positive_episodes_override() -> None:
+    code = cli.main(
+        ["--recipe", str(CAN_DROP_RECIPE), "--episodes", "0"],
+    )
+    assert code == 2
+
+
+def test_example_pipeline_wrapper_imports() -> None:
+    from examples.faults import run_full_drop_recovery_pipeline as wrapper
+
+    assert wrapper.run_pipeline.__module__ == "lerobot.faults.datagen.smolvla_pipeline"

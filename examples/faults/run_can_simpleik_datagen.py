@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live can-only SimpleIK generation with exact run-level drop sampling."""
+"""Live can-only SimpleIK generation — delegates episode logic to ``lerobot.faults.datagen``."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -31,74 +30,35 @@ from can_simpleik_viewer import DEFAULT_CAMERA_PX, DatagenViewer  # noqa: E402
 from lerobot.envs.configs import LiberoEnv  # noqa: E402
 from lerobot.envs.factory import make_env  # noqa: E402
 from lerobot.faults.config import FaultInjectionConfig  # noqa: E402
-from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m  # noqa: E402
+from lerobot.faults.datagen.controllers.simple_ik import (  # noqa: E402
+    build_simple_ik_planner,
+    run_simple_ik_episode_loop,
+)
+from lerobot.faults.datagen.drop_timing import DropDecision  # noqa: E402
 from lerobot.faults.datagen.events import DatagenEventLog  # noqa: E402
-from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout  # noqa: E402
-from lerobot.faults.datagen.motion_profile import (  # noqa: E402
-    EpisodeMotionProfile,
-    MotionLegProfile,
-    sample_episode_motion_profile,
+from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger  # noqa: E402
+from lerobot.faults.datagen.recipe import DatagenRecipe, load_recipe  # noqa: E402
+from lerobot.faults.datagen.scene import (  # noqa: E402
+    apply_object_layout,
+    sample_object_layout_legacy,
 )
-from lerobot.faults.datagen.path_drop import (  # noqa: E402
-    LIFT_PHASE,
-    EligiblePath,
-    PathTrigger,
-    eligible_path,
-    sample_path_drop,
-)
-from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop  # noqa: E402
-from lerobot.faults.datagen.recipe import DatagenRecipe, PostDropMode, load_recipe  # noqa: E402
-from lerobot.faults.datagen.runtime import (  # noqa: E402
-    movable_object_names,
-    rotate_quat_about_world_z,
-    stabilize_carry_action,
-)
-from lerobot.faults.recovery.planner import (  # noqa: E402
-    CARRY_PHASES,
-    SimpleIKRecoveryPlanner,
-)
+from lerobot.faults.datagen.motion_profile import sample_episode_motion_profile  # noqa: E402
 from lerobot.faults.sim.libero import (  # noqa: E402
-    force_close_gripper,
-    force_open_gripper,
-    get_eef_pose,
-    get_gripper_closing_axis,
     get_object_pose,
     get_place_destination,
     get_robosuite_env,
-    hold_gripper_closed,
     is_object_grasped,
-    is_object_held_midair,
-    is_object_in_basket,
-    object_pose_orientation,
-    set_object_pose,
     unwrap_libero_env,
 )
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 
-MAX_PLAN_STEPS = 800
-POST_RECOVERY_SETTLE_STEPS = 40
-LAYOUT_SETTLE_STEPS = 40
-TABLE_XY_LIMIT_M = 0.7
-
-
-@dataclass(frozen=True)
-class ObjectPose:
-    pos: np.ndarray
-    quat_wxyz: np.ndarray
+# Re-export for tests/tools that imported layout helpers from this script.
+from lerobot.faults.datagen.scene import ObjectLayoutPose as ObjectPose  # noqa: E402
 
 
 def _vec_env(envs: dict[str, Any]) -> Any:
     suite = next(iter(envs.values()))
     return next(iter(suite.values()))
-
-
-def _terminated(result: tuple[Any, ...]) -> bool:
-    if len(result) != 5:
-        return False
-    return bool(
-        np.asarray(result[2]).reshape(-1).any()
-        or np.asarray(result[3]).reshape(-1).any()
-    )
 
 
 def _render(env: Any) -> np.ndarray | None:
@@ -107,16 +67,6 @@ def _render(env: Any) -> np.ndarray | None:
         return np.asarray(raw[0], dtype=np.uint8)
     except Exception:
         return None
-
-
-def _pause_and_pump(viewer: DatagenViewer | None) -> bool:
-    if viewer is None:
-        return False
-    viewer.pump()
-    while viewer.pause and not viewer.quit_requested:
-        viewer.pump()
-        time.sleep(0.02)
-    return viewer.quit_requested
 
 
 def _hud(
@@ -146,169 +96,6 @@ def _hud(
     )
 
 
-def _show(
-    viewer: DatagenViewer | None,
-    env: Any,
-    *,
-    episode: int,
-    step: int,
-    phase: str,
-    q: float,
-    path: EligiblePath | None,
-    decision: DropDecision | None,
-    trigger: PathTrigger | None,
-    speed_multiplier: float,
-    rs_env: Any,
-    recipe: DatagenRecipe,
-) -> None:
-    if viewer is None:
-        return
-    frame = _render(env)
-    if frame is None:
-        return
-    obj = get_object_pose(rs_env, recipe.object_name)["pos"]
-    dest = get_place_destination(
-        rs_env,
-        recipe.object_name,
-        basket_name=recipe.basket_name,
-    )
-    viewer.show(
-        frame,
-        _hud(
-            episode=episode,
-            step=step,
-            phase=phase,
-            q=q,
-            path=path,
-            decision=decision,
-            trigger=trigger,
-            speed_multiplier=speed_multiplier,
-            basket_distance=float(np.linalg.norm(obj[:2] - dest[:2])),
-            grasped=bool(is_object_grasped(rs_env, recipe.object_name)),
-        ),
-    )
-
-
-def _new_planner(
-    rs_env: Any,
-    recipe: DatagenRecipe,
-    seed: int,
-    leg: MotionLegProfile,
-    speed_multiplier: float,
-) -> SimpleIKRecoveryPlanner:
-    planner = SimpleIKRecoveryPlanner(
-        speed_multiplier=speed_multiplier,
-        waypoint_noise_m=0.0,
-        arm_posture_noise_rad=np.asarray(leg.posture_bias_rad),
-        pickup_via_offset_xy_m=leg.pickup_offset_xy_m,
-        transport_via_offset_m=leg.transport_offset_m,
-        waypoint_blend_radius_m=recipe.simple_ik.waypoint_blend_radius_m,
-        basket_keepout_m=keepout_m(
-            recipe.drop.min_drop_distance_from_basket_m,
-            recipe.drop.hard_keepout_floor_m,
-        ),
-        seed=seed,
-    )
-    eef_pos, eef_quat = get_eef_pose(rs_env)
-    object_pose = get_object_pose(rs_env, recipe.object_name)
-    destination = get_place_destination(
-        rs_env,
-        recipe.object_name,
-        basket_name=recipe.basket_name,
-    )
-    planner.plan(
-        eef_pos=eef_pos,
-        eef_quat=eef_quat,
-        object_pos=object_pose["pos"],
-        object_axis=object_pose_orientation(rs_env, recipe.object_name)["axis"],
-        destination_pos=destination,
-        gripper_open=True,
-    )
-    return planner
-
-
-def _nominal_action(
-    planner: SimpleIKRecoveryPlanner,
-    rs_env: Any,
-    recipe: DatagenRecipe,
-    *,
-    gripper_settle_steps: int,
-) -> np.ndarray | None:
-    eef_pos, _ = get_eef_pose(rs_env)
-    object_pos = get_object_pose(rs_env, recipe.object_name)["pos"]
-    action = planner.next_action(
-        eef_pos=eef_pos,
-        object_pos=object_pos,
-        closing_axis=get_gripper_closing_axis(rs_env),
-        object_axis=object_pose_orientation(rs_env, recipe.object_name)["axis"],
-    )
-    if planner.just_entered_close:
-        force_close_gripper(rs_env, gripper_settle_steps=gripper_settle_steps)
-    if planner.just_entered_open:
-        force_open_gripper(rs_env, gripper_settle_steps=gripper_settle_steps)
-    if action is not None and planner.phase_name in CARRY_PHASES:
-        hold_gripper_closed(rs_env)
-        action = stabilize_carry_action(action)
-    return action
-
-
-def _sample_pose_layout(
-    rs_env: Any,
-    recipe: DatagenRecipe,
-    rng: np.random.Generator,
-) -> dict[str, ObjectPose] | None:
-    names = movable_object_names(
-        rs_env,
-        basket_name=recipe.basket_name,
-        required_object_name=recipe.object_name,
-    )
-    reset = {name: get_object_pose(rs_env, name) for name in names}
-    basket_xy = get_place_destination(
-        rs_env,
-        recipe.object_name,
-        basket_name=recipe.basket_name,
-    )[:2]
-    sampled = sample_layout(
-        objects=[
-            ObjectPose2d(name=name, xy=pose["pos"][:2].copy(), yaw_rad=0.0)
-            for name, pose in reset.items()
-        ],
-        basket_xy=basket_xy,
-        table_xy_lim=TABLE_XY_LIMIT_M,
-        rng=rng,
-        placement=recipe.placement,
-        target_name=recipe.object_name,
-    )
-    if sampled is None:
-        return None
-    layout: dict[str, ObjectPose] = {}
-    for pose2d in sampled:
-        source = reset[pose2d.name]
-        pos = source["pos"].copy()
-        pos[:2] = pose2d.xy
-        layout[pose2d.name] = ObjectPose(
-            pos=pos,
-            quat_wxyz=rotate_quat_about_world_z(
-                source["quat_wxyz"],
-                pose2d.yaw_rad,
-            ),
-        )
-    return layout
-
-
-def _apply_layout(rs_env: Any, layout: dict[str, ObjectPose]) -> None:
-    for name, pose in layout.items():
-        set_object_pose(
-            rs_env,
-            name,
-            pos=pose.pos,
-            quat_wxyz=pose.quat_wxyz,
-            settle_steps=0,
-        )
-    for _ in range(LAYOUT_SETTLE_STEPS):
-        rs_env.sim.step()
-
-
 def _run_episode(
     env: Any,
     rs_env: Any,
@@ -320,10 +107,9 @@ def _run_episode(
     seed: int,
     q: float,
     drop_rng: np.random.Generator,
-    motion_profile: EpisodeMotionProfile,
+    motion_profile: Any,
     gripper_settle_steps: int,
 ) -> bool:
-    """Execute one legacy SimpleIK episode (immediate recovery after drop)."""
     fault = env.fault
     fault.set_recovery_motion_profile(
         0,
@@ -333,12 +119,14 @@ def _run_episode(
         posture_bias_rad=motion_profile.recovery.posture_bias_rad,
     )
     try:
-        planner = _new_planner(
+        planner = build_simple_ik_planner(
             rs_env,
-            recipe,
-            seed,
-            motion_profile.nominal,
-            motion_profile.speed_multiplier,
+            object_name=recipe.object_name,
+            basket_name=recipe.basket_name,
+            drop_recipe=recipe.drop,
+            waypoint_blend_radius_m=recipe.simple_ik.waypoint_blend_radius_m,
+            seed=seed,
+            motion_profile=motion_profile,
         )
     except Exception as exc:
         event_log.emit("plan_failed", f"planner failed: {exc}", episode=episode)
@@ -349,7 +137,42 @@ def _run_episode(
         episode=episode,
         pickup_via=asdict(planner.pickup_via) if planner.pickup_via is not None else None,
     )
-    return run_simple_ik_episode_loop(
+
+    def on_step_end(**ctx: Any) -> None:
+        if viewer is None:
+            return
+        frame = _render(env)
+        if frame is None:
+            return
+        rs = ctx["rs_env"]
+        obj = get_object_pose(rs, recipe.object_name)["pos"]
+        dest = get_place_destination(
+            rs,
+            recipe.object_name,
+            basket_name=recipe.basket_name,
+        )
+        trigger = (
+            ctx["trigger_evaluator"].trigger
+            if ctx.get("trigger_evaluator") is not None
+            else None
+        )
+        viewer.show(
+            frame,
+            _hud(
+                episode=episode,
+                step=int(ctx["step"]),
+                phase=str(ctx["phase"]),
+                q=q,
+                path=ctx.get("path"),
+                decision=ctx.get("decision"),
+                trigger=trigger,
+                speed_multiplier=motion_profile.speed_multiplier,
+                basket_distance=float(np.linalg.norm(obj[:2] - dest[:2])),
+                grasped=bool(is_object_grasped(rs, recipe.object_name)),
+            ),
+        )
+
+    facts = run_simple_ik_episode_loop(
         env,
         rs_env,
         fault=fault,
@@ -359,11 +182,19 @@ def _run_episode(
         basket_name=recipe.basket_name,
         q=q,
         drop_rng=drop_rng,
-        post_drop_mode=PostDropMode.IMMEDIATE_IK,
-        dwell_steps=0,
         viewer=viewer,
         gripper_settle_steps=gripper_settle_steps,
+        on_step_end=on_step_end,
     )
+    event_log.emit(
+        "episode_done",
+        facts.outcome,
+        episode=episode,
+        success=facts.success,
+        drop_trigger=facts.drop_trigger,
+        dwell_steps=facts.actual_dwell_steps,
+    )
+    return facts.success
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -392,7 +223,6 @@ def main(argv: list[str] | None = None) -> int:
     if viewer is not None:
         event_log.add_listener(viewer.append_log)
     event_log.emit("recipe", f"loaded {args.recipe}", q=recipe.q)
-
     env_cfg = LiberoEnv(
         task="libero_object",
         task_ids=[0],
@@ -418,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
         speed_multiplier_max=1.0,
         waypoint_blend_radius_m=recipe.simple_ik.waypoint_blend_radius_m,
         post_grasp_delay_steps=0,
+        post_drop_mode="immediate_ik",
+        post_drop_dwell_steps=0,
         drop_xy_band_min=None,
         drop_xy_band_max=None,
         seed=args.seed,
@@ -443,11 +275,11 @@ def main(argv: list[str] | None = None) -> int:
             libero_env.init_state_id = baseline_init_state_id
             env.reset(seed=episode_seed)
             rs_env = get_robosuite_env(env, 0)
-            layout = _sample_pose_layout(rs_env, recipe, layout_rng)
+            layout = sample_object_layout_legacy(rs_env, recipe, layout_rng)
             if layout is None:
                 event_log.emit("layout_failed", "no legal layout found", episode=episode)
                 continue
-            _apply_layout(rs_env, layout)
+            apply_object_layout(rs_env, layout)
             event_log.emit(
                 "layout_ok",
                 "randomized movable-object layout applied",

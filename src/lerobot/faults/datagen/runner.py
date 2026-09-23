@@ -22,6 +22,8 @@ from typing import Any
 
 from lerobot.faults.datagen.controllers.base import DatagenControllerAdapter
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult, select_episode_object
+from lerobot.faults.datagen.paired_context import PairedEpisodePlan, build_paired_episode_plan
+from lerobot.faults.datagen.scene import layout_to_serializable, sample_object_layout
 from lerobot.faults.datagen.recipe import (
     DatagenController,
     DropDatagenRecipe,
@@ -72,6 +74,7 @@ def run_drop_datagen_matrix(
     logical_episode_indices: Sequence[int] | None = None,
     adapter_factories: dict[DatagenController, AdapterFactory] | None = None,
     headless: bool = True,
+    device: str = "cuda",
 ) -> tuple[EpisodeResult, ...]:
     factories = default_adapter_factories() if adapter_factories is None else adapter_factories
     if logical_episode_indices is None:
@@ -85,6 +88,10 @@ def run_drop_datagen_matrix(
                 f"No manifests for logical episode index {logical_index}"
             )
         object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
+        paired_plan = build_paired_episode_plan(
+            recipe, manifest=manifests[0], object_name=object_name
+        )
+        shared_layout = _optional_shared_layout(recipe, paired_plan, object_name)
         for manifest in manifests:
             adapter = _adapter_for(manifest.controller, recipe, factories)
             output_dir = variant_output_directory(recipe, manifest)
@@ -94,16 +101,59 @@ def run_drop_datagen_matrix(
                 manifest=manifest,
                 object_name=object_name,
                 output_dir=output_dir,
+                paired_plan=paired_plan,
+                shared_layout=shared_layout,
                 headless=headless,
+                device=device,
             )
             try:
                 results.append(adapter.run_episode(request))
-            except Exception as exc:  # noqa: BLE001 — surface variant context
+            except Exception as exc:
                 raise DropDatagenRunnerError(
                     f"{manifest.controller.value} × {manifest.post_drop_mode.value} "
                     f"episode {manifest.logical_episode_index} failed: {exc}"
                 ) from exc
     return tuple(results)
+
+
+def _optional_shared_layout(
+    recipe: DropDatagenRecipe,
+    plan: PairedEpisodePlan,
+    object_name: str,
+) -> dict[str, dict[str, list[float]]] | None:
+    """Sample layout once per logical episode when LIBERO is available."""
+    try:
+        import numpy as np
+        from lerobot.envs.configs import LiberoEnv
+        from lerobot.envs.factory import make_env
+        from lerobot.faults.sim.libero import get_robosuite_env, unwrap_libero_env
+
+        env_cfg = LiberoEnv(
+            task=recipe.task,
+            task_ids=[recipe.task_id],
+            observation_height=256,
+            observation_width=256,
+            episode_length=4000,
+        )
+        envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
+        suite = next(iter(envs.values()))
+        vec = next(iter(suite.values()))
+        libero_env = unwrap_libero_env(vec)
+        libero_env.init_state_id = int(plan.init_state_id)
+        vec.reset(seed=plan.episode_seed)
+        rs_env = get_robosuite_env(vec, 0)
+        layout = sample_object_layout(
+            rs_env,
+            recipe,
+            object_name,
+            np.random.default_rng(plan.layout_seed),
+        )
+        vec.close()
+        if layout is None:
+            return None
+        return layout_to_serializable(layout)
+    except Exception:
+        return None
 
 
 def default_adapter_factories() -> dict[DatagenController, AdapterFactory]:

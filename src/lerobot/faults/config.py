@@ -108,6 +108,8 @@ class FaultInjectionConfig:
     # Both None → delay-based trigger; both set → ignore post_grasp_delay_steps.
     drop_xy_band_min: float | None = None
     drop_xy_band_max: float | None = None
+    # Optional exact basket XY distance (meters) for target-crossing drop triggers.
+    drop_xy_target_m: float | None = None
     # midair_drop: recovery planner output FPS.
     recovery_fps: int = 10
     # midair_drop: explicit basket / place target (x, y, z). None = auto from sim.
