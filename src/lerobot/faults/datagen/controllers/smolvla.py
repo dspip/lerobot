@@ -117,7 +117,6 @@ class SmolVLADatagenAdapter:
             "episode_seed": manifest.episode_seed,
             "drop_seed": manifest.drop_seed,
             "variant_seed": manifest.controller_seed,
-            "seed": manifest.episode_seed,
             "task": recipe.task,
             "task_id": recipe.task_id,
             "control_hz": recipe.control_hz,

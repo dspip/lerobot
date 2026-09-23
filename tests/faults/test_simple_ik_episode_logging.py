@@ -173,6 +173,7 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
             gripper_settle_steps=0,
             episode_session=session,
             recording_stride=RECORDING_STRIDE,
+            task="unit-test-task",
         )
 
         scheduled.assert_called_once()

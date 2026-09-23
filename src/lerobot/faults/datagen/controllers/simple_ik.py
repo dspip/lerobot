@@ -118,10 +118,12 @@ def run_simple_ik_episode_loop(
     gripper_settle_steps: int = 0,
     episode_session: Any | None = None,
     recording_stride: int = 1,
-    task: str = "pick up the alphabet soup and place it in the basket",
+    task: str | None = None,
     eligible_phases: tuple[str, ...] | None = None,
 ) -> SimpleIKEpisodeFacts:
     """Drive one SimpleIK episode with path-based drop timing and optional recording."""
+    if episode_session is not None and task is None:
+        task = read_libero_task_description(env)
     keepout = keepout_m(
         recipe_drop.min_drop_distance_from_basket_m,
         recipe_drop.hard_keepout_floor_m,
@@ -274,6 +276,8 @@ def run_simple_ik_episode_loop(
             executed = env.last_executed_action
             if executed is None:
                 executed = action
+            if task is None:
+                raise RuntimeError("recording requires a LIBERO task description")
             log_post_step_to_session(
                 episode_session,
                 env=env,
