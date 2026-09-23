@@ -1,0 +1,15 @@
+{
+  "name": "can_simpleik_datagen",
+  "task": "libero_object",
+  "task_id": 0,
+  "object_name": "alphabet_soup_1",
+  "control_hz": 20,
+  "post_drop": {
+    "dwell_steps": 80,
+    "mode_weights": {
+      "continue_then_ik": 1.0,
+      "reset_then_ik": 0.0,
+      "immediate_ik": 0.0
+    }
+  }
+}

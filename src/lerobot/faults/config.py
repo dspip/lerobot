@@ -38,6 +38,8 @@ _WINDOW_PHYSICAL_TYPES = frozenset({"object_slip", "eef_bump", "midair_drop"})
 _SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
 _RECOVERY_TYPES = frozenset({"midair_drop"})
 
+POST_DROP_MODES = ("immediate_ik", "continue_then_ik", "reset_then_ik")
+
 
 @dataclass
 class FaultInjectionConfig:
@@ -133,6 +135,10 @@ class FaultInjectionConfig:
     require_grasp: bool = True
     # object_slip: require object world-z at/above this height (meters). <= 0 disables.
     min_object_z: float = 0.12
+    # midair_drop: env control steps to pass VLA after drop before starting IK (0 = immediate).
+    post_drop_dwell_steps: int = 0
+    # midair_drop: continue VLA, reset-then-VLA, or immediate IK when dwell is 0.
+    post_drop_mode: str = "immediate_ik"
 
     def __post_init__(self) -> None:
         if isinstance(self.log_path, str):
@@ -277,6 +283,20 @@ class FaultInjectionConfig:
                 if self.arm_posture_noise_deg < 0:
                     raise ValueError(
                         f"arm_posture_noise_deg must be >= 0 (got {self.arm_posture_noise_deg})."
+                    )
+                if self.post_drop_dwell_steps < 0:
+                    raise ValueError(
+                        f"post_drop_dwell_steps must be >= 0 (got {self.post_drop_dwell_steps})."
+                    )
+                if self.post_drop_mode not in POST_DROP_MODES:
+                    raise ValueError(
+                        f"post_drop_mode must be one of {POST_DROP_MODES} "
+                        f"(got {self.post_drop_mode!r})."
+                    )
+                if self.post_drop_mode == "reset_then_ik" and self.post_drop_dwell_steps == 0:
+                    raise ValueError(
+                        "reset_then_ik requires post_drop_dwell_steps >= 1 "
+                        f"(got {self.post_drop_dwell_steps})."
                     )
         if self.env_ids is not None:
             if len(self.env_ids) == 0:

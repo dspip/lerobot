@@ -27,9 +27,15 @@ def loss_mask_for_step(step: int, t_fault: int, *, drop_duration: int = 1) -> fl
     return 1.0
 
 
-def loss_mask_from_fault(*, triggered: bool, drop_injection_step: bool, recovery_active: bool) -> float:
+def loss_mask_from_fault(
+    *,
+    triggered: bool,
+    drop_injection_step: bool,
+    recovery_active: bool,
+    post_drop_dwell_step: bool = False,
+) -> float:
     """Derive ``loss_mask`` from midair_drop fault state when available."""
     del triggered, recovery_active
-    if drop_injection_step:
+    if drop_injection_step or post_drop_dwell_step:
         return 0.0
     return 1.0

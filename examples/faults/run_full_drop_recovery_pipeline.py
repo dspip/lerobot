@@ -282,6 +282,8 @@ def run_pipeline(
     min_drop_distance_from_basket_m: float | None = None,
     drop_xy_band_min: float | None = None,
     drop_xy_band_max: float | None = None,
+    post_drop_dwell_steps: int | None = None,
+    post_drop_mode: str = "continue_then_ik",
     defer_dataset_commit: bool = False,
     soup_xy_offset: tuple[float, float] | None = None,
 ) -> dict:
@@ -410,6 +412,8 @@ def run_pipeline(
             min_drop_distance_from_basket_m=min_drop_distance_from_basket_m,
             drop_xy_band_min=drop_xy_band_min,
             drop_xy_band_max=drop_xy_band_max,
+            post_drop_dwell_steps=post_drop_dwell_steps,
+            post_drop_mode=post_drop_mode,
         )
         if fault_overrides:
             fault_kwargs.update(fault_overrides)
@@ -619,6 +623,17 @@ def run_pipeline(
 
         pose_before = get_object_pose(rs, "alphabet_soup_1")["pos"].astype(float).copy()
         observation, reward, terminated, truncated, info = env.step(action_numpy)
+
+        if (
+            is_drop_episode
+            and hasattr(env, "consume_policy_reset")
+            and env.consume_policy_reset(0)
+        ):
+            policy.reset()
+            print(
+                "[pipeline] policy.reset() once after drop (reset_then_ik)",
+                flush=True,
+            )
 
         # Post-step regrasp check (catches lift on the same step the planner finishes).
         if is_drop_episode and triggered_at is not None and step > triggered_at and st.recovery_active:
@@ -1048,6 +1063,8 @@ def run_pipeline(
             "speed_multiplier_min": float(fault_cfg.speed_multiplier_min),
             "speed_multiplier_max": float(fault_cfg.speed_multiplier_max),
             "arm_posture_noise_deg": float(fault_cfg.arm_posture_noise_deg),
+            "post_drop_dwell_steps": int(getattr(fault_cfg, "post_drop_dwell_steps", 0)),
+            "post_drop_mode": str(getattr(fault_cfg, "post_drop_mode", "immediate_ik")),
         },
         "first_grasp_step": first_grasp_step,
         "triggered_at": triggered_at,

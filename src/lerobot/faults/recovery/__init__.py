@@ -30,12 +30,16 @@ from lerobot.faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
 from lerobot.faults.recovery.recording_recipe import (
+    DEFAULT_POST_DROP_DWELL_STEPS,
+    load_datagen_recipe,
+    sample_post_drop_mode,
     sample_post_grasp_delay_steps,
     training_midair_drop_kwargs,
 )
 
 __all__ = [
     "DEFAULT_LIBERO_CONTROL_FREQ",
+    "DEFAULT_POST_DROP_DWELL_STEPS",
     "FaultRecoveryDatasetLogger",
     "MidAirDropFault",
     "SMOLVLA_LIBERO_TARGET_FPS",
@@ -47,8 +51,10 @@ __all__ = [
     "install_libero_control_freq_hook",
     "loss_mask_for_step",
     "loss_mask_from_fault",
+    "load_datagen_recipe",
     "recording_stride",
     "resolve_target_fps",
+    "sample_post_drop_mode",
     "sample_post_grasp_delay_steps",
     "training_midair_drop_kwargs",
 ]
