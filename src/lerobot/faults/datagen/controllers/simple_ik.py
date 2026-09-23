@@ -24,24 +24,16 @@ from typing import Any, Callable
 import numpy as np
 
 from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
-from lerobot.faults.datagen.drop_trigger import PathDropEvaluator
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.events import DatagenEventLog
-from lerobot.faults.datagen.paired_context import PairedEpisodePlan
-from lerobot.faults.datagen.path_drop import EligiblePath, eligible_path, sample_path_drop
+from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
+from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger, eligible_path, sample_path_drop
 from lerobot.faults.datagen.recipe import (
     DropDatagenRecipe,
     DropRecipe,
-    PostDropMode,
     effective_post_drop_dwell_steps,
     legacy_drop_recipe,
 )
-from lerobot.faults.datagen.scene import (
-    apply_object_layout,
-    apply_serializable_layout,
-    layout_to_serializable,
-    sample_object_layout,
-)
+from lerobot.faults.datagen.scene import apply_serializable_layout
 from lerobot.faults.datagen.runtime import stabilize_carry_action
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
@@ -133,7 +125,7 @@ def run_simple_ik_episode_loop(
     )
     path: EligiblePath | None = None
     decision: DropDecision | None = None
-    trigger_evaluator: PathDropEvaluator | None = None
+    path_trigger: PathTrigger | None = None
     dropped = False
     trigger_pose: list[float] | None = None
     settle_left = POST_RECOVERY_SETTLE_STEPS
@@ -147,13 +139,12 @@ def run_simple_ik_episode_loop(
         if state.recovery_active:
             action = np.zeros((1, 7), dtype=np.float32)
         elif dropped and not state.recovery_active:
-            if is_object_grasped(rs_env, object_name) or is_object_in_basket(
-                rs_env, object_name, basket_name=basket_name, z_max=0.14
-            ):
+            skipped, skip_reason = fault.post_drop_recovery_skipped(0)
+            if skipped:
                 return SimpleIKEpisodeFacts(
                     False,
-                    "regrasp_or_in_basket_before_recovery",
-                    _drop_trigger_payload(decision, trigger_evaluator),
+                    skip_reason or "recovery_skipped",
+                    _drop_trigger_payload(decision, path_trigger),
                     trigger_pose,
                     int(state.dwell_steps_completed),
                 )
@@ -164,7 +155,7 @@ def run_simple_ik_episode_loop(
                 return SimpleIKEpisodeFacts(
                     False,
                     "nominal_completed_after_drop",
-                    _drop_trigger_payload(decision, trigger_evaluator),
+                    _drop_trigger_payload(decision, path_trigger),
                     trigger_pose,
                     int(state.dwell_steps_completed),
                 )
@@ -183,20 +174,22 @@ def run_simple_ik_episode_loop(
                 )
                 if paired_plan is not None and paired_plan.drop_decision.drop:
                     decision = paired_plan.drop_decision
-                    if paired_plan.path_trigger is not None:
-                        trigger_evaluator = PathDropEvaluator(paired_plan.path_trigger)
+                    path_trigger = resolve_path_drop_trigger(
+                        paired_plan,
+                        planner.carry_path,
+                        basket_xy=basket[:2],
+                        keepout_m=keepout,
+                    )
                 else:
-                    decision, sampled_trigger = sample_path_drop(q, path, drop_rng)
-                    if sampled_trigger is not None:
-                        trigger_evaluator = PathDropEvaluator(sampled_trigger)
+                    decision, path_trigger = sample_path_drop(q, path, drop_rng)
 
             held_midair = bool(is_object_held_midair(rs_env, object_name))
             fire = (
-                trigger_evaluator is not None
+                path_trigger is not None
                 and not dropped
                 and decision is not None
                 and decision.drop
-                and trigger_evaluator.should_fire(
+                and path_trigger.fires(
                     phase=phase,
                     object_xyz=obj,
                     carry_path=planner.carry_path,
@@ -205,7 +198,7 @@ def run_simple_ik_episode_loop(
             )
             if fire and distance < keepout:
                 decision = DropDecision(False, None, "runtime_keepout")
-                trigger_evaluator = None
+                path_trigger = None
                 fire = False
 
             if fire:
@@ -216,7 +209,7 @@ def run_simple_ik_episode_loop(
                     return SimpleIKEpisodeFacts(
                         False,
                         "nominal_missing_at_drop",
-                        _drop_trigger_payload(decision, trigger_evaluator),
+                        _drop_trigger_payload(decision, path_trigger),
                         trigger_pose,
                         0,
                     )
@@ -235,14 +228,14 @@ def run_simple_ik_episode_loop(
                         return SimpleIKEpisodeFacts(
                             False,
                             "nominal_completed_after_drop",
-                            _drop_trigger_payload(decision, trigger_evaluator),
+                            _drop_trigger_payload(decision, path_trigger),
                             trigger_pose,
                             int(state.dwell_steps_completed),
                         )
                     return SimpleIKEpisodeFacts(
                         False,
                         "nominal_completed_without_drop",
-                        _drop_trigger_payload(decision, trigger_evaluator),
+                        _drop_trigger_payload(decision, path_trigger),
                         trigger_pose,
                         0,
                     )
@@ -255,7 +248,7 @@ def run_simple_ik_episode_loop(
                 phase=planner.phase_name,
                 path=path,
                 decision=decision,
-                trigger_evaluator=trigger_evaluator,
+                path_trigger=path_trigger,
                 rs_env=rs_env,
             )
 
@@ -272,7 +265,7 @@ def run_simple_ik_episode_loop(
                 return SimpleIKEpisodeFacts(
                     bool(in_basket),
                     "recovery_completed_in_basket" if in_basket else "recovery_finished_outside_basket",
-                    _drop_trigger_payload(decision, trigger_evaluator),
+                    _drop_trigger_payload(decision, path_trigger),
                     trigger_pose,
                     dwell_before_recovery,
                 )
@@ -280,7 +273,7 @@ def run_simple_ik_episode_loop(
     return SimpleIKEpisodeFacts(
         False,
         "max_steps_exceeded",
-        _drop_trigger_payload(decision, trigger_evaluator),
+        _drop_trigger_payload(decision, path_trigger),
         trigger_pose,
         dwell_before_recovery,
     )
@@ -288,11 +281,10 @@ def run_simple_ik_episode_loop(
 
 def _drop_trigger_payload(
     decision: DropDecision | None,
-    evaluator: PathDropEvaluator | None,
+    trigger: PathTrigger | None,
 ) -> dict[str, Any] | None:
-    if decision is None or evaluator is None:
+    if decision is None or trigger is None:
         return None
-    trigger = evaluator.trigger
     return {
         "kind": "simple_ik_path",
         "drop": decision.drop,
@@ -318,7 +310,6 @@ class SimpleIKDatagenAdapter:
         plan = request.paired_plan
         drop_recipe = legacy_drop_recipe(recipe)
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
-        event_log = DatagenEventLog(request.output_dir / "events.jsonl", stdout=False)
 
         env_cfg = LiberoEnv(
             task=recipe.task,
@@ -354,65 +345,54 @@ class SimpleIKDatagenAdapter:
             log_path=request.output_dir / "fault_events.jsonl",
         )
         env = DropRecoveryEnvWrapper(vec, config)
-        libero_env = unwrap_libero_env(vec)
-        libero_env.init_state_id = int(plan.init_state_id)
-        env.reset(seed=plan.episode_seed)
-        rs_env = get_robosuite_env(env, 0)
-        drop_rng = np.random.default_rng(plan.drop_seed)
-        if request.shared_layout is not None:
+        try:
+            libero_env = unwrap_libero_env(vec)
+            libero_env.init_state_id = int(plan.init_state_id)
+            env.reset(seed=plan.episode_seed)
+            rs_env = get_robosuite_env(env, 0)
             apply_serializable_layout(rs_env, request.shared_layout)
-            layout = None
-        else:
-            layout_rng = np.random.default_rng(plan.layout_seed)
-            layout = sample_object_layout(rs_env, recipe, request.object_name, layout_rng)
-            if layout is None:
-                return EpisodeResult.from_run(
-                    request, success=False, outcome="layout_failed", error="no legal layout"
-                )
-            apply_object_layout(rs_env, layout)
-        fault = env.fault
-        fault.set_recovery_motion_profile(
-            0,
-            speed_multiplier=plan.motion_profile.speed_multiplier,
-            pickup_offset_xy_m=plan.motion_profile.recovery.pickup_offset_xy_m,
-            transport_offset_m=plan.motion_profile.recovery.transport_offset_m,
-            posture_bias_rad=plan.motion_profile.recovery.posture_bias_rad,
-        )
-        planner = _new_planner(
-            rs_env,
-            recipe,
-            drop_recipe,
-            plan.drop_seed,
-            plan.motion_profile,
-            request.object_name,
-        )
-        facts = run_simple_ik_episode_loop(
-            env,
-            rs_env,
-            fault=fault,
-            planner=planner,
-            recipe_drop=drop_recipe,
-            object_name=request.object_name,
-            basket_name=recipe.basket_name,
-            q=recipe.q,
-            drop_rng=drop_rng,
-            paired_plan=plan,
-            gripper_settle_steps=config.gripper_settle_steps,
-        )
-        event_log.close()
-        env.close()
-        return EpisodeResult.from_run(
-            request,
-            success=facts.success,
-            outcome=facts.outcome,
-            drop_trigger=facts.drop_trigger,
-            trigger_pose=facts.trigger_pose,
-            actual_dwell_steps=facts.actual_dwell_steps,
-            layout=request.shared_layout
-            if request.shared_layout is not None
-            else (layout_to_serializable(layout) if layout is not None else None),
-            motion_profile=asdict(plan.motion_profile),
-        )
+            drop_rng = np.random.default_rng(plan.drop_seed)
+            fault = env.fault
+            fault.set_recovery_motion_profile(
+                0,
+                speed_multiplier=plan.motion_profile.speed_multiplier,
+                pickup_offset_xy_m=plan.motion_profile.recovery.pickup_offset_xy_m,
+                transport_offset_m=plan.motion_profile.recovery.transport_offset_m,
+                posture_bias_rad=plan.motion_profile.recovery.posture_bias_rad,
+            )
+            planner = _new_planner(
+                rs_env,
+                recipe,
+                drop_recipe,
+                plan.drop_seed,
+                plan.motion_profile,
+                request.object_name,
+            )
+            facts = run_simple_ik_episode_loop(
+                env,
+                rs_env,
+                fault=fault,
+                planner=planner,
+                recipe_drop=drop_recipe,
+                object_name=request.object_name,
+                basket_name=recipe.basket_name,
+                q=recipe.q,
+                drop_rng=drop_rng,
+                paired_plan=plan,
+                gripper_settle_steps=config.gripper_settle_steps,
+            )
+            return EpisodeResult.from_run(
+                request,
+                success=facts.success,
+                outcome=facts.outcome,
+                drop_trigger=facts.drop_trigger,
+                trigger_pose=facts.trigger_pose,
+                actual_dwell_steps=facts.actual_dwell_steps,
+                layout=request.shared_layout,
+                motion_profile=asdict(plan.motion_profile),
+            )
+        finally:
+            env.close()
 
 
 def build_simple_ik_planner(

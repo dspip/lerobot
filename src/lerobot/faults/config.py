@@ -263,6 +263,18 @@ class FaultInjectionConfig:
                         raise ValueError(
                             f"drop_xy_band_max must be >= drop_xy_band_min (got {hi} < {lo})."
                         )
+                target_m = self.drop_xy_target_m
+                if target_m is not None:
+                    if band_lo is None or band_hi is None:
+                        raise ValueError(
+                            "drop_xy_target_m requires drop_xy_band_min and drop_xy_band_max."
+                        )
+                    t = float(target_m)
+                    if t < float(band_lo) or t > float(band_hi):
+                        raise ValueError(
+                            f"drop_xy_target_m must lie within the band "
+                            f"[{band_lo}, {band_hi}] (got {t})."
+                        )
                 if self.recovery_fps < 1:
                     raise ValueError(f"recovery_fps must be >= 1 (got {self.recovery_fps}).")
                 if not self.object_name:

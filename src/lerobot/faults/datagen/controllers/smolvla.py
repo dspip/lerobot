@@ -24,8 +24,6 @@ from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, effective_post_drop_dwell_steps
 from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 
-SMOLVLA_DEFAULT_MIN_DROP_DISTANCE_M = 0.30
-
 PipelineRunner = Callable[..., dict[str, Any]]
 
 
@@ -35,11 +33,9 @@ class SmolVLADatagenAdapter:
         recipe: DropDatagenRecipe,
         *,
         pipeline_runner: PipelineRunner | None = None,
-        min_drop_distance_from_basket_m: float = SMOLVLA_DEFAULT_MIN_DROP_DISTANCE_M,
     ) -> None:
         self._recipe = recipe
         self._pipeline_runner = pipeline_runner or run_pipeline
-        self._min_drop_distance_m = float(min_drop_distance_from_basket_m)
 
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
         recipe = request.recipe
@@ -56,17 +52,15 @@ class SmolVLADatagenAdapter:
             post_grasp_delay_steps=recipe.smolvla.post_grasp_delay_steps,
             post_drop_dwell_steps=dwell_steps,
             post_drop_mode=manifest.post_drop_mode.value,
-            min_drop_distance_from_basket_m=self._min_drop_distance_m,
+            min_drop_distance_from_basket_m=recipe.smolvla.min_drop_distance_from_basket_m,
             drop_xy_band_min=drop_fields["drop_xy_band_min"],
             drop_xy_band_max=drop_fields["drop_xy_band_max"],
             drop_xy_target_m=drop_fields["drop_xy_target_m"],
             object_name=request.object_name,
             init_state_id=plan.init_state_id,
             shared_layout=request.shared_layout,
-            layout_seed=plan.layout_seed if request.shared_layout is None else None,
-            placement_config=recipe if request.shared_layout is None else None,
             wipe_output_dir=True,
-            raise_on_failure=True,
+            raise_on_failure=False,
             copy_demo_gif=False,
             fault_overrides={
                 "object_name": request.object_name,

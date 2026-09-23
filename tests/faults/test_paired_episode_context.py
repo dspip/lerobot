@@ -16,8 +16,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lerobot.faults.datagen.paired_context import build_paired_episode_plan
-from lerobot.faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
+import numpy as np
+
+from lerobot.faults.datagen.paired_context import build_paired_episode_plan, resolve_path_drop_trigger
+from lerobot.faults.datagen.drop_timing import keepout_m
+from lerobot.faults.datagen.path_drop import eligible_path
+from lerobot.faults.datagen.recipe import legacy_drop_recipe, load_drop_datagen_recipe, paired_episode_seed_manifests
+from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
@@ -27,13 +32,15 @@ def test_paired_plan_identical_for_all_variants_same_logical_episode() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     plans = [
-        build_paired_episode_plan(recipe, manifest=m, object_name="alphabet_soup_1")
+        build_paired_episode_plan(
+            recipe, manifest=m, object_name="alphabet_soup_1", num_init_states=50
+        )
         for m in manifests
     ]
     keys = (
         "init_state_id",
         "motion_profile",
-        "path_trigger",
+        "drop_u",
         "smolvla_target",
         "drop_decision",
     )
@@ -50,8 +57,51 @@ def test_controller_seed_does_not_change_pre_drop_plan() -> None:
     simple = next(m for m in manifests if m.controller.value == "simple_ik")
     smol = next(m for m in manifests if m.controller.value == "smolvla")
     assert simple.controller_seed != smol.controller_seed
-    plan_a = build_paired_episode_plan(recipe, manifest=simple, object_name="alphabet_soup_1")
-    plan_b = build_paired_episode_plan(recipe, manifest=smol, object_name="alphabet_soup_1")
-    assert plan_a.path_trigger == plan_b.path_trigger
+    plan_a = build_paired_episode_plan(
+        recipe, manifest=simple, object_name="alphabet_soup_1", num_init_states=50
+    )
+    plan_b = build_paired_episode_plan(
+        recipe, manifest=smol, object_name="alphabet_soup_1", num_init_states=50
+    )
+    assert plan_a.drop_u == plan_b.drop_u
     assert plan_a.smolvla_target == plan_b.smolvla_target
     assert plan_a.motion_profile == plan_b.motion_profile
+
+
+def test_drop_u_maps_to_real_planner_path_with_keepout() -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    assert plan.drop_u is not None
+    carry = CarryPath(
+        segments=(
+            PathSegment("lift", (0.55, 0.05, 0.20), (0.10, 0.05, 0.25)),
+            PathSegment("to_basket_hover", (0.10, 0.05, 0.25), (0.02, 0.02, 0.22)),
+        ),
+        requested_transport_offset_m=0.06,
+        resolved_transport_offset_m=0.06,
+        fallback=False,
+    )
+    basket_xy = np.array([0.0, 0.0])
+    drop_recipe = legacy_drop_recipe(recipe)
+    keepout = keepout_m(
+        drop_recipe.min_drop_distance_from_basket_m,
+        drop_recipe.hard_keepout_floor_m,
+    )
+    trigger = resolve_path_drop_trigger(
+        plan,
+        carry,
+        basket_xy=basket_xy,
+        keepout_m=keepout,
+    )
+    assert trigger is not None
+    path = eligible_path(carry, basket_xy=basket_xy, keepout_m=keepout)
+    assert path.total > 0.0
+    segment = carry.segments[trigger.segment_order]
+    start = np.asarray(segment.start_xyz, dtype=np.float64)
+    end = np.asarray(segment.end_xyz, dtype=np.float64)
+    point = start + trigger.target_t * (end - start)
+    dist_xy = float(np.linalg.norm(point[:2] - basket_xy))
+    assert dist_xy >= keepout - 1e-6

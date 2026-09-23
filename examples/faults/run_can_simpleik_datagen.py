@@ -151,11 +151,7 @@ def _run_episode(
             recipe.object_name,
             basket_name=recipe.basket_name,
         )
-        trigger = (
-            ctx["trigger_evaluator"].trigger
-            if ctx.get("trigger_evaluator") is not None
-            else None
-        )
+        trigger = ctx.get("path_trigger")
         viewer.show(
             frame,
             _hud(

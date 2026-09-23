@@ -99,6 +99,10 @@ class _EnvDropState:
     dwell_steps_completed: int = 0
     policy_reset_requested: bool = False
     suppress_grasp_skip: bool = False
+    externally_scheduled_drop: bool = False
+    pending_first_recovery_action: np.ndarray | None = None
+    recovery_skipped: bool = False
+    recovery_skip_reason: str | None = None
     # Set by trigger_manual_drop; hold policy actions until request_recovery.
     awaiting_manual_recovery: bool = False
 
@@ -239,12 +243,21 @@ class MidAirDropFault:
                 continue
 
             if state.recovery_active:
-                executed[env_idx] = self._next_recovery_action(env_idx, env=env)
+                if state.pending_first_recovery_action is not None:
+                    executed[env_idx] = state.pending_first_recovery_action
+                    state.pending_first_recovery_action = None
+                else:
+                    executed[env_idx] = self._next_recovery_action(env_idx, env=env)
                 state.episode_step += 1
                 continue
 
             if state.triggered and not state.recovery_active:
                 if state.awaiting_manual_recovery:
+                    executed[env_idx] = actions[env_idx]
+                    state.episode_step += 1
+                    continue
+                if state.externally_scheduled_drop:
+                    state.externally_scheduled_drop = False
                     executed[env_idx] = actions[env_idx]
                     state.episode_step += 1
                     continue
@@ -259,6 +272,11 @@ class MidAirDropFault:
                     state.suppress_grasp_skip = False
                 dwell_target = int(self.config.post_drop_dwell_steps)
                 if in_basket or (grasped and not state.suppress_grasp_skip):
+                    if not state.recovery_active:
+                        state.recovery_skipped = True
+                        state.recovery_skip_reason = (
+                            "object_in_basket" if in_basket else "regrasp_during_dwell"
+                        )
                     executed[env_idx] = actions[env_idx]
                 elif state.dwell_steps_completed >= dwell_target:
                     if (grasped and not state.suppress_grasp_skip) or in_basket:
@@ -404,7 +422,15 @@ class MidAirDropFault:
             return np.asarray(proposed_action, dtype=np.float32)
         state.drop_trigger_reason = str(reason)
         state.will_activate = True
-        return self._trigger_drop(env, env_idx, state, proposed_action=np.asarray(proposed_action))
+        executed = self._trigger_drop(
+            env, env_idx, state, proposed_action=np.asarray(proposed_action)
+        )
+        dwell_steps = int(self.config.post_drop_dwell_steps)
+        if dwell_steps > 0:
+            state.externally_scheduled_drop = True
+        elif state.recovery_active:
+            state.pending_first_recovery_action = np.asarray(executed, dtype=np.float32).copy()
+        return executed
 
     def _trigger_drop(
         self,
@@ -853,6 +879,13 @@ class MidAirDropFault:
         if action is None:
             action = np.zeros(7, dtype=np.float32)
         return action
+
+    def post_drop_recovery_skipped(self, env_idx: int = 0) -> tuple[bool, str | None]:
+        """Return whether dwell ended with IK suppressed (regrasp / in-basket)."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        return state.recovery_skipped, state.recovery_skip_reason
 
     def consume_policy_reset(self, env_idx: int = 0) -> bool:
         """Return True once when the recorder should call ``policy.reset()``."""

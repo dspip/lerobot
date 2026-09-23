@@ -23,12 +23,21 @@ import numpy as np
 from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.drop_trigger import BandDistanceTarget, sample_smolvla_band_target
 from lerobot.faults.datagen.motion_profile import EpisodeMotionProfile, sample_episode_motion_profile
-from lerobot.faults.datagen.path_drop import PathTrigger, eligible_path, sample_path_drop
+from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger, eligible_path, path_trigger_at_drop_u
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest, legacy_drop_recipe
 from lerobot.faults.datagen.drop_timing import keepout_m
-from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
+from lerobot.faults.recovery.trajectory import CarryPath
 
-__all__ = ["PairedEpisodePlan", "build_paired_episode_plan", "resolve_init_state_id"]
+__all__ = [
+    "PairedEpisodePlan",
+    "build_paired_episode_plan",
+    "resolve_init_state_id",
+    "resolve_path_drop_trigger",
+]
+
+_DROP_Q_STREAM = 0x4451
+_DROP_U_STREAM = 0x4452
+_SMOLVLA_STREAM = 0x534D4F4C
 
 
 @dataclass(frozen=True)
@@ -40,7 +49,7 @@ class PairedEpisodePlan:
     object_name: str
     motion_profile: EpisodeMotionProfile
     drop_decision: DropDecision
-    path_trigger: PathTrigger | None
+    drop_u: float | None
     smolvla_target: BandDistanceTarget
 
 
@@ -50,23 +59,22 @@ def resolve_init_state_id(episode_seed: int, num_init_states: int) -> int:
     return int(episode_seed) % int(num_init_states)
 
 
-def _reference_carry_path(recipe: DropDatagenRecipe) -> CarryPath:
-    """Minimal carry polyline for paired path-drop sampling (seed-only, no sim)."""
-    drop = legacy_drop_recipe(recipe)
-    keepout = keepout_m(
-        drop.min_drop_distance_from_basket_m,
-        drop.hard_keepout_floor_m,
-    )
-    _ = keepout
-    return CarryPath(
-        segments=(
-            PathSegment("lift", (0.5, 0.0, 0.03), (0.5, 0.0, 0.25)),
-            PathSegment("to_basket_hover", (0.5, 0.0, 0.25), (0.0, 0.0, 0.25)),
-        ),
-        requested_transport_offset_m=recipe.simple_ik.transport_via_offset_m,
-        resolved_transport_offset_m=recipe.simple_ik.transport_via_offset_m,
-        fallback=False,
-    )
+def _paired_drop_draws(
+    drop_seed: int,
+    q: float,
+    bands: tuple,
+) -> tuple[DropDecision, float | None, BandDistanceTarget]:
+    q_rng = np.random.default_rng(np.random.SeedSequence([int(drop_seed), _DROP_Q_STREAM]))
+    u_rng = np.random.default_rng(np.random.SeedSequence([int(drop_seed), _DROP_U_STREAM]))
+    smol_rng = np.random.default_rng(np.random.SeedSequence([int(drop_seed), _SMOLVLA_STREAM]))
+    if float(q_rng.random()) >= float(q):
+        decision = DropDecision(drop=False, step=None, reason="skipped_q")
+        drop_u = None
+    else:
+        decision = DropDecision(drop=True, step=None, reason="injected")
+        drop_u = float(u_rng.uniform(0.0, 1.0))
+    smolvla_target = sample_smolvla_band_target(smol_rng, bands)
+    return decision, drop_u, smolvla_target
 
 
 def build_paired_episode_plan(
@@ -74,18 +82,14 @@ def build_paired_episode_plan(
     *,
     manifest: EpisodeSeedManifest,
     object_name: str,
-    num_init_states: int = 10,
+    num_init_states: int,
 ) -> PairedEpisodePlan:
-    drop_recipe = legacy_drop_recipe(recipe)
-    drop_rng = np.random.default_rng(manifest.drop_seed)
     motion_profile = sample_episode_motion_profile(recipe.simple_ik, manifest.drop_seed)
-    carry = _reference_carry_path(recipe)
-    path = eligible_path(carry, basket_xy=np.zeros(2), keepout_m=keepout_m(
-        drop_recipe.min_drop_distance_from_basket_m,
-        drop_recipe.hard_keepout_floor_m,
-    ))
-    decision, trigger = sample_path_drop(recipe.q, path, drop_rng)
-    smolvla_target = sample_smolvla_band_target(drop_rng, recipe.smolvla.drop_xy_bands)
+    decision, drop_u, smolvla_target = _paired_drop_draws(
+        manifest.drop_seed,
+        recipe.q,
+        recipe.smolvla.drop_xy_bands,
+    )
     return PairedEpisodePlan(
         episode_seed=manifest.episode_seed,
         layout_seed=manifest.layout_seed,
@@ -94,6 +98,22 @@ def build_paired_episode_plan(
         object_name=object_name,
         motion_profile=motion_profile,
         drop_decision=decision,
-        path_trigger=trigger,
+        drop_u=drop_u,
         smolvla_target=smolvla_target,
     )
+
+
+def resolve_path_drop_trigger(
+    plan: PairedEpisodePlan,
+    carry_path: CarryPath,
+    *,
+    basket_xy: np.ndarray,
+    keepout_m: float,
+) -> PathTrigger | None:
+    """Map paired ``drop_u`` onto the controller's real eligible carry path."""
+    if plan.drop_u is None:
+        return None
+    path = eligible_path(carry_path, basket_xy=basket_xy, keepout_m=float(keepout_m))
+    if path.total <= 0.0:
+        return None
+    return path_trigger_at_drop_u(plan.drop_u, path)

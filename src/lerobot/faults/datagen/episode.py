@@ -52,7 +52,7 @@ class EpisodeRequest:
     object_name: str
     output_dir: Path
     paired_plan: PairedEpisodePlan
-    shared_layout: dict[str, dict[str, list[float]]] | None = None
+    shared_layout: dict[str, dict[str, list[float]]]
     headless: bool = True
     device: str = "cuda"
 

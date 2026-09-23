@@ -140,6 +140,30 @@ def eligible_path(
     return EligiblePath(carry_path=carry_path, pieces=tuple(pieces))
 
 
+def path_trigger_at_drop_u(drop_u: float, path: EligiblePath) -> PathTrigger:
+    """Map a unit-interval draw onto uniform arc length over ``path``."""
+    u = float(drop_u)
+    if not 0.0 <= u <= 1.0:
+        raise ValueError(f"drop_u must be in [0, 1], got {u}")
+    if path.total <= 0.0:
+        raise ValueError("path.total must be positive")
+    target = u * path.total
+    travelled = 0.0
+    selected = path.pieces[-1]
+    for piece in path.pieces:
+        if target <= travelled + piece.length_m:
+            selected = piece
+            break
+        travelled += piece.length_m
+    fraction = (target - travelled) / selected.length_m
+    target_t = selected.t0 + fraction * (selected.t1 - selected.t0)
+    return PathTrigger(
+        segment_name=selected.segment_name,
+        segment_order=selected.segment_order,
+        target_t=float(np.clip(target_t, selected.t0, selected.t1)),
+    )
+
+
 def sample_path_drop(
     q: float,
     path: EligiblePath,
@@ -154,21 +178,8 @@ def sample_path_drop(
     if float(rng.random()) >= q:
         return DropDecision(drop=False, step=None, reason="skipped_q"), None
 
-    target = float(rng.uniform(0.0, path.total))
-    travelled = 0.0
-    selected = path.pieces[-1]
-    for piece in path.pieces:
-        if target <= travelled + piece.length_m:
-            selected = piece
-            break
-        travelled += piece.length_m
-    fraction = (target - travelled) / selected.length_m
-    target_t = selected.t0 + fraction * (selected.t1 - selected.t0)
+    drop_u = float(rng.uniform(0.0, 1.0))
     return (
         DropDecision(drop=True, step=None, reason="injected"),
-        PathTrigger(
-            segment_name=selected.segment_name,
-            segment_order=selected.segment_order,
-            target_t=float(np.clip(target_t, selected.t0, selected.t1)),
-        ),
+        path_trigger_at_drop_u(drop_u, path),
     )

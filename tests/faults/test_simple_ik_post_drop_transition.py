@@ -21,18 +21,18 @@ import numpy as np
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
 from lerobot.faults.datagen.drop_timing import DropDecision
-from lerobot.faults.datagen.path_drop import PathTrigger
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
+from tests.faults.test_midair_drop_fault import _action, _setup_drop_mocks
 
 
-def _fault_continue() -> MidAirDropFault:
+def _fault_continue(dwell: int = 2) -> MidAirDropFault:
     return MidAirDropFault(
         FaultInjectionConfig(
             enabled=True,
             type="midair_drop",
             probability=0.0,
-            post_drop_dwell_steps=2,
+            post_drop_dwell_steps=dwell,
             post_drop_mode="continue_then_ik",
             object_name="alphabet_soup_1",
         ),
@@ -47,8 +47,12 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
     fault.trigger_scheduled_drop = scheduled
     env = MagicMock()
     rs_env = MagicMock()
-    paired_plan = MagicMock()
-    paired_plan.drop_decision = DropDecision(True, None, "injected")
+    from types import SimpleNamespace
+
+    paired_plan = SimpleNamespace(
+        drop_decision=DropDecision(True, None, "injected"),
+        drop_u=0.05,
+    )
     carry_path = CarryPath(
         segments=(
             PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
@@ -57,7 +61,6 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
         resolved_transport_offset_m=0.0,
         fallback=False,
     )
-    paired_plan.path_trigger = PathTrigger(segment_name="lift", segment_order=0, target_t=0.3)
 
     with patch(
         "lerobot.faults.recovery.midair_drop.get_robosuite_env",
@@ -76,7 +79,7 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
         return_value={"object_pose_after": {"pos": [0, 0, 0]}},
     ), patch(
         "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([0.4, 0.0, 0.2])},
+        return_value={"pos": np.array([0.55, 0.0, 0.2])},
     ), patch(
         "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
         return_value=np.array([0.0, 0.0, 0.0]),
@@ -85,7 +88,7 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
         return_value=True,
     ), patch(
         "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
-        return_value=True,
+        return_value=False,
     ), patch(
         "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
         return_value=False,
@@ -113,3 +116,82 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
 
     scheduled.assert_called_once()
     assert not fault._states[0].recovery_active
+
+
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_continue_dwell_timeline_matches_automatic_drop(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+) -> None:
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    fault = _fault_continue(dwell=2)
+    env = MagicMock()
+    proposed = _action(1, 7, 11.0)
+    out_drop = fault.trigger_scheduled_drop(env, 0, proposed[0], reason="path_uniform")
+    assert fault._states[0].triggered
+    assert not fault._states[0].recovery_active
+    np.testing.assert_allclose(out_drop, proposed[0])
+    mock_dest.assert_not_called()
+
+    fault.on_step(env, _action(1, 7, 12.0))
+
+    for fill in (22.0, 33.0):
+        out = fault.on_step(env, _action(1, 7, fill))
+        assert not fault._states[0].recovery_active
+        np.testing.assert_array_equal(out, _action(1, 7, fill))
+        assert fault._states[0].dwell_steps_completed <= 2
+    mock_dest.assert_not_called()
+
+    out_rec = fault.on_step(env, _action(1, 7, 99.0))
+    assert fault._states[0].recovery_active
+    mock_dest.assert_called_once()
+    assert not np.allclose(out_rec, _action(1, 7, 99.0))
+
+
+@patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
+@patch("lerobot.faults.recovery.midair_drop.get_place_destination")
+@patch("lerobot.faults.recovery.midair_drop.midair_drop")
+@patch("lerobot.faults.recovery.midair_drop.get_object_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_eef_pose")
+@patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
+@patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
+@patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
+def test_continue_first_post_drop_grasp_clears_suppress_then_skip(
+    mock_grasped,
+    mock_get_rs,
+    mock_arm_q,
+    mock_eef,
+    mock_obj_pose,
+    mock_drop,
+    mock_dest,
+    mock_in_basket,
+) -> None:
+    _setup_drop_mocks(
+        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+    )
+    mock_grasped.side_effect = [False, True, True]
+
+    fault = _fault_continue(dwell=2)
+    env = MagicMock()
+    fault.trigger_scheduled_drop(env, 0, _action(1, 7, 1.0)[0], reason="path_uniform")
+    fault.on_step(env, _action(1, 7, 2.0))
+    fault.on_step(env, _action(1, 7, 3.0))
+    fault.on_step(env, _action(1, 7, 4.0))
+    skipped, reason = fault.post_drop_recovery_skipped(0)
+    assert skipped
+    assert reason == "regrasp_during_dwell"
+    assert not fault._states[0].recovery_active
+    mock_dest.assert_not_called()

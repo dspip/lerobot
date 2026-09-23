@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drop trigger sampling and evaluation for unified datagen."""
+"""Drop trigger sampling for unified datagen."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
-from lerobot.faults.datagen.path_drop import PathTrigger
 from lerobot.faults.datagen.recipe import DropXYBand
 from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
 
 __all__ = [
     "BandDistanceTarget",
-    "PathDropEvaluator",
     "basket_distance_target_reached",
     "sample_smolvla_band_target",
     "smolvla_fault_drop_fields",
@@ -58,25 +55,3 @@ def smolvla_fault_drop_fields(target: BandDistanceTarget) -> dict[str, float]:
         "drop_xy_band_max": float(target.band.max_m),
         "drop_xy_target_m": float(target.target_m),
     }
-
-
-@dataclass(frozen=True)
-class PathDropEvaluator:
-    """Evaluate planned-path drop triggers for SimpleIK carry geometry."""
-
-    trigger: PathTrigger
-
-    def should_fire(
-        self,
-        *,
-        phase: str,
-        object_xyz: np.ndarray,
-        carry_path: Any,
-        held_midair: bool,
-    ) -> bool:
-        return self.trigger.fires(
-            phase=phase,
-            object_xyz=object_xyz,
-            carry_path=carry_path,
-            held_midair=held_midair,
-        )

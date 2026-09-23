@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.paired_context import build_paired_episode_plan
+from lerobot.faults.datagen.layout_provider import LayoutProviderContext
 from lerobot.faults.datagen.recipe import (
     DatagenController,
     PostDropMode,
@@ -34,6 +34,21 @@ from lerobot.faults.datagen.runner import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
+
+_FAKE_LAYOUT = {
+    "alphabet_soup_1": {
+        "pos": [0.1, 0.2, 0.03],
+        "quat_wxyz": [1.0, 0.0, 0.0, 0.0],
+    }
+}
+
+
+def _fake_layout_provider(_ctx: LayoutProviderContext) -> dict:
+    return _FAKE_LAYOUT
+
+
+def _fake_init_count(_recipe) -> int:
+    return 50
 
 
 def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
@@ -68,10 +83,12 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
         }
     )
     seen: list[tuple[DatagenController, PostDropMode]] = []
+    layouts: list[dict] = []
 
     class _FakeAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             seen.append((request.manifest.controller, request.manifest.post_drop_mode))
+            layouts.append(request.shared_layout)
             return EpisodeResult.from_run(request, success=True, outcome="ok")
 
     factories = {
@@ -82,10 +99,13 @@ def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) 
         recipe,
         logical_episode_indices=(0,),
         adapter_factories=factories,
+        layout_provider=_fake_layout_provider,
+        init_state_count_provider=_fake_init_count,
     )
     assert len(results) == 5
     assert all(r.success for r in results)
     assert len(seen) == 5
+    assert all(layout == _FAKE_LAYOUT for layout in layouts)
 
 
 def test_run_matrix_fails_fast_on_missing_adapter_factory() -> None:
@@ -95,6 +115,8 @@ def test_run_matrix_fails_fast_on_missing_adapter_factory() -> None:
             recipe,
             logical_episode_indices=(0,),
             adapter_factories={},
+            layout_provider=_fake_layout_provider,
+            init_state_count_provider=_fake_init_count,
         )
 
 
@@ -114,7 +136,32 @@ def test_run_matrix_wraps_adapter_exceptions_with_context(tmp_path: Path) -> Non
             recipe,
             logical_episode_indices=(0,),
             adapter_factories=factories,
+            layout_provider=_fake_layout_provider,
+            init_state_count_provider=_fake_init_count,
         )
+
+
+def test_run_matrix_raises_on_layout_provider_failure(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+
+    def _fail(_ctx: LayoutProviderContext) -> dict:
+        raise RuntimeError("layout broke")
+
+    with pytest.raises(DropDatagenRunnerError, match="shared layout failed"):
+        run_drop_datagen_matrix(
+            recipe,
+            logical_episode_indices=(0,),
+            adapter_factories={
+                DatagenController.SIMPLE_IK: lambda _r: _FakeAdapter(),
+            },
+            layout_provider=_fail,
+            init_state_count_provider=_fake_init_count,
+        )
+
+
+class _FakeAdapter:
+    def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+        return EpisodeResult.from_run(request, success=True, outcome="ok")
 
 
 def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
@@ -134,6 +181,8 @@ def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
         recipe,
         logical_episode_indices=(0,),
         adapter_factories=factories,
+        layout_provider=_fake_layout_provider,
+        init_state_count_provider=_fake_init_count,
     )
     assert len(captured) == 5
-    assert all(p.motion_profile == captured[0].motion_profile for p in captured)
+    assert all(p.drop_u == captured[0].drop_u for p in captured)

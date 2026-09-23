@@ -30,7 +30,9 @@ CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_data
 def test_smolvla_adapter_passes_sampled_target_to_pipeline(tmp_path: Path) -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
-    plan = build_paired_episode_plan(recipe, manifest=manifest, object_name="alphabet_soup_1")
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
     captured: dict = {}
 
     def _fake_pipeline(output_dir: Path, **kwargs):  # noqa: ANN003
@@ -38,16 +40,70 @@ def test_smolvla_adapter_passes_sampled_target_to_pipeline(tmp_path: Path) -> No
         return {"behavioral_success": True, "fault_config": {"post_drop_dwell_steps": 80}}
 
     adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_fake_pipeline)
+    layout = {"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}}
     request = EpisodeRequest(
         recipe=recipe,
         manifest=manifest,
         object_name="alphabet_soup_1",
         output_dir=tmp_path,
         paired_plan=plan,
+        shared_layout=layout,
         device="cpu",
     )
     result = adapter.run_episode(request)
     assert result.success is True
     assert captured["drop_xy_target_m"] == pytest.approx(plan.smolvla_target.target_m)
     assert captured["init_state_id"] == plan.init_state_id
-    assert captured["min_drop_distance_from_basket_m"] == 0.30
+    assert captured["min_drop_distance_from_basket_m"] == recipe.smolvla.min_drop_distance_from_basket_m
+    assert captured["shared_layout"] == layout
+
+
+def test_smolvla_adapter_maps_unsuccessful_summary_without_raising(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    def _fail_summary(output_dir: Path, **kwargs):  # noqa: ANN003
+        return {"behavioral_success": False, "success": False}
+
+    adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_fail_summary)
+    request = EpisodeRequest(
+        recipe=recipe,
+        manifest=manifest,
+        object_name="alphabet_soup_1",
+        output_dir=tmp_path,
+        paired_plan=plan,
+        shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        device="cpu",
+    )
+    result = adapter.run_episode(request)
+    assert result.success is False
+    assert result.outcome == "pipeline_failed"
+
+
+def test_smolvla_adapter_propagates_real_pipeline_exceptions(tmp_path: Path) -> None:
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    def _boom(_output_dir: Path, **_kwargs):  # noqa: ANN003
+        raise RuntimeError("pipeline exploded")
+
+    adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_boom)
+    request = EpisodeRequest(
+        recipe=recipe,
+        manifest=manifest,
+        object_name="alphabet_soup_1",
+        output_dir=tmp_path,
+        paired_plan=plan,
+        shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        device="cpu",
+    )
+    import pytest
+
+    with pytest.raises(RuntimeError, match="pipeline exploded"):
+        adapter.run_episode(request)

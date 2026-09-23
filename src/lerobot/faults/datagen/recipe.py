@@ -115,6 +115,7 @@ class DropXYBand:
 class SmolVLARecipe:
     policy_path: str
     post_grasp_delay_steps: int
+    min_drop_distance_from_basket_m: float
     drop_xy_bands: tuple[DropXYBand, ...]
 
 
@@ -669,9 +670,16 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         _required(smolvla_raw, "policy_path", section="smolvla"),
         field="smolvla.policy_path",
     )
+    smolvla_min_drop = _require_json_number(
+        _required(smolvla_raw, "min_drop_distance_from_basket_m", section="smolvla"),
+        field="smolvla.min_drop_distance_from_basket_m",
+    )
+    if smolvla_min_drop < 0:
+        raise RecipeError("smolvla.min_drop_distance_from_basket_m must be >= 0")
     smolvla = SmolVLARecipe(
         policy_path=policy_path,
         post_grasp_delay_steps=delay,
+        min_drop_distance_from_basket_m=float(smolvla_min_drop),
         drop_xy_bands=tuple(bands),
     )
 

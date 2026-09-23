@@ -47,6 +47,25 @@ def test_target_requires_held_midair() -> None:
     )
 
 
+def test_drop_xy_target_requires_band_and_in_range() -> None:
+    from lerobot.faults.config import FaultInjectionConfig
+
+    with pytest.raises(ValueError, match="requires drop_xy_band"):
+        FaultInjectionConfig(
+            enabled=True,
+            type="midair_drop",
+            drop_xy_target_m=0.36,
+        )
+    with pytest.raises(ValueError, match="must lie within"):
+        FaultInjectionConfig(
+            enabled=True,
+            type="midair_drop",
+            drop_xy_band_min=0.34,
+            drop_xy_band_max=0.38,
+            drop_xy_target_m=0.40,
+        )
+
+
 def test_smolvla_fault_fields_carry_target_and_band() -> None:
     sampled = sample_smolvla_band_target(
         __import__("numpy").random.default_rng(3),
