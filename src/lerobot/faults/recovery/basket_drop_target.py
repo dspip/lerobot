@@ -24,12 +24,11 @@ def basket_distance_target_reached(
     band_max_m: float,
     held_midair: bool,
 ) -> bool:
+    """Return whether basket XY distance crossed the sampled target while descending."""
     if not held_midair:
         return False
     if prev_m <= curr_m:
         return False
     if curr_m <= target_m <= prev_m:
         return True
-    if band_min_m <= curr_m <= band_max_m and curr_m <= target_m:
-        return True
-    return False
+    return band_min_m <= curr_m <= band_max_m and curr_m <= target_m

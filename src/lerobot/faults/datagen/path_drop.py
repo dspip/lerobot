@@ -29,6 +29,8 @@ TRANSPORT_PHASE = "to_basket_hover"
 
 @dataclass(frozen=True)
 class EligibleArcPiece:
+    """One keep-out-clipped interval on a carry path segment."""
+
     segment_name: str
     segment_order: int
     t0: float
@@ -38,16 +40,21 @@ class EligibleArcPiece:
 
 @dataclass(frozen=True)
 class EligiblePath:
+    """Carry polyline restricted to arc lengths eligible for uniform drop sampling."""
+
     carry_path: CarryPath
     pieces: tuple[EligibleArcPiece, ...]
 
     @property
     def total(self) -> float:
+        """Total eligible arc length in meters."""
         return float(sum(piece.length_m for piece in self.pieces))
 
 
 @dataclass(frozen=True)
 class PathTrigger:
+    """Drop fires when execution reaches this point on the carry path."""
+
     segment_name: str
     segment_order: int
     target_t: float
@@ -106,7 +113,7 @@ def _outside_intervals(
     boundaries = sorted(set(boundaries))
 
     intervals: list[tuple[float, float]] = []
-    for lo, hi in zip(boundaries, boundaries[1:]):
+    for lo, hi in zip(boundaries, boundaries[1:], strict=False):
         midpoint = 0.5 * (lo + hi)
         xy = p0 + midpoint * direction
         if float(np.dot(xy, xy)) >= keepout_m**2 - 1e-12:

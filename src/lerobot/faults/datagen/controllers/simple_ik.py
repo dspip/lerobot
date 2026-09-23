@@ -18,16 +18,16 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
 from lerobot.envs.factory import make_env
-from lerobot.faults.wrappers import DropRecoveryEnvWrapper
-
 from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
 from lerobot.faults.datagen.path_drop import EligiblePath, PathTrigger, eligible_path, sample_path_drop
 from lerobot.faults.datagen.recipe import (
@@ -36,9 +36,8 @@ from lerobot.faults.datagen.recipe import (
     effective_post_drop_dwell_steps,
     legacy_drop_recipe,
 )
-from lerobot.faults.datagen.scene import apply_serializable_layout
-from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.runtime import stabilize_carry_action
+from lerobot.faults.datagen.scene import apply_serializable_layout
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 from lerobot.faults.sim.libero import (
@@ -49,14 +48,15 @@ from lerobot.faults.sim.libero import (
     get_object_pose,
     get_place_destination,
     get_robosuite_env,
-    read_control_freq,
     hold_gripper_closed,
-    is_object_grasped,
+    is_object_grasped,  # noqa: F401 — unit tests patch ``simple_ik.is_object_grasped``
     is_object_held_midair,
     is_object_in_basket,
     object_pose_orientation,
+    read_control_freq,
     unwrap_libero_env,
 )
+from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
 MAX_PLAN_STEPS = 800
 POST_RECOVERY_SETTLE_STEPS = 40
@@ -64,6 +64,8 @@ POST_RECOVERY_SETTLE_STEPS = 40
 
 @dataclass
 class SimpleIKEpisodeFacts:
+    """Outcome fields collected after a SimpleIK datagen episode loop."""
+
     success: bool
     outcome: str
     drop_trigger: dict[str, Any] | None
@@ -127,6 +129,7 @@ def run_simple_ik_episode_loop(
     recording_stride: int = 1,
     task: str = "pick up the object and place it in the basket",
 ) -> SimpleIKEpisodeFacts:
+    """Drive one SimpleIK episode with path-based drop timing and optional recording."""
     keepout = keepout_m(
         recipe_drop.min_drop_distance_from_basket_m,
         recipe_drop.hard_keepout_floor_m,
@@ -156,9 +159,7 @@ def run_simple_ik_episode_loop(
                     trigger_pose,
                     int(state.dwell_steps_completed),
                 )
-            nominal = _nominal_action(
-                planner, rs_env, object_name, gripper_settle_steps=gripper_settle_steps
-            )
+            nominal = _nominal_action(planner, rs_env, object_name, gripper_settle_steps=gripper_settle_steps)
             if nominal is None or planner.done:
                 return SimpleIKEpisodeFacts(
                     False,
@@ -225,9 +226,7 @@ def run_simple_ik_episode_loop(
                         0,
                     )
                 trigger_pose = obj.astype(float).tolist()
-                executed = fault.trigger_scheduled_drop(
-                    env, 0, nominal, reason="path_uniform"
-                )
+                executed = fault.trigger_scheduled_drop(env, 0, nominal, reason="path_uniform")
                 dropped = True
                 action = np.asarray(executed, dtype=np.float32).reshape(1, 7)
             else:
@@ -243,11 +242,7 @@ def run_simple_ik_episode_loop(
                             trigger_pose,
                             int(state.dwell_steps_completed),
                         )
-                    if (
-                        paired_plan is not None
-                        and not paired_plan.drop_decision.drop
-                        and not dropped
-                    ):
+                    if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped:
                         return _paired_nominal_no_drop_facts(
                             rs_env,
                             object_name=object_name,
@@ -273,8 +268,8 @@ def run_simple_ik_episode_loop(
             episode_session is not None
             and observation is not None
             and should_log_sim_step(
-            step,
-            recording_stride=recording_stride,
+                step,
+                recording_stride=recording_stride,
                 force_drop_injection=drop_injection,
             )
         ):
@@ -309,9 +304,7 @@ def run_simple_ik_episode_loop(
         if state.recovery_active and state.planner is not None and state.planner.done:
             settle_left -= 1
             if settle_left <= 0:
-                in_basket = is_object_in_basket(
-                    rs_env, object_name, basket_name=basket_name, z_max=0.14
-                )
+                in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
                 return SimpleIKEpisodeFacts(
                     bool(in_basket),
                     "recovery_completed_in_basket" if in_basket else "recovery_finished_outside_basket",
@@ -320,11 +313,7 @@ def run_simple_ik_episode_loop(
                     dwell_before_recovery,
                 )
 
-    if (
-        paired_plan is not None
-        and not paired_plan.drop_decision.drop
-        and not dropped
-    ):
+    if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped:
         return _paired_nominal_no_drop_facts(
             rs_env,
             object_name=object_name,
@@ -354,9 +343,7 @@ def _paired_nominal_no_drop_facts(
     reason: str,
     trigger_pose: list[float] | None,
 ) -> SimpleIKEpisodeFacts:
-    in_basket = is_object_in_basket(
-        rs_env, object_name, basket_name=basket_name, z_max=0.14
-    )
+    in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
     return SimpleIKEpisodeFacts(
         bool(in_basket),
         "nominal_no_drop",
@@ -382,10 +369,14 @@ def _drop_trigger_payload(
 
 
 class SimpleIKDatagenAdapter:
+    """Datagen controller adapter that runs episodes via the SimpleIK recovery loop."""
+
     def __init__(self, recipe: DropDatagenRecipe) -> None:
+        """Store the unified drop datagen recipe for episode construction."""
         self._recipe = recipe
 
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+        """Build a LIBERO env, run the IK loop, and return an ``EpisodeResult``."""
         os.environ.setdefault("MUJOCO_GL", "egl")
         from lerobot.envs.configs import LiberoEnv
         from lerobot.faults.config import FaultInjectionConfig
@@ -498,6 +489,7 @@ def build_simple_ik_planner(
     seed: int,
     motion_profile: Any,
 ) -> SimpleIKRecoveryPlanner:
+    """Construct a ``SimpleIKRecoveryPlanner`` from datagen motion profile settings."""
     leg = motion_profile.nominal
     planner = SimpleIKRecoveryPlanner(
         speed_multiplier=motion_profile.speed_multiplier,

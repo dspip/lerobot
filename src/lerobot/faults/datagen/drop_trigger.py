@@ -33,6 +33,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class BandDistanceTarget:
+    """Sampled SmolVLA drop band and target basket XY distance."""
+
     band: DropXYBand
     target_m: float
 
@@ -41,6 +43,7 @@ def sample_smolvla_band_target(
     rng: np.random.Generator,
     bands: tuple[DropXYBand, ...],
 ) -> BandDistanceTarget:
+    """Uniformly pick a band and a target distance inside it."""
     if not bands:
         raise ValueError("bands must be non-empty")
     index = int(rng.integers(0, len(bands)))
@@ -50,6 +53,7 @@ def sample_smolvla_band_target(
 
 
 def smolvla_fault_drop_fields(target: BandDistanceTarget) -> dict[str, float]:
+    """Map a band target to midair-drop fault config field names."""
     return {
         "drop_xy_band_min": float(target.band.min_m),
         "drop_xy_band_max": float(target.band.max_m),

@@ -10,28 +10,28 @@ import numpy as np
 import pytest
 
 from lerobot.faults.config import FaultInjectionConfig
+from lerobot.faults.factory import make_midair_drop_fault
 from lerobot.faults.logging import FaultEventLogger
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper, maybe_wrap_env
-from lerobot.faults.factory import make_midair_drop_fault
 
 
 def _cfg(**kwargs) -> FaultInjectionConfig:
-    defaults = dict(
-        enabled=True,
-        type="midair_drop",
-        t_min=2,
-        t_max=4,
-        object_name="alphabet_soup_1",
-        impulse_lin_std=0.1,
-        impulse_ang_std=0.1,
-        settle_steps=1,
-        require_grasp=True,
-        min_object_z=0.0,  # unit tests mock poses; height gate covered separately
-        seed=42,
-        env_ids=None,
-        log_path=None,
-    )
+    defaults = {
+        "enabled": True,
+        "type": "midair_drop",
+        "t_min": 2,
+        "t_max": 4,
+        "object_name": "alphabet_soup_1",
+        "impulse_lin_std": 0.1,
+        "impulse_ang_std": 0.1,
+        "settle_steps": 1,
+        "require_grasp": True,
+        "min_object_z": 0.0,  # unit tests mock poses; height gate covered separately
+        "seed": 42,
+        "env_ids": None,
+        "log_path": None,
+    }
     defaults.update(kwargs)
     return FaultInjectionConfig(**defaults)
 
@@ -390,9 +390,7 @@ def test_zero_dwell_starts_recovery_on_drop_step(
     mock_drop,
     mock_dest,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(_cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=0), num_envs=1)
     env = MagicMock()
     policy = _action(1, 7, 42.0)
@@ -419,9 +417,7 @@ def test_post_drop_dwell_passes_policy_and_delays_planner(
     mock_drop,
     mock_dest,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     dwell = 2
     inj = MidAirDropFault(
         _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=dwell),
@@ -462,9 +458,7 @@ def test_dwell_loss_mask_zero_until_ik(
     mock_drop,
     mock_dest,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(t_min=0, t_max=0, require_grasp=False, post_drop_dwell_steps=2),
         num_envs=1,
@@ -498,9 +492,7 @@ def test_regrasp_during_dwell_skips_ik(
     mock_dest,
     mock_in_basket,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     mock_grasped.side_effect = [False, False, True, True]
 
     inj = MidAirDropFault(
@@ -535,9 +527,7 @@ def test_object_in_basket_after_dwell_skips_ik(
     mock_dest,
     mock_in_basket,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     mock_in_basket.return_value = True
 
     inj = MidAirDropFault(
@@ -754,9 +744,7 @@ def test_reset_then_ik_dwell_sets_policy_reset_and_delays_ik(
     mock_drop,
     mock_dest,
 ):
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(
             t_min=0,

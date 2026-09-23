@@ -34,7 +34,7 @@ from lerobot.faults.datagen.frame_logging import (
 from lerobot.faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper
-from tests.faults.test_datagen_dataset_writer import _RecordingLogger, _minimal_processed_frame
+from tests.faults.test_datagen_dataset_writer import _minimal_processed_frame, _RecordingLogger
 from tests.faults.test_midair_drop_fault import _setup_drop_mocks
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -201,11 +201,7 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert injection_logged[0].sim_step % RECORDING_STRIDE == 1
         assert injection_logged[0].loss_mask == 0.0
 
-        dwell_timeline = [
-            ctx
-            for ctx in timeline
-            if ctx.post_drop_dwell_step and not ctx.drop_injection_step
-        ]
+        dwell_timeline = [ctx for ctx in timeline if ctx.post_drop_dwell_step and not ctx.drop_injection_step]
         assert len(dwell_timeline) == CONFIGURED_DWELL_STEPS
         assert all(ctx.loss_mask == 0.0 for ctx in dwell_timeline)
 
@@ -231,5 +227,5 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         injection_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.drop_injection_step)
         recovery_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.recovery_active)
         assert injection_idx < recovery_idx
-        assert all(ctx.loss_mask == 0.0 for ctx in logged_ctx[injection_idx : recovery_idx])
+        assert all(ctx.loss_mask == 0.0 for ctx in logged_ctx[injection_idx:recovery_idx])
         assert logged_ctx[injection_idx - 1].loss_mask == 1.0 if injection_idx > 0 else True

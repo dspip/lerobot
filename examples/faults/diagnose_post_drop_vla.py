@@ -304,10 +304,9 @@ def run_seed(
         if not st.triggered:
             last_block = _pre_drop_block(rs, st, env.fault.config)
             block_counts[last_block] = block_counts.get(last_block, 0) + 1
-        if bool(np.asarray(terminated).any() or np.asarray(truncated).any()):
-            if not st.triggered:
-                stop_reason = "success_before_drop" if is_success else "terminated_before_drop"
-                break
+        if bool(np.asarray(terminated).any() or np.asarray(truncated).any()) and not st.triggered:
+            stop_reason = "success_before_drop" if is_success else "terminated_before_drop"
+            break
 
     if not st.triggered:
         return {
@@ -479,9 +478,7 @@ def main(argv: list[str] | None = None) -> int:
     for seed in seeds:
         if args.post_grasp_delay_steps is None:
             delay_rng = np.random.default_rng(seed)
-            delay_steps = sample_post_grasp_delay_steps(
-                delay_rng, POST_GRASP_DELAY_MIN, POST_GRASP_DELAY_MAX
-            )
+            delay_steps = sample_post_grasp_delay_steps(delay_rng, POST_GRASP_DELAY_MIN, POST_GRASP_DELAY_MAX)
         else:
             delay_steps = int(args.post_grasp_delay_steps)
         fault_kwargs = training_midair_drop_kwargs(

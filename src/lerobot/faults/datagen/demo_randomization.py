@@ -40,6 +40,7 @@ class RandomizationConfig:
     seed: int | None = 42
 
     def __post_init__(self) -> None:
+        """Validate timing, noise, and speed multiplier bounds."""
         if self.t_min < 0:
             raise ValueError(f"t_min must be >= 0, got {self.t_min}.")
         if self.t_max < self.t_min:
@@ -67,9 +68,7 @@ def sample_episode_params(
     """Sample one episode's randomized parameters for demo / dry-run use."""
     cfg = config or RandomizationConfig()
     t_fault = int(rng.integers(cfg.t_min, cfg.t_max + 1))
-    lin = np.asarray(cfg.impulse_lin_bias, dtype=np.float64) + rng.normal(
-        0.0, cfg.impulse_lin_std, size=3
-    )
+    lin = np.asarray(cfg.impulse_lin_bias, dtype=np.float64) + rng.normal(0.0, cfg.impulse_lin_std, size=3)
     ang = rng.normal(0.0, cfg.impulse_ang_std, size=3)
     speed_multiplier = float(rng.uniform(cfg.speed_multiplier_min, cfg.speed_multiplier_max))
     arm_noise_rad = float(np.deg2rad(cfg.arm_posture_noise_deg))

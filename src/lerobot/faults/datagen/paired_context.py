@@ -41,6 +41,8 @@ _SMOLVLA_STREAM = 0x534D4F4C
 
 @dataclass(frozen=True)
 class PairedEpisodePlan:
+    """Shared drop, motion, and SmolVLA band draws for all variants of one logical episode."""
+
     episode_seed: int
     layout_seed: int
     drop_seed: int
@@ -53,6 +55,7 @@ class PairedEpisodePlan:
 
 
 def resolve_init_state_id(episode_seed: int, num_init_states: int) -> int:
+    """Map ``episode_seed`` to a LIBERO init state index."""
     if num_init_states <= 0:
         return 0
     return int(episode_seed) % int(num_init_states)
@@ -83,6 +86,7 @@ def build_paired_episode_plan(
     object_name: str,
     num_init_states: int,
 ) -> PairedEpisodePlan:
+    """Sample motion profile and drop draws shared across controller variants."""
     motion_profile = sample_episode_motion_profile(recipe.simple_ik, manifest.drop_seed)
     decision, drop_u, smolvla_target = _paired_drop_draws(
         manifest.drop_seed,

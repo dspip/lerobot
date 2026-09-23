@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -33,12 +33,16 @@ class RecipeError(ValueError):
     """Raised when a datagen recipe cannot be loaded or validated."""
 
 
-class DatagenController(str, Enum):
+class DatagenController(StrEnum):
+    """Policy/controller backend used for a datagen recipe section."""
+
     SIMPLE_IK = "simple_ik"
     SMOLVLA = "smolvla"
 
 
-class PostDropMode(str, Enum):
+class PostDropMode(StrEnum):
+    """How control resumes after a mid-air drop in datagen."""
+
     IMMEDIATE_IK = "immediate_ik"
     CONTINUE_THEN_IK = "continue_then_ik"
     RESET_THEN_IK = "reset_then_ik"
@@ -65,6 +69,8 @@ _CONTROLLER_MODE_TAGS: dict[tuple[DatagenController, PostDropMode], int] = {
 
 @dataclass(frozen=True)
 class PlacementRecipe:
+    """Object placement randomization bounds for scene layout sampling."""
+
     xy_range_m: float
     min_basket_clearance_m: float
     distractor_basket_clearance_m: float
@@ -93,6 +99,8 @@ class SimpleIKPathDropRecipe:
 
 @dataclass(frozen=True)
 class SimpleIKRecipe:
+    """SimpleIK controller settings for unified drop datagen."""
+
     trajectory_randomization_enabled: bool
     pickup_via_offset_m: float
     transport_via_offset_m: float
@@ -104,6 +112,8 @@ class SimpleIKRecipe:
 
 @dataclass(frozen=True)
 class DropXYBand:
+    """Named basket XY distance interval for SmolVLA drop triggering."""
+
     name: str
     min_m: float
     max_m: float
@@ -111,6 +121,8 @@ class DropXYBand:
 
 @dataclass(frozen=True)
 class SmolVLARecipe:
+    """SmolVLA policy and drop-band settings for unified datagen."""
+
     policy_path: str
     post_grasp_delay_steps: int
     min_drop_distance_from_basket_m: float
@@ -119,11 +131,15 @@ class SmolVLARecipe:
 
 @dataclass(frozen=True)
 class PostDropRecipe:
+    """Post-drop dwell configuration shared across modes that need settling."""
+
     dwell_steps: int
 
 
 @dataclass(frozen=True)
 class RecordingRecipe:
+    """Dataset output location, FPS, and base seed for the matrix run."""
+
     base_seed: int
     output_dir: str
     dataset_fps: int
@@ -131,6 +147,8 @@ class RecordingRecipe:
 
 @dataclass(frozen=True)
 class MatrixVariant:
+    """One controller/mode pair and its per-run episode count."""
+
     controller: DatagenController
     post_drop_mode: PostDropMode
     episodes: int
@@ -138,6 +156,8 @@ class MatrixVariant:
 
 @dataclass(frozen=True)
 class ExpandedMatrixRun:
+    """Flattened matrix entry pairing variant with a logical episode index."""
+
     controller: DatagenController
     post_drop_mode: PostDropMode
     episode_index: int
@@ -146,6 +166,8 @@ class ExpandedMatrixRun:
 
 @dataclass(frozen=True)
 class EpisodeSeedManifest:
+    """Deterministic seeds for one matrix variant episode."""
+
     controller: DatagenController
     post_drop_mode: PostDropMode
     logical_episode_index: int
@@ -158,6 +180,8 @@ class EpisodeSeedManifest:
 
 @dataclass(frozen=True)
 class DropDatagenRecipe:
+    """Top-level unified drop datagen recipe loaded from JSON."""
+
     name: str
     task: str
     task_id: int
@@ -185,9 +209,7 @@ def _require_json_bool(value: object, *, field: str) -> bool:
     return value
 
 
-def _require_json_str(
-    value: object, *, field: str, allow_empty: bool = False
-) -> str:
+def _require_json_str(value: object, *, field: str, allow_empty: bool = False) -> str:
     if not isinstance(value, str):
         raise RecipeError(f"{field} must be a JSON string (got {value!r})")
     text = value.strip()
@@ -211,10 +233,7 @@ def _require_json_int(value: object, *, field: str, min_value: int | None = None
 
 
 def _parse_controller(value: object, *, section: str, strict: bool) -> DatagenController:
-    if strict:
-        text = _require_json_str(value, field=f"{section}.controller")
-    else:
-        text = str(value).strip()
+    text = _require_json_str(value, field=f"{section}.controller") if strict else str(value).strip()
     try:
         return DatagenController(text)
     except ValueError as exc:
@@ -222,10 +241,7 @@ def _parse_controller(value: object, *, section: str, strict: bool) -> DatagenCo
 
 
 def _parse_post_drop_mode(value: object, *, section: str, strict: bool) -> PostDropMode:
-    if strict:
-        text = _require_json_str(value, field=f"{section}.post_drop_mode")
-    else:
-        text = str(value).strip()
+    text = _require_json_str(value, field=f"{section}.post_drop_mode") if strict else str(value).strip()
     try:
         return PostDropMode(text)
     except ValueError as exc:
@@ -238,24 +254,19 @@ def validate_controller_mode_pair(
     *,
     section: str = "experiment_matrix",
 ) -> None:
+    """Raise ``RecipeError`` when a controller/post-drop mode pair is not allowed."""
     pair = (controller, mode)
     if pair not in _ALLOWED_CONTROLLER_MODES:
         if controller is DatagenController.SIMPLE_IK and mode is PostDropMode.RESET_THEN_IK:
-            raise RecipeError(
-                f"{section}: simple_ik cannot use reset_then_ik (SmolVLA-only mode)"
-            )
-        raise RecipeError(
-            f"{section}: invalid controller/mode pair {controller.value} × {mode.value}"
-        )
+            raise RecipeError(f"{section}: simple_ik cannot use reset_then_ik (SmolVLA-only mode)")
+        raise RecipeError(f"{section}: invalid controller/mode pair {controller.value} × {mode.value}")
 
 
 def validate_experiment_matrix_entries(matrix: tuple[MatrixVariant, ...]) -> None:
     """Require each approved controller/mode pair exactly once with equal episode counts."""
     expected = len(_ALLOWED_CONTROLLER_MODES)
     if len(matrix) != expected:
-        raise RecipeError(
-            f"experiment_matrix must contain exactly {expected} variants (got {len(matrix)})"
-        )
+        raise RecipeError(f"experiment_matrix must contain exactly {expected} variants (got {len(matrix)})")
     seen: set[tuple[DatagenController, PostDropMode]] = set()
     episode_counts: set[int] = set()
     for variant in matrix:
@@ -291,12 +302,14 @@ def effective_post_drop_dwell_steps(
     recipe: DropDatagenRecipe,
     mode: PostDropMode,
 ) -> int:
+    """Return configured dwell steps for ``mode`` (zero for immediate IK)."""
     if mode is PostDropMode.IMMEDIATE_IK:
         return 0
     return int(recipe.post_drop.dwell_steps)
 
 
 def expand_experiment_matrix(recipe: DropDatagenRecipe) -> tuple[ExpandedMatrixRun, ...]:
+    """List every variant episode slot in the experiment matrix."""
     runs: list[ExpandedMatrixRun] = []
     for variant in recipe.experiment_matrix:
         for episode_index in range(int(variant.episodes)):
@@ -324,6 +337,7 @@ def paired_episode_seed_manifests(
     recipe: DropDatagenRecipe,
     logical_episode_index: int,
 ) -> tuple[EpisodeSeedManifest, ...]:
+    """Build per-variant seed manifests for one shared logical episode index."""
     base = int(recipe.recording.base_seed)
     ep_seed = _episode_seed(base, logical_episode_index)
     layout_seed = _derive_seed(ep_seed, _LAYOUT_SEED_TAG)
@@ -412,9 +426,7 @@ def _parse_placement(placement_raw: dict[str, Any], *, strict: bool = False) -> 
     ):
         raise RecipeError("placement clearances must be >= 0")
     if placement.distractor_basket_clearance_m > placement.min_basket_clearance_m:
-        raise RecipeError(
-            "placement.distractor_basket_clearance_m must be <= min_basket_clearance_m"
-        )
+        raise RecipeError("placement.distractor_basket_clearance_m must be <= min_basket_clearance_m")
     if not strict and placement.max_attempts < 1:
         raise RecipeError("placement.max_attempts must be >= 1")
     return placement
@@ -450,8 +462,7 @@ def _parse_simple_ik_path_drop(path_drop_raw: dict[str, Any]) -> SimpleIKPathDro
 
 def _parse_simple_ik(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
     speed_values = tuple(
-        float(v)
-        for v in _required(simple_ik_raw, "speed_multiplier_range", section="simple_ik")
+        float(v) for v in _required(simple_ik_raw, "speed_multiplier_range", section="simple_ik")
     )
     if len(speed_values) != 2:
         raise RecipeError("simple_ik.speed_multiplier_range must contain [min, max]")
@@ -459,15 +470,9 @@ def _parse_simple_ik(simple_ik_raw: dict[str, Any]) -> SimpleIKRecipe:
         trajectory_randomization_enabled=bool(
             _required(simple_ik_raw, "trajectory_randomization_enabled", section="simple_ik")
         ),
-        pickup_via_offset_m=float(
-            _required(simple_ik_raw, "pickup_via_offset_m", section="simple_ik")
-        ),
-        transport_via_offset_m=float(
-            _required(simple_ik_raw, "transport_via_offset_m", section="simple_ik")
-        ),
-        arm_posture_noise_deg=float(
-            _required(simple_ik_raw, "arm_posture_noise_deg", section="simple_ik")
-        ),
+        pickup_via_offset_m=float(_required(simple_ik_raw, "pickup_via_offset_m", section="simple_ik")),
+        transport_via_offset_m=float(_required(simple_ik_raw, "transport_via_offset_m", section="simple_ik")),
+        arm_posture_noise_deg=float(_required(simple_ik_raw, "arm_posture_noise_deg", section="simple_ik")),
         speed_multiplier_range=(speed_values[0], speed_values[1]),
         waypoint_blend_radius_m=float(
             _required(simple_ik_raw, "waypoint_blend_radius_m", section="simple_ik")
@@ -558,9 +563,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     raw = _load_json_object(Path(path))
 
     if "drop" in raw:
-        raise RecipeError(
-            "drop must not appear at the recipe root; use simple_ik.path_drop for SimpleIK"
-        )
+        raise RecipeError("drop must not appear at the recipe root; use simple_ik.path_drop for SimpleIK")
 
     q = _require_json_number(_required(raw, "q"), field="q")
     if not 0.0 <= q <= 1.0:
@@ -570,8 +573,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     if not isinstance(object_names_raw, list) or not object_names_raw:
         raise RecipeError("object_names must be a non-empty array")
     object_names = tuple(
-        _require_json_str(value, field=f"object_names[{idx}]")
-        for idx, value in enumerate(object_names_raw)
+        _require_json_str(value, field=f"object_names[{idx}]") for idx, value in enumerate(object_names_raw)
     )
 
     basket_name = _require_json_str(_required(raw, "basket_name"), field="basket_name")

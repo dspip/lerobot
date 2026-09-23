@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import gymnasium as gym
@@ -106,6 +107,7 @@ class FaultEnvWrapper:
     """Apply optional action and/or observation fault injectors around the env API."""
 
     def __init__(self, env: Any, config: FaultInjectionConfig):
+        """Wire action and/or observation injectors and failure annotation."""
         num_envs = _num_envs(env)
         action_injector = make_action_fault_injector(config, num_envs=num_envs)
         obs_injector = make_obs_fault_injector(config, num_envs=num_envs)
@@ -119,13 +121,16 @@ class FaultEnvWrapper:
         self._annotator = _make_annotator(config, num_envs)
 
     def failure_annotation(self, env_idx: int = 0) -> dict:
+        """Latest failure-annotation arrays for one vectorized sub-env."""
         return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
+        """Inner env without fault wrappers."""
         return getattr(self.env, "unwrapped", self.env)
 
     def __getattr__(self, name: str) -> Any:
+        """Forward unknown attributes to the wrapped env."""
         return getattr(self.env, name)
 
     def _apply_obs(self, obs: Any, *, from_reset: bool) -> Any:
@@ -157,6 +162,7 @@ class FaultEnvWrapper:
                 injector.event_logger.close()
 
     def reset(self, **kwargs):
+        """Reset injectors, annotator, and the inner env; optionally corrupt observations."""
         result = self.env.reset(**kwargs)
         if self.action_injector is not None:
             self.action_injector.reset()
@@ -166,6 +172,7 @@ class FaultEnvWrapper:
         return self._apply_obs_to_result(result, from_reset=True)
 
     def step(self, action):
+        """Apply action faults, step the env, annotate failures, and notify on dones."""
         step_action = action
         if self.action_injector is not None:
             batch, was_single = _as_batch(np.asarray(action), self.num_envs)
@@ -191,6 +198,7 @@ class FaultEnvWrapper:
         return result
 
     def close(self):
+        """Close fault loggers and the inner env."""
         self._close_loggers()
         return self.env.close()
 
@@ -199,6 +207,7 @@ class SimFaultEnvWrapper:
     """Wrap env for inject-only sim-state faults (object slip, EEF bump)."""
 
     def __init__(self, env: Any, config: FaultInjectionConfig):
+        """Attach a sim-state fault injector (slip or EEF bump) to ``env``."""
         if type(env).__name__ == "AsyncVectorEnv":
             raise TypeError(
                 "SimFaultEnvWrapper does not support AsyncVectorEnv "
@@ -207,9 +216,7 @@ class SimFaultEnvWrapper:
         num_envs = _num_envs(env)
         fault = make_sim_inject_fault(config, num_envs=num_envs)
         if fault is None:
-            raise ValueError(
-                "SimFaultEnvWrapper requires enabled type in {'object_slip', 'eef_bump'}."
-            )
+            raise ValueError("SimFaultEnvWrapper requires enabled type in {'object_slip', 'eef_bump'}.")
         self.env = env
         self.fault_config = config
         self.fault: SimInjectFaultInjector = fault
@@ -217,13 +224,16 @@ class SimFaultEnvWrapper:
         self._annotator = _make_annotator(config, num_envs)
 
     def failure_annotation(self, env_idx: int = 0) -> dict:
+        """Latest failure-annotation arrays for one vectorized sub-env."""
         return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
+        """Inner env without fault wrappers."""
         return getattr(self.env, "unwrapped", self.env)
 
     def __getattr__(self, name: str) -> Any:
+        """Forward unknown attributes to the wrapped env."""
         return getattr(self.env, name)
 
     def _notify_dones(self, dones: np.ndarray) -> None:
@@ -234,12 +244,14 @@ class SimFaultEnvWrapper:
             self.fault.event_logger.close()
 
     def reset(self, **kwargs):
+        """Reset the sim fault and annotator, then the inner env."""
         result = self.env.reset(**kwargs)
         self.fault.reset()
         self._annotator.reset()
         return result
 
     def step(self, action):
+        """Run sim injectors before physics, annotate, and notify on dones."""
         batch, was_single = _as_batch(np.asarray(action), self.num_envs)
         executed = self.fault.on_step(self.env, batch)
         step_action = _from_batch(executed, was_single)
@@ -255,6 +267,7 @@ class SimFaultEnvWrapper:
         return result
 
     def close(self):
+        """Close the fault event logger and the inner env."""
         self._close_logger()
         return self.env.close()
 
@@ -263,6 +276,7 @@ class DropRecoveryEnvWrapper:
     """Wrap env for mid-air drop faults that need sim access and recovery control."""
 
     def __init__(self, env: Any, config: FaultInjectionConfig):
+        """Attach mid-air drop + recovery control and failure annotation."""
         if type(env).__name__ == "AsyncVectorEnv":
             raise TypeError(
                 "DropRecoveryEnvWrapper does not support AsyncVectorEnv "
@@ -280,13 +294,16 @@ class DropRecoveryEnvWrapper:
         self._annotator = _make_annotator(config, num_envs)
 
     def failure_annotation(self, env_idx: int = 0) -> dict:
+        """Latest failure-annotation arrays for one vectorized sub-env."""
         return self._annotator.last_frames[env_idx]
 
     @property
     def unwrapped(self) -> Any:
+        """Inner env without fault wrappers."""
         return getattr(self.env, "unwrapped", self.env)
 
     def __getattr__(self, name: str) -> Any:
+        """Forward unknown attributes to the wrapped env."""
         return getattr(self.env, name)
 
     def _notify_dones(self, dones: np.ndarray) -> None:
@@ -297,6 +314,7 @@ class DropRecoveryEnvWrapper:
             self.fault.event_logger.close()
 
     def reset(self, **kwargs):
+        """Reset drop/recovery state, install LIBERO hooks, and reset the inner env."""
         result = self.env.reset(**kwargs)
         self.fault.reset()
         self._annotator.reset()
@@ -344,6 +362,7 @@ class DropRecoveryEnvWrapper:
         libero._faults_no_reset_hook = True
 
     def step(self, action):
+        """Run drop/recovery control, suppress autoreset while recovering, and annotate."""
         batch, was_single = _as_batch(np.asarray(action), self.num_envs)
         executed = self.fault.on_step(self.env, batch)
         step_action = _from_batch(executed, was_single)
@@ -399,10 +418,8 @@ class DropRecoveryEnvWrapper:
                 for i, active in enumerate(recovery_mask):
                     if active and i < arr.shape[0]:
                         arr[i] = False
-                try:
+                with contextlib.suppress(Exception):
                     env._autoreset_envs = arr
-                except Exception:
-                    pass
                 for attr in ("_terminations", "_truncations"):
                     buf = getattr(env, attr, None)
                     if buf is not None:
@@ -410,20 +427,21 @@ class DropRecoveryEnvWrapper:
                         for i, active in enumerate(recovery_mask):
                             if active and i < b.shape[0]:
                                 b[i] = False
-                        try:
+                        with contextlib.suppress(Exception):
                             setattr(env, attr, b)
-                        except Exception:
-                            pass
                 return
             env = getattr(env, "env", None)
 
     def loss_mask(self, env_idx: int = 0) -> float:
+        """Training loss weight for the current step (0 during injection)."""
         return self.fault.loss_mask_for_env(env_idx)
 
     def consume_policy_reset(self, env_idx: int = 0) -> bool:
+        """Return and clear a one-shot policy hidden-state reset request."""
         return self.fault.consume_policy_reset(env_idx)
 
     def close(self):
+        """Close the fault event logger and the inner env."""
         self._close_logger()
         return self.env.close()
 

@@ -46,16 +46,20 @@ def _drop_trigger_from_summary(
 
 
 class SmolVLADatagenAdapter:
+    """Datagen controller adapter that delegates episodes to the SmolVLA pipeline."""
+
     def __init__(
         self,
         recipe: DropDatagenRecipe,
         *,
         pipeline_runner: PipelineRunner | None = None,
     ) -> None:
+        """Store recipe settings and an optional injectable pipeline runner."""
         self._recipe = recipe
         self._pipeline_runner = pipeline_runner or run_pipeline
 
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+        """Run the SmolVLA drop-recovery pipeline and map its summary to ``EpisodeResult``."""
         recipe = request.recipe
         manifest = request.manifest
         plan = request.paired_plan
@@ -115,10 +119,7 @@ class SmolVLADatagenAdapter:
         success = bool(summary.get("success", summary.get("behavioral_success", False)))
         actual_dwell = summary.get("actual_dwell_steps")
         trigger_pose = summary.get("trigger_pose") or summary.get("pre_drop_pose")
-        if isinstance(trigger_pose, list):
-            trigger_pose_list = [float(x) for x in trigger_pose]
-        else:
-            trigger_pose_list = None
+        trigger_pose_list = [float(x) for x in trigger_pose] if isinstance(trigger_pose, list) else None
         return EpisodeResult.from_run(
             request,
             success=success,

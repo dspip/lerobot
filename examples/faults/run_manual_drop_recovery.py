@@ -32,12 +32,13 @@ from robosuite.utils.transform_utils import quat2axisangle
 
 try:
     import tkinter as tk
+
     from PIL import ImageTk
 except ImportError:
     raise SystemExit(
         "Tkinter/PIL.ImageTk is required to run the interactive manual drop/recovery script.\n"
         "Please install it (e.g. `sudo apt-get install python3-tk` on Ubuntu/Debian) and try again."
-    )
+    ) from None
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -45,12 +46,12 @@ from lerobot.envs.configs import LiberoEnv  # noqa: E402
 from lerobot.envs.factory import make_env  # noqa: E402
 from lerobot.faults.config import FaultInjectionConfig  # noqa: E402
 from lerobot.faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
-from lerobot.faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 from lerobot.faults.sim.libero import (  # noqa: E402
     get_robosuite_env,
     is_object_grasped,
     unwrap_libero_env,
 )
+from lerobot.faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 
 AUDIT_REPORT = Path("/tmp/xy_band_mix_60ep_extract/audit_report.json")
 DATASET_ROOT = Path("/tmp/xy_band_mix_60ep_extract/dataset/data/chunk-000")
@@ -156,7 +157,9 @@ class ManualControlUI:
         controls = tk.Frame(self.root)
         controls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
         tk.Button(controls, text="Drop (d)", command=self._arm_drop, width=12).pack(side=tk.LEFT, padx=4)
-        tk.Button(controls, text="Recover (r)", command=self._arm_recover, width=12).pack(side=tk.LEFT, padx=4)
+        tk.Button(controls, text="Recover (r)", command=self._arm_recover, width=12).pack(
+            side=tk.LEFT, padx=4
+        )
         tk.Label(controls, text="Focus this window — q or Esc to quit").pack(side=tk.LEFT, padx=8)
 
         self._label = tk.Label(self.root)
@@ -346,17 +349,13 @@ def main() -> None:
                     if not dropped:
                         print("Press Drop while the can is in the hand first.")
                     else:
-                        fault.request_recovery(
-                            env, 0, reason="manual", consume_first_action=False
-                        )
+                        fault.request_recovery(env, 0, reason="manual", consume_first_action=False)
                         recovery_active = True
                         recovery_pressed_at = global_step
                         print(f"Recovery started at step {global_step}")
 
             in_replay = replay_index < len(replay_commands) and not dropped and not recovery_active
-            if recovery_finished:
-                action = _hold_action(dropped=True)
-            elif recovery_active:
+            if recovery_finished or recovery_active:
                 action = _hold_action(dropped=True)
             elif in_replay:
                 if replay_hold == 0:

@@ -9,11 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
 from lerobot.faults.annotation import (
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
 )
+from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
 
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -53,9 +53,7 @@ def libero_obs_to_frame(obs: dict[str, Any]) -> dict[str, np.ndarray]:
         from lerobot.envs.utils import preprocess_observation
         from lerobot.processor.env_processor import LiberoProcessorStep
     except ImportError as exc:
-        raise ImportError(
-            "libero_obs_to_frame requires lerobot for raw LIBERO observations."
-        ) from exc
+        raise ImportError("libero_obs_to_frame requires lerobot for raw LIBERO observations.") from exc
 
     # Already preprocessed (camera* keys) or still raw gym obs.
     if "observation.images.camera1" in obs or "observation.robot_state" in obs:
@@ -70,8 +68,7 @@ def _processed_obs_to_frame(processed: dict[str, Any]) -> dict[str, np.ndarray]:
     out: dict[str, np.ndarray] = {}
     if "observation.state" not in processed:
         raise KeyError(
-            "Missing observation.state after LIBERO processing. "
-            f"Keys present: {sorted(processed)}"
+            f"Missing observation.state after LIBERO processing. Keys present: {sorted(processed)}"
         )
     out["observation.state"] = _to_f32_vector(processed["observation.state"], 8)
 
@@ -154,6 +151,7 @@ class FaultRecoveryDatasetLogger:
         robot_type: str = "panda",
         append: bool = False,
     ) -> None:
+        """Open or resume a LeRobot dataset at ``root`` for fault-recovery logging."""
         if LeRobotDataset is None:
             raise ImportError(
                 "FaultRecoveryDatasetLogger requires lerobot. Install LeRobot in your environment."
@@ -237,7 +235,9 @@ class FaultRecoveryDatasetLogger:
         if annotation:
             for key in FAILURE_ANNOTATION_FEATURES:
                 if key in annotation:
-                    labels[key] = np.asarray(annotation[key]).reshape(FAILURE_ANNOTATION_FEATURES[key]["shape"])
+                    labels[key] = np.asarray(annotation[key]).reshape(
+                        FAILURE_ANNOTATION_FEATURES[key]["shape"]
+                    )
                     if FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "int64":
                         labels[key] = labels[key].astype(np.int64, copy=False)
                     elif FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "bool":
@@ -262,6 +262,7 @@ class FaultRecoveryDatasetLogger:
 
     @property
     def committed_episode_count(self) -> int:
+        """Number of episodes already saved in the underlying dataset."""
         return int(self.dataset.meta.total_episodes)
 
     def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> int | None:

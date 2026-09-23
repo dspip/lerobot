@@ -87,19 +87,11 @@ def training_midair_drop_kwargs(
         "recovery_fps": int(policy_fps),
         "seed": int(seed),
         "log_path": Path(log_path),
-        "drop_xy_band_min": (
-            None if drop_xy_band_min is None else float(drop_xy_band_min)
-        ),
-        "drop_xy_band_max": (
-            None if drop_xy_band_max is None else float(drop_xy_band_max)
-        ),
-        "drop_xy_target_m": (
-            None if drop_xy_target_m is None else float(drop_xy_target_m)
-        ),
+        "drop_xy_band_min": (None if drop_xy_band_min is None else float(drop_xy_band_min)),
+        "drop_xy_band_max": (None if drop_xy_band_max is None else float(drop_xy_band_max)),
+        "drop_xy_target_m": (None if drop_xy_target_m is None else float(drop_xy_target_m)),
         "post_drop_dwell_steps": (
-            DEFAULT_POST_DROP_DWELL_STEPS
-            if post_drop_dwell_steps is None
-            else int(post_drop_dwell_steps)
+            DEFAULT_POST_DROP_DWELL_STEPS if post_drop_dwell_steps is None else int(post_drop_dwell_steps)
         ),
         "post_drop_mode": str(post_drop_mode),
     }

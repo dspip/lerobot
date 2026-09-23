@@ -98,9 +98,7 @@ def test_zero_dwell_scheduled_drop_executes_first_recovery_once(
     mock_drop,
     mock_dest,
 ) -> None:
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(post_drop_dwell_steps=0, post_drop_mode="immediate_ik", require_grasp=False),
         num_envs=1,
@@ -135,9 +133,7 @@ def test_scheduled_external_drop_marks_physical_injection_step(
     dwell_steps: int,
     post_drop_mode: str,
 ) -> None:
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(
             post_drop_dwell_steps=dwell_steps,

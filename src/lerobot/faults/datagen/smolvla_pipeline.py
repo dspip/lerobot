@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Full pipeline: SmolVLA → wait for grasp → mid-air drop → IK recovery → video.
+r"""Full pipeline: SmolVLA → wait for grasp → mid-air drop → IK recovery → video.
 
 Important:
   - LIBERO control stays at the default **20 Hz** (same as successful baseline eval).
@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -234,7 +233,7 @@ def _carry_evidence(
         return {"spans": 0, "best": None}
     traj = np.asarray(object_traj, dtype=float)
     start = min(int(triggered_at) + 1, len(traj))
-    flags = [bool(g) for g in grasp_flags[:len(traj)]]
+    flags = [bool(g) for g in grasp_flags[: len(traj)]]
 
     spans: list[dict[str, Any]] = []
     i = start
@@ -304,6 +303,7 @@ def run_pipeline(
     layout_seed: int | None = None,
     placement_config: Any | None = None,
 ) -> dict:
+    """Run SmolVLA nominal and drop-recovery in LIBERO with optional dataset logging."""
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 
@@ -311,11 +311,8 @@ def run_pipeline(
     from lerobot.envs.configs import LiberoEnv
     from lerobot.envs.factory import make_env, make_env_pre_post_processors
     from lerobot.envs.utils import preprocess_observation
-    from lerobot.policies.factory import make_policy, make_pre_post_processors
-    from lerobot.utils.constants import ACTION
-    from lerobot.utils.random_utils import set_seed
-
     from lerobot.faults.config import FaultInjectionConfig
+    from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
     from lerobot.faults.recovery.fps import (
         DEFAULT_LIBERO_CONTROL_FREQ,
         SMOLVLA_LIBERO_TARGET_FPS,
@@ -325,6 +322,10 @@ def run_pipeline(
         recording_stride,
     )
     from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
+    from lerobot.faults.recovery.recording_recipe import (
+        sample_post_grasp_delay_steps,
+        training_midair_drop_kwargs,
+    )
     from lerobot.faults.sim.libero import (
         get_eef_pose,
         get_gripper_closing_axis,
@@ -336,18 +337,16 @@ def run_pipeline(
         is_object_in_basket,
         object_basket_xy_distance,
         object_pose_orientation,
-        unwrap_libero_env,
         offset_object_xy_on_table,
         read_control_freq,
         read_model_timestep,
         seat_object_in_basket_if_above,
-    )
-    from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
-    from lerobot.faults.recovery.recording_recipe import (
-        sample_post_grasp_delay_steps,
-        training_midair_drop_kwargs,
+        unwrap_libero_env,
     )
     from lerobot.faults.wrappers import DropRecoveryEnvWrapper
+    from lerobot.policies.factory import make_policy, make_pre_post_processors
+    from lerobot.utils.constants import ACTION
+    from lerobot.utils.random_utils import set_seed
 
     if episode_kind not in ("drop", "nominal"):
         raise ValueError(f"episode_kind must be 'drop' or 'nominal' (got {episode_kind!r})")
@@ -487,9 +486,11 @@ def run_pipeline(
             soup_offset_applied = True
             soup_offset_requested = None
         elif layout_seed is not None and placement_config is not None:
-            import numpy as np
-
-            from lerobot.faults.datagen.scene import apply_object_layout, layout_to_serializable, sample_object_layout
+            from lerobot.faults.datagen.scene import (
+                apply_object_layout,
+                layout_to_serializable,
+                sample_object_layout,
+            )
 
             layout = sample_object_layout(
                 rs,
@@ -517,9 +518,7 @@ def run_pipeline(
             layout_rng = np.random.default_rng(int(seed) + 17)
             dx, dy = layout_rng.uniform(-0.04, 0.04, size=2)
             soup_offset_requested = [float(dx), float(dy)]
-            soup_offset_applied = bool(
-                offset_object_xy_on_table(rs, object_name, float(dx), float(dy))
-            )
+            soup_offset_applied = bool(offset_object_xy_on_table(rs, object_name, float(dx), float(dy)))
         initial_soup_pose = get_object_pose(rs, object_name)["pos"].astype(float)
         initial_soup_pos = initial_soup_pose.tolist()
         initial_soup_xy = initial_soup_pose[:2].tolist()
@@ -568,9 +567,15 @@ def run_pipeline(
             log_post_step_to_session,
         )
 
-        def _log_dataset_step(sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str) -> None:
+        def _log_dataset_step(
+            sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str
+        ) -> None:
             executed = executed_action
-            if is_drop_episode and hasattr(env, "last_executed_action") and env.last_executed_action is not None:
+            if (
+                is_drop_episode
+                and hasattr(env, "last_executed_action")
+                and env.last_executed_action is not None
+            ):
                 executed = env.last_executed_action
             if episode_session is not None:
                 log_post_step_to_session(
@@ -699,11 +704,7 @@ def run_pipeline(
             pose_before = get_object_pose(rs, object_name)["pos"].astype(float).copy()
             observation, reward, terminated, truncated, info = env.step(action_numpy)
 
-            if (
-                is_drop_episode
-                and hasattr(env, "consume_policy_reset")
-                and env.consume_policy_reset(0)
-            ):
+            if is_drop_episode and hasattr(env, "consume_policy_reset") and env.consume_policy_reset(0):
                 policy.reset()
                 print(
                     "[pipeline] policy.reset() once after drop (reset_then_ik)",
@@ -713,9 +714,7 @@ def run_pipeline(
             # Post-step regrasp check (catches lift on the same step the planner finishes).
             if is_drop_episode and triggered_at is not None and step > triggered_at and st.recovery_active:
                 try:
-                    if is_object_held_midair(
-                        rs, object_name, min_object_z=0.12, max_eef_distance=0.08
-                    ):
+                    if is_object_held_midair(rs, object_name, min_object_z=0.12, max_eef_distance=0.08):
                         if not regrasped_after_drop:
                             z_now = float(get_object_pose(rs, object_name)["pos"][2])
                             print(
@@ -817,10 +816,7 @@ def run_pipeline(
             # Always log the drop injection frame (loss_mask=0); otherwise stride may skip it.
             is_drop_frame = bool(is_drop_episode and st.drop_injection_step)
             if step % stride == 0 or is_drop_frame:
-                if is_drop_episode:
-                    executed = env.last_executed_action
-                else:
-                    executed = action_numpy
+                executed = env.last_executed_action if is_drop_episode else action_numpy
                 if executed is None:
                     executed = action_numpy
                 _log_dataset_step(step, observation, executed, phase)
@@ -845,9 +841,17 @@ def run_pipeline(
                 # Measuring here scores a successful place as a miss, so hold the arm
                 # still (zero delta, gripper open) and let physics finish.
 
-                def _on_settle(settle_index: int, settle_obs: Any, hold_action: np.ndarray) -> None:
+                release_step = step
+
+                def _on_settle(
+                    settle_index: int,
+                    settle_obs: Any,
+                    hold_action: np.ndarray,
+                    *,
+                    _release_step: int = release_step,
+                ) -> None:
                     nonlocal n_settle_logged
-                    sim_step = step + 1 + settle_index
+                    sim_step = _release_step + 1 + settle_index
                     pose_s = get_object_pose(rs, object_name)
                     object_traj.append(pose_s["pos"].astype(float).tolist())
                     grasp_flags.append(bool(is_object_grasped(rs, object_name)))
@@ -867,7 +871,9 @@ def run_pipeline(
                 phases.extend(settle_phases)
                 break
             if done and not st.triggered:
-                print(f"[pipeline] episode ended at step={step} before drop (no grasp in window?)", flush=True)
+                print(
+                    f"[pipeline] episode ended at step={step} before drop (no grasp in window?)", flush=True
+                )
                 break
 
         basket_place_ok = False
@@ -930,9 +936,7 @@ def run_pipeline(
                 for _ in range(6):
                     try:
                         raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
-                        frames.append(
-                            _overlay_banner(np.asarray(raw[0]), "PHASE: IN BASKET", (20, 140, 60))
-                        )
+                        frames.append(_overlay_banner(np.asarray(raw[0]), "PHASE: IN BASKET", (20, 140, 60)))
                         phases.append(proof_phase)
                     except Exception:
                         break
@@ -1005,9 +1009,7 @@ def run_pipeline(
         )
         min_carry = (
             0
-            if not is_drop_episode
-            or int(fault_cfg.post_grasp_delay_steps) == 0
-            or uses_xy_band
+            if not is_drop_episode or int(fault_cfg.post_grasp_delay_steps) == 0 or uses_xy_band
             else min(10, int(fault_cfg.post_grasp_delay_steps))
         )
         dropped_after_carry = carry_steps is not None and carry_steps >= min_carry
@@ -1039,9 +1041,7 @@ def run_pipeline(
                 "dropped_after_carry": dropped_after_carry,
             }
         else:
-            behavioral_success = bool(
-                basket_place_ok and not seat_assisted and triggered_at is None
-            )
+            behavioral_success = bool(basket_place_ok and not seat_assisted and triggered_at is None)
             checks = {
                 "object_in_basket": basket_place_ok,
                 "seat_assisted": seat_assisted,
@@ -1088,9 +1088,7 @@ def run_pipeline(
         "last_abs": float(yaw_abs[-1]) if yaw_abs else None,
         "min_abs": float(min(yaw_abs)) if yaw_abs else None,
         "max_abs": float(max(yaw_abs)) if yaw_abs else None,
-        "converged": bool(yaw_abs and yaw_abs[-1] < yaw_abs[0] and yaw_abs[-1] <= 0.15)
-        if yaw_abs
-        else None,
+        "converged": bool(yaw_abs and yaw_abs[-1] < yaw_abs[0] and yaw_abs[-1] <= 0.15) if yaw_abs else None,
     }
 
     summary = {
@@ -1147,9 +1145,7 @@ def run_pipeline(
             if is_drop_episode and st0 is not None and st0.drop_basket_xy_dist is not None
             else None
         ),
-        "drop_trigger_reason": (
-            st0.drop_trigger_reason if is_drop_episode and st0 is not None else None
-        ),
+        "drop_trigger_reason": (st0.drop_trigger_reason if is_drop_episode and st0 is not None else None),
         "carry_steps": carry_steps,
         "n_settle_logged": n_settle_logged,
         "object_traj": object_traj,
@@ -1163,9 +1159,7 @@ def run_pipeline(
         "num_frames_video": len(frames),
         "phase_counts": {p: phases.count(p) for p in sorted(set(phases))},
         "loss_mask_counts": loss_counts,
-        "actual_dwell_steps": (
-            int(st0.dwell_steps_completed) if is_drop_episode and st0 is not None else 0
-        ),
+        "actual_dwell_steps": (int(st0.dwell_steps_completed) if is_drop_episode and st0 is not None else 0),
         "trigger_pose": pre_drop_pose,
         "post_step_logging": POST_STEP_LOGGING_CONTRACT,
         "object_pos_delta": float(

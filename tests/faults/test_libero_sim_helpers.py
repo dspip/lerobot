@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from lerobot.faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from_fault
 from lerobot.faults.sim.libero import (
@@ -42,7 +41,9 @@ def test_get_place_destination_prefers_basket():
     rs_env = MagicMock()
     basket = MagicMock()
     basket.root_body = "basket_1_main"
-    rs_env.get_object.side_effect = lambda name: basket if name == "basket_1" else (_ for _ in ()).throw(KeyError(name))
+    rs_env.get_object.side_effect = lambda name: (
+        basket if name == "basket_1" else (_ for _ in ()).throw(KeyError(name))
+    )
     rs_env.sim.data.get_body_xpos.return_value = np.array([0.4, 0.2, 0.85], dtype=float)
 
     dest = get_place_destination(rs_env, "alphabet_soup_1")

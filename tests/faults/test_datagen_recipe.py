@@ -142,9 +142,7 @@ def test_rejects_simple_ik_reset_then_ik(tmp_path: Path) -> None:
         ("simple_ik", "hover_wander"),
     ],
 )
-def test_rejects_unknown_controller_or_mode(
-    tmp_path: Path, controller: str, mode: str
-) -> None:
+def test_rejects_unknown_controller_or_mode(tmp_path: Path, controller: str, mode: str) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
@@ -179,9 +177,7 @@ def test_paired_seed_manifests_share_layout_and_drop(tmp_path: Path) -> None:
 def test_paired_seed_manifests_deterministic_and_vary_by_episode(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
-    payload["experiment_matrix"] = [
-        {**entry, "episodes": 2} for entry in payload["experiment_matrix"]
-    ]
+    payload["experiment_matrix"] = [{**entry, "episodes": 2} for entry in payload["experiment_matrix"]]
     _write_recipe(path, payload)
     recipe = load_drop_datagen_recipe(path)
     a = paired_episode_seed_manifests(recipe, logical_episode_index=0)

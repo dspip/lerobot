@@ -17,11 +17,11 @@ from __future__ import annotations
 import pytest
 
 from lerobot.faults.datagen.drop_trigger import (
-    smolvla_fault_drop_fields,
     sample_smolvla_band_target,
+    smolvla_fault_drop_fields,
 )
-from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
 from lerobot.faults.datagen.recipe import DropXYBand
+from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
 
 
 def test_target_crossing_detects_single_step_jump() -> None:

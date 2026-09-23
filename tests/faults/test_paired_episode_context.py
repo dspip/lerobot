@@ -18,10 +18,14 @@ from pathlib import Path
 
 import numpy as np
 
-from lerobot.faults.datagen.paired_context import build_paired_episode_plan, resolve_path_drop_trigger
 from lerobot.faults.datagen.drop_timing import keepout_m
+from lerobot.faults.datagen.paired_context import build_paired_episode_plan, resolve_path_drop_trigger
 from lerobot.faults.datagen.path_drop import eligible_path
-from lerobot.faults.datagen.recipe import legacy_drop_recipe, load_drop_datagen_recipe, paired_episode_seed_manifests
+from lerobot.faults.datagen.recipe import (
+    legacy_drop_recipe,
+    load_drop_datagen_recipe,
+    paired_episode_seed_manifests,
+)
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,9 +36,7 @@ def test_paired_plan_identical_for_all_variants_same_logical_episode() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     plans = [
-        build_paired_episode_plan(
-            recipe, manifest=m, object_name="alphabet_soup_1", num_init_states=50
-        )
+        build_paired_episode_plan(recipe, manifest=m, object_name="alphabet_soup_1", num_init_states=50)
         for m in manifests
     ]
     keys = (

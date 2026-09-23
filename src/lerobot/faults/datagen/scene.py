@@ -32,6 +32,8 @@ TABLE_XY_LIMIT_M = 0.7
 
 @dataclass(frozen=True)
 class ObjectLayoutPose:
+    """World-frame position and orientation for one object in a sampled layout."""
+
     pos: np.ndarray
     quat_wxyz: np.ndarray
 
@@ -57,8 +59,7 @@ def _sample_layout_poses(
     )[:2]
     sampled = sample_layout(
         objects=[
-            ObjectPose2d(name=name, xy=pose["pos"][:2].copy(), yaw_rad=0.0)
-            for name, pose in reset.items()
+            ObjectPose2d(name=name, xy=pose["pos"][:2].copy(), yaw_rad=0.0) for name, pose in reset.items()
         ],
         basket_xy=basket_xy,
         table_xy_lim=TABLE_XY_LIMIT_M,
@@ -89,6 +90,7 @@ def sample_object_layout(
     object_name: str,
     rng: np.random.Generator,
 ) -> dict[str, ObjectLayoutPose] | None:
+    """Sample collision-aware poses for movable objects on the LIBERO table."""
     return _sample_layout_poses(
         rs_env,
         basket_name=recipe.basket_name,
@@ -99,6 +101,7 @@ def sample_object_layout(
 
 
 def apply_object_layout(rs_env: Any, layout: dict[str, ObjectLayoutPose]) -> None:
+    """Write sampled poses into the sim and settle with extra physics steps."""
     for name, pose in layout.items():
         set_object_pose(
             rs_env,
@@ -112,6 +115,7 @@ def apply_object_layout(rs_env: Any, layout: dict[str, ObjectLayoutPose]) -> Non
 
 
 def layout_to_serializable(layout: dict[str, ObjectLayoutPose]) -> dict[str, dict[str, list[float]]]:
+    """Convert in-memory layout poses to JSON-friendly float lists."""
     return {
         name: {
             "pos": pose.pos.astype(float).tolist(),
@@ -122,6 +126,7 @@ def layout_to_serializable(layout: dict[str, ObjectLayoutPose]) -> dict[str, dic
 
 
 def apply_serializable_layout(rs_env: Any, layout: dict[str, dict[str, list[float]]]) -> None:
+    """Restore a shared layout dict produced by :func:`layout_to_serializable`."""
     typed = {
         name: ObjectLayoutPose(
             pos=np.asarray(values["pos"], dtype=np.float64),

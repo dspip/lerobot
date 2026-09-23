@@ -54,6 +54,7 @@ class DropDatagenRunnerError(RuntimeError):
 
 
 def variant_output_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> Path:
+    """Per-episode artifact directory for one controller/mode variant."""
     base = Path(recipe.recording.output_dir)
     return (
         base
@@ -70,9 +71,7 @@ def _adapter_for(
 ) -> DatagenControllerAdapter:
     factory = factories.get(controller)
     if factory is None:
-        raise DropDatagenRunnerError(
-            f"Missing adapter factory for controller {controller.value!r}"
-        )
+        raise DropDatagenRunnerError(f"Missing adapter factory for controller {controller.value!r}")
     return factory(recipe)
 
 
@@ -94,6 +93,7 @@ def run_drop_datagen_matrix(
     init_state_count_provider: InitStateCountProvider | None = None,
     dataset_writer: RunDatasetWriter | None = None,
 ) -> tuple[EpisodeResult, ...]:
+    """Run the full experiment matrix and record datasets plus manifest metadata."""
     factories = default_adapter_factories() if adapter_factories is None else adapter_factories
     layout_fn = layout_provider or libero_shared_layout_provider
     init_count_fn = init_state_count_provider or libero_init_state_count
@@ -103,9 +103,7 @@ def run_drop_datagen_matrix(
     try:
         num_init_states = int(init_count_fn(recipe))
     except Exception as exc:
-        raise DropDatagenRunnerError(
-            f"could not resolve LIBERO init state count: {exc}"
-        ) from exc
+        raise DropDatagenRunnerError(f"could not resolve LIBERO init state count: {exc}") from exc
     writer = dataset_writer if dataset_writer is not None else RunDatasetWriter(recipe)
     results: list[EpisodeResult] = []
     run_ok = False
@@ -114,9 +112,7 @@ def run_drop_datagen_matrix(
         for logical_index in logical_episode_indices:
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
             if not manifests:
-                raise DropDatagenRunnerError(
-                    f"No manifests for logical episode index {logical_index}"
-                )
+                raise DropDatagenRunnerError(f"No manifests for logical episode index {logical_index}")
             object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
             paired_plan = build_paired_episode_plan(
                 recipe,
@@ -191,6 +187,7 @@ def run_drop_datagen_matrix(
 
 
 def default_adapter_factories() -> dict[DatagenController, AdapterFactory]:
+    """Built-in controller adapter factories for SimpleIK and SmolVLA."""
     from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
     from lerobot.faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
 

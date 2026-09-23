@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -38,7 +37,6 @@ from lerobot.faults.datagen.dataset_writer import (
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.frame_logging import (
     POST_STEP_LOGGING_CONTRACT,
-    log_fault_recovery_step,
     log_post_step_to_session,
     loss_mask_for_datagen_env,
 )

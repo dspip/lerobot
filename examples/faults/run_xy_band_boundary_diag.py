@@ -65,8 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         for attempt in range(int(args.attempts_per_target)):
             ep_dir = episodes_root / f"{label}_seed_{seed}"
             print(
-                f"[boundary] target={target_dist} band=[{band_lo},{band_hi}] "
-                f"min_drop={min_drop} seed={seed}",
+                f"[boundary] target={target_dist} band=[{band_lo},{band_hi}] min_drop={min_drop} seed={seed}",
                 flush=True,
             )
             try:
@@ -110,9 +109,7 @@ def main(argv: list[str] | None = None) -> int:
                     "triggered_at": summary.get("triggered_at"),
                     "drop_basket_xy_dist": summary.get("drop_basket_xy_dist"),
                     "pre_drop_xy": (
-                        summary.get("pre_drop_pose")[:2]
-                        if summary.get("pre_drop_pose")
-                        else None
+                        summary.get("pre_drop_pose")[:2] if summary.get("pre_drop_pose") else None
                     ),
                     "landing_pos": summary.get("final_object_pos"),
                     "in_basket": checks.get("object_in_basket"),

@@ -42,6 +42,7 @@ __all__ = [
 
 
 def select_episode_object(drop_seed: int, object_names: tuple[str, ...]) -> str:
+    """Deterministically pick the manipulated object name from ``drop_seed``."""
     if not object_names:
         raise ValueError("object_names must be non-empty")
     rng = np.random.default_rng(int(drop_seed))
@@ -50,6 +51,8 @@ def select_episode_object(drop_seed: int, object_names: tuple[str, ...]) -> str:
 
 @dataclass(frozen=True)
 class EpisodeRequest:
+    """Inputs passed to a controller adapter for one matrix variant run."""
+
     recipe: DropDatagenRecipe
     manifest: EpisodeSeedManifest
     object_name: str
@@ -63,6 +66,8 @@ class EpisodeRequest:
 
 @dataclass
 class EpisodeResult:
+    """Structured outcome and seed metadata from one variant episode."""
+
     controller: DatagenController
     post_drop_mode: PostDropMode
     logical_episode_index: int
@@ -98,6 +103,7 @@ class EpisodeResult:
         error: str | None = None,
         **details: Any,
     ) -> EpisodeResult:
+        """Build a result row from a completed run and optional drop metadata."""
         dwell = effective_post_drop_dwell_steps(request.recipe, request.manifest.post_drop_mode)
         return cls(
             controller=request.manifest.controller,
@@ -122,8 +128,10 @@ class EpisodeResult:
 
     @classmethod
     def ok(cls, request: EpisodeRequest, *, outcome: str = "completed", **details: Any) -> EpisodeResult:
+        """Shorthand for a successful ``from_run``."""
         return cls.from_run(request, success=True, outcome=outcome, **details)
 
     @classmethod
     def failed(cls, request: EpisodeRequest, *, outcome: str, error: str) -> EpisodeResult:
+        """Shorthand for a failed ``from_run`` with an error string."""
         return cls.from_run(request, success=False, outcome=outcome, error=error)

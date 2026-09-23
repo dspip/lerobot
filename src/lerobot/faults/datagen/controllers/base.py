@@ -19,9 +19,10 @@ from __future__ import annotations
 from typing import Protocol
 
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.recipe import DropDatagenRecipe
 
 
 class DatagenControllerAdapter(Protocol):
+    """Run one matrix variant episode and return structured metadata."""
+
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
         """Run one matrix variant episode and return a structured result."""

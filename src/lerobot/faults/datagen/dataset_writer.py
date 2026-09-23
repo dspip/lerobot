@@ -56,17 +56,20 @@ class RunDatasetFinalizeError(RuntimeError):
     """Raised when one or more variant loggers fail to finalize."""
 
     def __init__(self, errors: list[BaseException]) -> None:
+        """Attach the logger finalize exceptions that caused the failure."""
         self.errors = list(errors)
         msg = "; ".join(str(exc) for exc in errors)
         super().__init__(f"dataset logger finalize failed: {msg}")
 
 
 def variant_dataset_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> Path:
+    """Return the on-disk LeRobot dataset root for one controller/mode variant."""
     base = Path(recipe.recording.output_dir)
     return base / manifest.controller.value / manifest.post_drop_mode.value / "dataset"
 
 
 def variant_repo_id(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> str:
+    """Hub-style repo id for a controller/mode variant dataset."""
     return f"{recipe.name}/{manifest.controller.value}/{manifest.post_drop_mode.value}"
 
 
@@ -86,6 +89,7 @@ def assert_fresh_run_output_dir(recipe: DropDatagenRecipe) -> None:
 
 
 def evaluate_datagen_keep(request: EpisodeRequest, result: EpisodeResult) -> tuple[bool, str | None]:
+    """Decide whether logged frames should be committed for this matrix outcome."""
     plan = request.paired_plan
     if not plan.drop_decision.drop:
         if result.success:
@@ -109,6 +113,7 @@ class DatagenEpisodeSession:
 
     @property
     def is_open(self) -> bool:
+        """Whether this session has buffered at least one frame since open or commit."""
         return self._open
 
     def log_step(
@@ -121,6 +126,7 @@ class DatagenEpisodeSession:
         phase: str | None = None,
         annotation: dict[str, Any] | None = None,
     ) -> None:
+        """Append one frame to the shared variant logger buffer."""
         self._open = True
         self.logger.log_step(
             observation_dict,
@@ -132,6 +138,7 @@ class DatagenEpisodeSession:
         )
 
     def discard(self) -> None:
+        """Drop buffered frames without committing an episode."""
         if self._open:
             self.logger.clear_open_episode()
         self._open = False
@@ -156,6 +163,7 @@ class RunDatasetWriter:
         logger_factory: LoggerFactory | None = None,
         skip_fresh_output_check: bool = False,
     ) -> None:
+        """Create per-variant loggers and enforce a fresh recording output directory."""
         if not skip_fresh_output_check:
             assert_fresh_run_output_dir(recipe)
         self._recipe = recipe
@@ -166,9 +174,11 @@ class RunDatasetWriter:
 
     @property
     def episode_rows(self) -> tuple[EpisodeMetadataRow, ...]:
+        """Metadata rows accumulated for episodes processed so far."""
         return tuple(self._episode_rows)
 
     def open_episode_session(self, manifest: EpisodeSeedManifest) -> DatagenEpisodeSession:
+        """Return a session bound to the logger for this controller/mode variant."""
         key = _variant_key(manifest)
         root = variant_dataset_directory(self._recipe, manifest)
         repo_id = variant_repo_id(self._recipe, manifest)
@@ -176,8 +186,7 @@ class RunDatasetWriter:
             info_path = root / "meta" / "info.json"
             if info_path.is_file():
                 raise StaleRunOutputError(
-                    f"Variant dataset already exists at {root}. "
-                    "Refusing to append to a prior run."
+                    f"Variant dataset already exists at {root}. Refusing to append to a prior run."
                 )
             root.parent.mkdir(parents=True, exist_ok=True)
             self._loggers[key] = self._logger_factory(
@@ -200,6 +209,7 @@ class RunDatasetWriter:
         result: EpisodeResult,
         session: DatagenEpisodeSession,
     ) -> EpisodeMetadataRow:
+        """Commit or discard frames, append manifest metadata, and update ``result`` keep flags."""
         keep, reason = evaluate_datagen_keep(request, result)
         dataset_episode_index: int | None = None
         if keep:
@@ -226,6 +236,7 @@ class RunDatasetWriter:
         return row
 
     def finalize(self) -> Path:
+        """Flush all variant datasets and write ``run_manifest.json`` once."""
         if self._manifest_written:
             return Path(self._recipe.recording.output_dir) / "run_manifest.json"
         self._finalize_loggers()

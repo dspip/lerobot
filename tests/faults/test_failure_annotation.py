@@ -136,9 +136,7 @@ def test_recovery_release_is_not_a_second_onset():
 
 
 def test_clip_failure_to_first_interval_drops_one_frame_reentry():
-    fail, onset = clip_failure_to_first_interval(
-        [False, True, True, False, False, True, False]
-    )
+    fail, onset = clip_failure_to_first_interval([False, True, True, False, False, True, False])
     assert fail.tolist() == [False, True, True, False, False, False, False]
     assert onset.tolist() == [False, True, False, False, False, False, False]
 

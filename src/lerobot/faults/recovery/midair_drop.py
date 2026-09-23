@@ -13,7 +13,11 @@ if TYPE_CHECKING:
 import numpy as np
 
 from lerobot.faults.config import FaultInjectionConfig
+from lerobot.faults.logging import FaultEventLogger
+from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
 from lerobot.faults.recovery.fps import resolve_target_fps
+from lerobot.faults.recovery.loss_mask import loss_mask_from_fault
+from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 from lerobot.faults.sim.libero import (
     _body_xpos,
     force_close_gripper,
@@ -33,10 +37,6 @@ from lerobot.faults.sim.libero import (
     object_pose_orientation,
     seat_object_in_basket_if_above,
 )
-from lerobot.faults.logging import FaultEventLogger
-from lerobot.faults.recovery.loss_mask import loss_mask_from_fault
-from lerobot.faults.recovery.basket_drop_target import basket_distance_target_reached
-from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
 
 # Never inject a drop closer than this XY distance to the basket (meters).
 # ``min_drop_distance_from_basket_m`` is a skip radius: if the object is still
@@ -123,6 +123,7 @@ class MidAirDropFault:
         num_envs: int,
         event_logger: FaultEventLogger | None = None,
     ) -> None:
+        """Configure per-env drop state from ``FaultInjectionConfig``."""
         if config.type != "midair_drop":
             raise ValueError(f"MidAirDropFault requires type='midair_drop', got {config.type!r}.")
         config.validate(num_envs=num_envs)
@@ -136,6 +137,7 @@ class MidAirDropFault:
 
     @property
     def enabled(self) -> bool:
+        """Whether fault injection is active for this wrapper."""
         return bool(self.config.enabled)
 
     def set_recovery_motion_profile(
@@ -427,9 +429,7 @@ class MidAirDropFault:
             return np.asarray(proposed_action, dtype=np.float32)
         state.drop_trigger_reason = str(reason)
         state.will_activate = True
-        executed = self._trigger_drop(
-            env, env_idx, state, proposed_action=np.asarray(proposed_action)
-        )
+        executed = self._trigger_drop(env, env_idx, state, proposed_action=np.asarray(proposed_action))
         dwell_steps = int(self.config.post_drop_dwell_steps)
         if dwell_steps > 0:
             state.externally_scheduled_drop = True
@@ -565,9 +565,7 @@ class MidAirDropFault:
         state.drop_trigger_reason = reason
         state.awaiting_manual_recovery = False
         destination = self._start_recovery_planner(env, env_idx, state)
-        recovery_action = (
-            self._next_recovery_action(env_idx, env=env) if consume_first_action else None
-        )
+        recovery_action = self._next_recovery_action(env_idx, env=env) if consume_first_action else None
         rs_env = get_robosuite_env(env, env_idx=env_idx)
         self._log_event(
             env_idx=env_idx,
@@ -599,9 +597,7 @@ class MidAirDropFault:
             )
             arm_noise_rad = float(np.deg2rad(self.config.arm_posture_noise_deg))
             arm_posture_noise = ep_rng.uniform(-arm_noise_rad, arm_noise_rad, size=3)
-            pickup_radius = float(self.config.pickup_via_offset_m) * float(
-                np.sqrt(ep_rng.random())
-            )
+            pickup_radius = float(self.config.pickup_via_offset_m) * float(np.sqrt(ep_rng.random()))
             pickup_angle = float(ep_rng.uniform(-np.pi, np.pi))
             pickup_offset_xy_m = (
                 pickup_radius * float(np.cos(pickup_angle)),
@@ -825,9 +821,7 @@ class MidAirDropFault:
                 )
             )
             state.place_succeeded = in_basket
-            state.proof_object_pos = get_object_pose(rs_env, self.config.object_name)[
-                "pos"
-            ].astype(float)
+            state.proof_object_pos = get_object_pose(rs_env, self.config.object_name)["pos"].astype(float)
             state.proof_basket_pos = _body_xpos_safe(rs_env, self.config.basket_name)
             print(
                 f"[drop_fault] place after physics: seated={seated} "
@@ -877,9 +871,7 @@ class MidAirDropFault:
         action = state.planner.next_action(
             eef_pos=eef_pos,
             object_pos=object_pose["pos"],
-            closing_axis=get_gripper_closing_axis(rs_env)
-            if self.config.side_grasp_enabled
-            else None,
+            closing_axis=get_gripper_closing_axis(rs_env) if self.config.side_grasp_enabled else None,
             object_axis=self._object_long_axis(rs_env),
         )
         if action is None:
@@ -908,9 +900,7 @@ class MidAirDropFault:
         if env_idx < 0 or env_idx >= self.num_envs:
             raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
         state = self._states[env_idx]
-        post_drop_dwell = (
-            state.triggered and not state.recovery_active and not state.drop_injection_step
-        )
+        post_drop_dwell = state.triggered and not state.recovery_active and not state.drop_injection_step
         return loss_mask_from_fault(
             triggered=state.triggered,
             drop_injection_step=state.drop_injection_step,
@@ -967,9 +957,7 @@ class MidAirDropFault:
         if state.last_impulse_ang is not None:
             event["impulse_ang"] = state.last_impulse_ang.astype(float).tolist()
         event["post_grasp_delay_steps"] = int(self.config.post_grasp_delay_steps)
-        event["min_drop_distance_from_basket_m"] = float(
-            self.config.min_drop_distance_from_basket_m
-        )
+        event["min_drop_distance_from_basket_m"] = float(self.config.min_drop_distance_from_basket_m)
         if state.drop_basket_xy_dist is not None:
             event["drop_basket_xy_dist"] = float(state.drop_basket_xy_dist)
         if state.drop_trigger_reason is not None:

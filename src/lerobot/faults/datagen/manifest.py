@@ -63,6 +63,8 @@ EPISODE_METADATA_FIELDS: tuple[str, ...] = (
 
 @dataclass
 class EpisodeMetadataRow:
+    """One episode's seeds, layout, drop metadata, and keep decision for ``run_manifest.json``."""
+
     controller: str
     post_drop_mode: str
     object_name: str
@@ -89,17 +91,21 @@ class EpisodeMetadataRow:
     dataset_episode_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize this row to a JSON-compatible dict."""
         return asdict(self)
 
 
 @dataclass
 class RunManifest:
+    """Top-level manifest written after a successful unified datagen matrix run."""
+
     recipe_name: str
     base_seed: int
     output_dir: str
     episodes: list[EpisodeMetadataRow]
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the run manifest including all episode rows."""
         return {
             "recipe_name": self.recipe_name,
             "base_seed": self.base_seed,
@@ -116,6 +122,7 @@ def build_episode_metadata_row(
     keep_reason: str | None,
     dataset_episode_index: int | None = None,
 ) -> EpisodeMetadataRow:
+    """Assemble manifest metadata from the request, result, and keep decision."""
     manifest = request.manifest
     plan = request.paired_plan
     dwell = effective_post_drop_dwell_steps(request.recipe, manifest.post_drop_mode)
@@ -163,6 +170,7 @@ def build_episode_metadata_row(
 
 
 def write_run_manifest_atomic(path: Path, manifest: RunManifest) -> None:
+    """Write ``run_manifest.json`` via a temporary file and atomic replace."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
@@ -176,6 +184,7 @@ def _row_from_dict(data: dict[str, Any]) -> EpisodeMetadataRow:
 
 
 def read_run_manifest(path: Path) -> RunManifest:
+    """Load a run manifest from disk."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     episodes = [_row_from_dict(item) for item in raw.get("episodes", [])]
     return RunManifest(

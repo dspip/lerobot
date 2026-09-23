@@ -29,7 +29,6 @@ from lerobot.faults.datagen.recipe import (
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.runner import (
     DropDatagenRunnerError,
     run_drop_datagen_matrix,
@@ -269,12 +268,9 @@ class _FakeAdapter:
 def test_init_state_count_provider_called_once_per_matrix_run(tmp_path: Path) -> None:
     recipe = _recipe_with_output(tmp_path)
     matrix_two_episodes = tuple(
-        variant.__class__(**{**variant.__dict__, "episodes": 2})
-        for variant in recipe.experiment_matrix
+        variant.__class__(**{**variant.__dict__, "episodes": 2}) for variant in recipe.experiment_matrix
     )
-    recipe = recipe.__class__(
-        **{**recipe.__dict__, "experiment_matrix": matrix_two_episodes}
-    )
+    recipe = recipe.__class__(**{**recipe.__dict__, "experiment_matrix": matrix_two_episodes})
     calls: list[int] = []
 
     def _count_once(_recipe) -> int:

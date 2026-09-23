@@ -146,6 +146,7 @@ class FaultInjectionConfig:
     post_drop_mode: str = "immediate_ik"
 
     def __post_init__(self) -> None:
+        """Normalize path fields and run ``validate()``."""
         if isinstance(self.log_path, str):
             self.log_path = Path(self.log_path)
         if isinstance(self.diag_dir, str):
@@ -195,9 +196,7 @@ class FaultInjectionConfig:
             if self.type == "visual_blur" and self.blur_sigma <= 0:
                 raise ValueError(f"blur_sigma must be > 0 (got {self.blur_sigma}).")
             if self.type == "brightness_drop" and not (0.0 <= self.brightness_scale <= 1.0):
-                raise ValueError(
-                    f"brightness_scale must be in [0.0, 1.0] (got {self.brightness_scale})."
-                )
+                raise ValueError(f"brightness_scale must be in [0.0, 1.0] (got {self.brightness_scale}).")
         elif self.type == "obs_latency":
             if self.latency_steps < 1:
                 raise ValueError(f"latency_steps must be >= 1 (got {self.latency_steps}).")
@@ -228,17 +227,13 @@ class FaultInjectionConfig:
                 if self.impulse_ang_std < 0:
                     raise ValueError(f"impulse_ang_std must be >= 0 (got {self.impulse_ang_std}).")
                 if len(self.impulse_lin_bias) != 3:
-                    raise ValueError(
-                        f"impulse_lin_bias must have length 3 (got {self.impulse_lin_bias})."
-                    )
+                    raise ValueError(f"impulse_lin_bias must have length 3 (got {self.impulse_lin_bias}).")
                 if self.post_grasp_delay_steps < 0:
                     raise ValueError(
                         f"post_grasp_delay_steps must be >= 0 (got {self.post_grasp_delay_steps})."
                     )
                 if self.gripper_settle_steps < 0:
-                    raise ValueError(
-                        f"gripper_settle_steps must be >= 0 (got {self.gripper_settle_steps})."
-                    )
+                    raise ValueError(f"gripper_settle_steps must be >= 0 (got {self.gripper_settle_steps}).")
                 if self.min_object_z < 0:
                     raise ValueError(f"min_object_z must be >= 0 (got {self.min_object_z}).")
                 if self.min_drop_distance_from_basket_m < 0:
@@ -249,31 +244,22 @@ class FaultInjectionConfig:
                 band_lo = self.drop_xy_band_min
                 band_hi = self.drop_xy_band_max
                 if (band_lo is None) != (band_hi is None):
-                    raise ValueError(
-                        "drop_xy_band_min and drop_xy_band_max must both be set or both None."
-                    )
+                    raise ValueError("drop_xy_band_min and drop_xy_band_max must both be set or both None.")
                 if band_lo is not None:
                     lo = float(band_lo)
                     hi = float(band_hi)  # type: ignore[arg-type]
                     if lo < 0.0 or hi < 0.0:
-                        raise ValueError(
-                            f"drop_xy_band bounds must be >= 0 (got min={lo}, max={hi})."
-                        )
+                        raise ValueError(f"drop_xy_band bounds must be >= 0 (got min={lo}, max={hi}).")
                     if hi < lo:
-                        raise ValueError(
-                            f"drop_xy_band_max must be >= drop_xy_band_min (got {hi} < {lo})."
-                        )
+                        raise ValueError(f"drop_xy_band_max must be >= drop_xy_band_min (got {hi} < {lo}).")
                 target_m = self.drop_xy_target_m
                 if target_m is not None:
                     if band_lo is None or band_hi is None:
-                        raise ValueError(
-                            "drop_xy_target_m requires drop_xy_band_min and drop_xy_band_max."
-                        )
+                        raise ValueError("drop_xy_target_m requires drop_xy_band_min and drop_xy_band_max.")
                     t = float(target_m)
                     if t < float(band_lo) or t > float(band_hi):
                         raise ValueError(
-                            f"drop_xy_target_m must lie within the band "
-                            f"[{band_lo}, {band_hi}] (got {t})."
+                            f"drop_xy_target_m must lie within the band [{band_lo}, {band_hi}] (got {t})."
                         )
                 if self.recovery_fps < 1:
                     raise ValueError(f"recovery_fps must be >= 1 (got {self.recovery_fps}).")
@@ -282,13 +268,10 @@ class FaultInjectionConfig:
                 if not self.basket_name:
                     raise ValueError("basket_name must be non-empty.")
                 if self.waypoint_noise_m < 0:
-                    raise ValueError(
-                        f"waypoint_noise_m must be >= 0 (got {self.waypoint_noise_m})."
-                    )
+                    raise ValueError(f"waypoint_noise_m must be >= 0 (got {self.waypoint_noise_m}).")
                 if self.recovery_action_noise_std < 0:
                     raise ValueError(
-                        f"recovery_action_noise_std must be >= 0 "
-                        f"(got {self.recovery_action_noise_std})."
+                        f"recovery_action_noise_std must be >= 0 (got {self.recovery_action_noise_std})."
                     )
                 if self.speed_multiplier_min <= 0 or self.speed_multiplier_max <= 0:
                     raise ValueError("speed_multiplier bounds must be positive.")
@@ -313,8 +296,7 @@ class FaultInjectionConfig:
                     )
                 if self.post_drop_mode not in POST_DROP_MODES:
                     raise ValueError(
-                        f"post_drop_mode must be one of {POST_DROP_MODES} "
-                        f"(got {self.post_drop_mode!r})."
+                        f"post_drop_mode must be one of {POST_DROP_MODES} (got {self.post_drop_mode!r})."
                     )
                 if self.post_drop_mode == "reset_then_ik" and self.post_drop_dwell_steps == 0:
                     raise ValueError(

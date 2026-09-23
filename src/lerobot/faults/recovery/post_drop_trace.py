@@ -66,11 +66,7 @@ def summarize_post_drop_trace(frames: list[dict]) -> dict[str, Any]:
             return 0.0
         return sum(1 for f in frames if pred(f)) / n_frames
 
-    wrist_frac: float | None
-    if not wrist_vals:
-        wrist_frac = None
-    else:
-        wrist_frac = sum(1 for v in wrist_vals if v) / len(wrist_vals)
+    wrist_frac: float | None = None if not wrist_vals else sum(1 for v in wrist_vals if v) / len(wrist_vals)
 
     return {
         "n_frames": n_frames,
@@ -82,12 +78,8 @@ def summarize_post_drop_trace(frames: list[dict]) -> dict[str, Any]:
         "median_eef_obj_xy_m": float(median(xy_vals)),
         "median_eef_above_obj_m": float(median(above_vals)),
         "frac_eef_xy_gt_0.15": _frac(lambda f: float(f["eef_obj_xy_m"]) > 0.15),
-        "frac_eef_above_0.02_0.10": _frac(
-            lambda f: 0.02 <= float(f["eef_above_obj_m"]) < 0.10
-        ),
-        "frac_eef_above_0.10_0.25": _frac(
-            lambda f: 0.10 <= float(f["eef_above_obj_m"]) < 0.25
-        ),
+        "frac_eef_above_0.02_0.10": _frac(lambda f: 0.02 <= float(f["eef_above_obj_m"]) < 0.10),
+        "frac_eef_above_0.10_0.25": _frac(lambda f: 0.10 <= float(f["eef_above_obj_m"]) < 0.25),
         "frac_in_basket_z014": _frac(lambda f: bool(f["in_basket_z014"])),
         "frac_in_basket_z020": _frac(lambda f: bool(f["in_basket_z020"])),
         "frac_wrist_visible": wrist_frac,
@@ -120,9 +112,7 @@ def aggregate_seed_summaries(per_seed: dict[str, dict[str, Any]]) -> dict[str, A
         agg[f"mean_{key}"] = float(sum(vals) / len(vals)) if vals else 0.0
 
     wrist_vals = [
-        s["frac_wrist_visible"]
-        for s in per_seed.values()
-        if s.get("frac_wrist_visible") is not None
+        s["frac_wrist_visible"] for s in per_seed.values() if s.get("frac_wrist_visible") is not None
     ]
     agg["mean_frac_wrist_visible"] = float(sum(wrist_vals) / len(wrist_vals)) if wrist_vals else None
 

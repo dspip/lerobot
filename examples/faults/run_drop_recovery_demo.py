@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
 
+from lerobot.faults.annotation import annotation_from_scripted_phase
 from lerobot.faults.datagen.demo_randomization import RandomizationConfig, sample_episode_params
+from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
 from lerobot.faults.recovery.fps import (
     SMOLVLA_LIBERO_TARGET_FPS,
     assert_control_rate_aligned,
@@ -32,11 +35,9 @@ from lerobot.faults.recovery.fps import (
     resolve_target_fps,
 )
 from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
-from lerobot.faults.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
-from lerobot.faults.annotation import annotation_from_scripted_phase
-from lerobot.faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
 from lerobot.faults.recovery.loss_mask import loss_mask_for_step
 from lerobot.faults.recovery.planner import SimpleIKRecoveryPlanner
+from lerobot.faults.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DRY_DIR = REPO_ROOT / "outputs" / "demo_drop_recovery_dry"
@@ -120,9 +121,7 @@ def run_dry_run(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS
 
     assert_dataset_fps(ds_logger.dataset.fps, policy_fps)
     counts = ds_logger.loss_mask_counts
-    assert counts.get(1.0, 0) == total - 1, (
-        f"Expected {total - 1} masked-in frames, got {counts.get(1.0, 0)}"
-    )
+    assert counts.get(1.0, 0) == total - 1, f"Expected {total - 1} masked-in frames, got {counts.get(1.0, 0)}"
     assert counts.get(0.0, 0) == 1, f"Expected 1 drop-injection frame, got {counts.get(0.0, 0)}"
     assert ds_logger.dataset.fps == policy_fps == SMOLVLA_LIBERO_TARGET_FPS
 
@@ -137,7 +136,6 @@ def run_dry_run(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS
 def run_live(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS) -> None:
     """Run one LIBERO episode with midair_drop when dependencies are available."""
     from lerobot.envs.factory import make_env
-
     from lerobot.faults.config import FaultInjectionConfig
     from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 

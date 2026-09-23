@@ -59,13 +59,11 @@ def build_datagen_post_step_log_context(
     is_drop_episode: bool,
     env_idx: int = 0,
 ) -> DatagenPostStepLogContext:
+    """Summarize fault phase and loss mask after one env step."""
     state = env.fault._states[env_idx]
     drop_injection_step = bool(is_drop_episode and state.drop_injection_step)
     post_drop_dwell_step = bool(
-        is_drop_episode
-        and state.triggered
-        and not state.recovery_active
-        and not state.drop_injection_step
+        is_drop_episode and state.triggered and not state.recovery_active and not state.drop_injection_step
     )
     recovery_active = bool(is_drop_episode and state.recovery_active)
     loss_mask = loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode, env_idx=env_idx)
@@ -78,6 +76,7 @@ def build_datagen_post_step_log_context(
         recovery_active=recovery_active,
         loss_mask=float(loss_mask),
     )
+
 
 POST_STEP_LOGGING_CONTRACT = (
     "Datagen frames use POST env.step() state: post_step_observation is the observation "
@@ -92,6 +91,7 @@ def should_log_sim_step(
     recording_stride: int,
     force_drop_injection: bool = False,
 ) -> bool:
+    """Return whether this sim step should be written at the configured stride."""
     if force_drop_injection:
         return True
     stride = max(int(recording_stride), 1)
@@ -99,12 +99,15 @@ def should_log_sim_step(
 
 
 def loss_mask_for_datagen_env(env: Any, *, is_drop_episode: bool, env_idx: int = 0) -> float:
+    """Return ``1.0`` for nominal episodes or the wrapper loss mask for drop episodes."""
     if not is_drop_episode:
         return 1.0
     return float(env.loss_mask(env_idx))
 
 
 class DatasetStepLogger(Protocol):
+    """Minimal logger surface used by datagen frame helpers."""
+
     def log_step(
         self,
         observation_dict: dict[str, Any],
@@ -113,7 +116,9 @@ class DatasetStepLogger(Protocol):
         loss_mask: float,
         phase: str | None = None,
         annotation: dict[str, Any] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Append one dataset frame with optional phase and annotation metadata."""
+        ...
 
 
 def log_fault_recovery_step(
@@ -126,6 +131,7 @@ def log_fault_recovery_step(
     phase: str | None = None,
     annotation: dict[str, Any] | None = None,
 ) -> None:
+    """Forward one POST-step frame to any ``DatasetStepLogger`` implementation."""
     logger.log_step(
         observation_dict,
         executed_action,

@@ -58,28 +58,21 @@ def inject_trailing_tpad(filter_graph: str, pad_seconds: list[float]) -> str:
         return filter_graph
     *chains, hstack = parts
     if len(chains) != len(pad_seconds):
-        raise ValueError(
-            f"pad_seconds length {len(pad_seconds)} != input chains {len(chains)}"
-        )
+        raise ValueError(f"pad_seconds length {len(pad_seconds)} != input chains {len(chains)}")
     new_chains: list[str] = []
     for i, (chain, pad) in enumerate(zip(chains, pad_seconds, strict=True)):
         suffix = f"[v{i}]"
         if not chain.endswith(suffix):
             raise ValueError(f"Expected chain to end with {suffix!r}: {chain!r}")
         if pad > 0:
-            chain = (
-                chain[: -len(suffix)]
-                + f",tpad=stop_mode=clone:stop_duration={pad:.6f}{suffix}"
-            )
+            chain = chain[: -len(suffix)] + f",tpad=stop_mode=clone:stop_duration={pad:.6f}{suffix}"
         new_chains.append(chain)
     return ";".join([*new_chains, hstack])
 
 
 def parse_episode_arg(raw: str) -> tuple[str, Path]:
     if "=" not in raw:
-        raise ValueError(
-            f"Invalid --episode {raw!r}; expected LABEL=PATH (e.g. immediate_ik=outputs/run_a)."
-        )
+        raise ValueError(f"Invalid --episode {raw!r}; expected LABEL=PATH (e.g. immediate_ik=outputs/run_a).")
     label, path_str = raw.split("=", 1)
     label = label.strip()
     if not label:

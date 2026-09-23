@@ -216,9 +216,10 @@ def test_manual_drop_waits_until_request_recovery(
     mock_in_basket.return_value = False
     mock_dest.return_value = np.array([0.3, 0.2, 0.9])
 
-    with patch("lerobot.faults.recovery.midair_drop.get_object_pose") as mock_obj_pose, patch(
-        "lerobot.faults.recovery.midair_drop.get_eef_pose"
-    ) as mock_eef:
+    with (
+        patch("lerobot.faults.recovery.midair_drop.get_object_pose") as mock_obj_pose,
+        patch("lerobot.faults.recovery.midair_drop.get_eef_pose") as mock_eef,
+    ):
         mock_obj_pose.return_value = {
             "pos": np.zeros(3),
             "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0]),

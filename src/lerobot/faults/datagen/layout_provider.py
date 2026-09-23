@@ -36,6 +36,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class LayoutProviderContext:
+    """Inputs for building the shared object layout across matrix variants."""
+
     recipe: DropDatagenRecipe
     plan: PairedEpisodePlan
     object_name: str

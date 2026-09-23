@@ -54,47 +54,57 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
         drop_u=0.05,
     )
     carry_path = CarryPath(
-        segments=(
-            PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        ),
+        segments=(PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
         requested_transport_offset_m=0.0,
         resolved_transport_offset_m=0.0,
         fallback=False,
     )
 
-    with patch(
-        "lerobot.faults.recovery.midair_drop.get_robosuite_env",
-        return_value=rs_env,
-    ), patch(
-        "lerobot.faults.recovery.midair_drop.get_arm_qpos",
-        return_value=np.zeros(7),
-    ), patch(
-        "lerobot.faults.recovery.midair_drop.get_eef_pose",
-        return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
-    ), patch(
-        "lerobot.faults.recovery.midair_drop.get_object_pose",
-        return_value={"pos": np.zeros(3), "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0])},
-    ), patch(
-        "lerobot.faults.recovery.midair_drop.midair_drop",
-        return_value={"object_pose_after": {"pos": [0, 0, 0]}},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([0.55, 0.0, 0.2])},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
-        return_value=np.array([0.0, 0.0, 0.0]),
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
-        return_value=False,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
-        return_value=False,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-        return_value=False,
+    with (
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_robosuite_env",
+            return_value=rs_env,
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_arm_qpos",
+            return_value=np.zeros(7),
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_eef_pose",
+            return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.get_object_pose",
+            return_value={"pos": np.zeros(3), "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0])},
+        ),
+        patch(
+            "lerobot.faults.recovery.midair_drop.midair_drop",
+            return_value={"object_pose_after": {"pos": [0, 0, 0]}},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.55, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+            return_value=False,
+        ),
     ):
         run_simple_ik_episode_loop(
             env,
@@ -134,9 +144,7 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     mock_drop,
     mock_dest,
 ) -> None:
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     fault = _fault_continue(dwell=2)
     env = MagicMock()
     proposed = _action(1, 7, 11.0)
@@ -179,9 +187,7 @@ def test_continue_first_post_drop_grasp_clears_suppress_then_skip(
     mock_dest,
     mock_in_basket,
 ) -> None:
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     mock_grasped.side_effect = [False, True, True]
 
     fault = _fault_continue(dwell=2)
@@ -218,24 +224,31 @@ def test_paired_no_drop_never_resamples_or_schedules(
         resolved_transport_offset_m=0.0,
         fallback=False,
     )
-    with patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([0.55, 0.0, 0.2])},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
-        return_value=np.array([0.0, 0.0, 0.0]),
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
-        return_value=False,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
-        return_value=False,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-        return_value=False,
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.55, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+            return_value=False,
+        ),
     ):
         facts = run_simple_ik_episode_loop(
             env,
@@ -283,21 +296,27 @@ def test_paired_no_drop_success_when_object_in_basket(
         resolved_transport_offset_m=0.0,
         fallback=False,
     )
-    with patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([0.55, 0.0, 0.2])},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
-        return_value=np.array([0.0, 0.0, 0.0]),
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-        return_value=False,
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.55, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+            return_value=False,
+        ),
     ):
         facts = run_simple_ik_episode_loop(
             env,
@@ -346,21 +365,27 @@ def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
         resolved_transport_offset_m=0.0,
         fallback=False,
     )
-    with patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([0.1, 0.0, 0.2])},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
-        return_value=np.array([0.0, 0.0, 0.0]),
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-        return_value=False,
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.1, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+            return_value=False,
+        ),
     ):
         facts = run_simple_ik_episode_loop(
             env,
@@ -408,9 +433,7 @@ def test_loop_returns_skipped_recovery_outcome(
     mock_dest,
     mock_in_basket,
 ) -> None:
-    _setup_drop_mocks(
-        mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
-    )
+    _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     mock_grasped.side_effect = [False, True, True, True, True, True]
 
     fault = _fault_continue(dwell=2)
@@ -434,21 +457,27 @@ def test_loop_returns_skipped_recovery_outcome(
         fallback=False,
     )
 
-    with patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
-        return_value={"pos": np.array([1.0, 0.0, 0.2])},
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
-        return_value=np.array([0.0, 0.0, 0.0]),
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
-        return_value=True,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
-        return_value=False,
-    ), patch(
-        "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
-        return_value=False,
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([1.0, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._pause_and_pump",
+            return_value=False,
+        ),
     ):
         facts = run_simple_ik_episode_loop(
             env,
