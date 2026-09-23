@@ -37,12 +37,7 @@ from lerobot.faults.datagen.recipe import (
     legacy_drop_recipe,
 )
 from lerobot.faults.datagen.scene import apply_serializable_layout
-from lerobot.faults.datagen.frame_logging import (
-    annotation_for_datagen_env,
-    log_fault_recovery_step,
-    loss_mask_for_datagen_env,
-    should_log_sim_step,
-)
+from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.runtime import stabilize_carry_action
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
@@ -54,6 +49,7 @@ from lerobot.faults.sim.libero import (
     get_object_pose,
     get_place_destination,
     get_robosuite_env,
+    read_control_freq,
     hold_gripper_closed,
     is_object_grasped,
     is_object_held_midair,
@@ -282,21 +278,17 @@ def run_simple_ik_episode_loop(
                 force_drop_injection=drop_injection,
             )
         ):
-            from lerobot.envs.utils import preprocess_observation
-            from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
-
             executed = env.last_executed_action
             if executed is None:
                 executed = action
-            frame_obs = libero_obs_to_frame(preprocess_observation(observation))
-            log_fault_recovery_step(
-                episode_session.logger,
-                observation_dict=frame_obs,
+            log_post_step_to_session(
+                episode_session,
+                env=env,
+                post_step_observation=observation,
                 executed_action=np.asarray(executed),
                 task=task,
                 phase=planner.phase_name,
-                loss_mask=loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode),
-                annotation=annotation_for_datagen_env(env, is_drop_episode=is_drop_episode),
+                is_drop_episode=is_drop_episode,
             )
         if on_step_end is not None:
             on_step_end(
@@ -462,7 +454,8 @@ class SimpleIKDatagenAdapter:
             )
             from lerobot.faults.recovery.fps import recording_stride
 
-            stride = recording_stride(recipe.control_hz, recipe.recording.dataset_fps)
+            control_freq = read_control_freq(rs_env)
+            stride = recording_stride(control_freq, recipe.recording.dataset_fps)
             task = f"pick up the {request.object_name} and place it in the {recipe.basket_name}"
             facts = run_simple_ik_episode_loop(
                 env,

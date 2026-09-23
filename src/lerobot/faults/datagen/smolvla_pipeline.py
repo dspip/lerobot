@@ -295,6 +295,8 @@ def run_pipeline(
     post_drop_dwell_steps: int | None = None,
     post_drop_mode: str = "continue_then_ik",
     defer_dataset_commit: bool = False,
+    episode_session: Any | None = None,
+    basket_name: str = "basket_1",
     soup_xy_offset: tuple[float, float] | None = None,
     object_name: str = "alphabet_soup_1",
     init_state_id: int | None = None,
@@ -437,18 +439,34 @@ def run_pipeline(
         fault_cfg = FaultInjectionConfig(**fault_kwargs)
         env = DropRecoveryEnvWrapper(vec, fault_cfg)
     else:
-        fault_cfg = FaultInjectionConfig(enabled=False)
-        env = vec
+        fault_cfg = FaultInjectionConfig(
+            enabled=True,
+            type="midair_drop",
+            probability=0.0,
+            t_min=10_000,
+            t_max=10_001,
+            object_name=object_name,
+            basket_name=basket_name,
+            seat_assist_enabled=False,
+            log_path=output_dir / "fault_events_nominal.jsonl",
+        )
+        env = DropRecoveryEnvWrapper(vec, fault_cfg)
 
     try:
-        own_logger = ds_logger is None
-        ds_root = dataset_root if dataset_root is not None else output_dir / "dataset"
-        if own_logger:
-            ds_logger = FaultRecoveryDatasetLogger(
-                root=ds_root,
-                repo_id=repo_id,
-                policy_fps=policy_fps,
-            )
+        if episode_session is not None:
+            ds_logger = episode_session.logger
+            defer_dataset_commit = True
+            own_logger = False
+            ds_root = episode_session.dataset_root
+        else:
+            own_logger = ds_logger is None
+            ds_root = dataset_root if dataset_root is not None else output_dir / "dataset"
+            if own_logger:
+                ds_logger = FaultRecoveryDatasetLogger(
+                    root=ds_root,
+                    repo_id=repo_id,
+                    policy_fps=policy_fps,
+                )
 
         libero_env = unwrap_libero_env(vec)
         init_states = getattr(libero_env, "_init_states", None)
@@ -526,7 +544,7 @@ def run_pipeline(
         yaw_error_trace: list[dict[str, float | int | str | None]] = []
         landing_z_prev: float | None = None
         landing_still_steps = 0
-        task = "pick up the alphabet soup and place it in the basket"
+        task = f"pick up the {object_name} and place it in the {basket_name}"
 
         try:
             raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
@@ -546,27 +564,39 @@ def run_pipeline(
         )
 
         from lerobot.faults.datagen.frame_logging import (
-            annotation_for_datagen_env,
+            POST_STEP_LOGGING_CONTRACT,
             log_fault_recovery_step,
-            loss_mask_for_datagen_env,
+            log_post_step_to_session,
         )
 
         def _log_dataset_step(sim_step: int, observation_t: Any, executed_action: np.ndarray, phase_name: str) -> None:
-            try:
-                from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
-
-                frame = libero_obs_to_frame(preprocess_observation(observation_t))
-                log_fault_recovery_step(
-                    ds_logger,
-                    observation_dict=frame,
-                    executed_action=np.asarray(executed_action),
+            del sim_step
+            executed = executed_action
+            if is_drop_episode and hasattr(env, "last_executed_action") and env.last_executed_action is not None:
+                executed = env.last_executed_action
+            if episode_session is not None:
+                log_post_step_to_session(
+                    episode_session,
+                    env=env,
+                    post_step_observation=observation_t,
+                    executed_action=np.asarray(executed),
                     task=task,
                     phase=phase_name,
-                    loss_mask=loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode),
-                    annotation=annotation_for_datagen_env(env, is_drop_episode=is_drop_episode),
+                    is_drop_episode=is_drop_episode,
                 )
-            except Exception as exc:  # noqa: BLE001
-                print(f"[pipeline] dataset log warning at step={sim_step}: {exc}", flush=True)
+                return
+            from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
+
+            frame = libero_obs_to_frame(preprocess_observation(observation_t))
+            log_fault_recovery_step(
+                ds_logger,
+                observation_dict=frame,
+                executed_action=np.asarray(executed),
+                task=task,
+                phase=phase_name,
+                loss_mask=float(env.loss_mask(0)) if is_drop_episode else 1.0,
+                annotation=env.failure_annotation(0),
+            )
 
         n_settle_logged = 0
 
@@ -1036,8 +1066,8 @@ def run_pipeline(
             loss_counts = dict(ds_logger.loss_mask_counts)
             if own_logger and behavioral_success and not defer_dataset_commit:
                 ds_logger.finalize()
-        except Exception as exc:
-            print(f"[pipeline] dataset commit warning: {exc}", flush=True)
+        except Exception:
+            raise
 
     finally:
         env.close()
@@ -1137,6 +1167,11 @@ def run_pipeline(
         "num_frames_video": len(frames),
         "phase_counts": {p: phases.count(p) for p in sorted(set(phases))},
         "loss_mask_counts": loss_counts,
+        "actual_dwell_steps": (
+            int(st0.dwell_steps_completed) if is_drop_episode and st0 is not None else 0
+        ),
+        "trigger_pose": pre_drop_pose,
+        "post_step_logging": POST_STEP_LOGGING_CONTRACT,
         "object_pos_delta": float(
             np.linalg.norm(np.array(object_traj[-1]) - np.array(object_traj[triggered_at]))
         )

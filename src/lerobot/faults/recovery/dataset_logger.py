@@ -256,16 +256,26 @@ class FaultRecoveryDatasetLogger:
         key = 1.0 if mask_val >= 0.5 else 0.0
         self._loss_mask_counts[key] = self._loss_mask_counts.get(key, 0) + 1
 
-    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        """Flush the current episode buffer to disk."""
+    def dataset_episode_index_on_commit(self) -> int:
+        """Index the next :meth:`end_episode` will assign in the LeRobot dataset."""
+        return int(self.dataset.meta.total_episodes)
+
+    @property
+    def committed_episode_count(self) -> int:
+        return int(self.dataset.meta.total_episodes)
+
+    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> int | None:
+        """Flush the current episode buffer to disk. Returns saved episode index."""
         if episode_data is None:
             episode_data = kwargs.get("episode_data")
         if not self._episode_open:
-            return
+            return None
+        index = self.dataset_episode_index_on_commit()
         # Disable parallel camera encoding: ProcessPool encoding can race with
         # image-path stats (FileNotFoundError on frame PNGs during merge/export).
         self.dataset.save_episode(episode_data, parallel_encoding=False)
         self._episode_open = False
+        return index
 
     def clear_open_episode(self) -> None:
         """Discard buffered frames for a failed episode (do not save)."""

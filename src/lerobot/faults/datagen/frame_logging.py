@@ -16,22 +16,28 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
-from lerobot.faults.annotation import default_failure_frame
-from lerobot.faults.recovery.loss_mask import loss_mask_from_fault
+if TYPE_CHECKING:
+    from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
 
 __all__ = [
+    "POST_STEP_LOGGING_CONTRACT",
     "DatasetStepLogger",
-    "annotation_for_datagen_env",
     "log_fault_recovery_step",
+    "log_post_step_to_session",
     "log_step_from_recovery_env",
     "loss_mask_for_datagen_env",
-    "loss_mask_for_recovery_env",
     "should_log_sim_step",
 ]
+
+POST_STEP_LOGGING_CONTRACT = (
+    "Datagen frames use POST env.step() state: post_step_observation is the observation "
+    "returned by env.step, and executed_action is env.last_executed_action when present "
+    "(otherwise the action tensor passed into env.step)."
+)
 
 
 def should_log_sim_step(
@@ -49,13 +55,7 @@ def should_log_sim_step(
 def loss_mask_for_datagen_env(env: Any, *, is_drop_episode: bool, env_idx: int = 0) -> float:
     if not is_drop_episode:
         return 1.0
-    return loss_mask_for_recovery_env(env, env_idx)
-
-
-def annotation_for_datagen_env(env: Any, *, is_drop_episode: bool, env_idx: int = 0) -> dict[str, Any]:
-    if not is_drop_episode:
-        return default_failure_frame()
-    return env.failure_annotation(env_idx)
+    return float(env.loss_mask(env_idx))
 
 
 class DatasetStepLogger(Protocol):
@@ -90,46 +90,68 @@ def log_fault_recovery_step(
     )
 
 
-def loss_mask_for_recovery_env(env: Any, env_idx: int = 0) -> float:
-    fault = env.fault
-    state = fault._states[env_idx]
-    return loss_mask_from_fault(
-        triggered=bool(state.triggered),
-        drop_injection_step=bool(state.drop_injection_step),
-        recovery_active=bool(state.recovery_active),
-        post_drop_dwell_step=bool(getattr(state, "post_drop_dwell_step", False)),
+def log_post_step_to_session(
+    session: DatagenEpisodeSession,
+    *,
+    env: Any,
+    post_step_observation: dict[str, Any],
+    executed_action: np.ndarray | list[float],
+    task: str,
+    phase: str,
+    is_drop_episode: bool,
+    env_idx: int = 0,
+    observation_to_frame: Any | None = None,
+) -> None:
+    """Log one frame using POST-step env state (see POST_STEP_LOGGING_CONTRACT)."""
+    if observation_to_frame is None:
+        from lerobot.envs.utils import preprocess_observation
+        from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
+
+        def observation_to_frame(obs: dict[str, Any]) -> dict[str, Any]:
+            return libero_obs_to_frame(preprocess_observation(obs))
+
+    executed = executed_action
+    if np.asarray(executed).ndim == 2:
+        executed = np.asarray(executed)[0]
+    frame = observation_to_frame(post_step_observation)
+    mask = loss_mask_for_datagen_env(env, is_drop_episode=is_drop_episode, env_idx=env_idx)
+    annotation = env.failure_annotation(env_idx)
+    session.log_step(
+        frame,
+        executed,
+        task,
+        mask,
+        phase=phase,
+        annotation=annotation,
     )
 
 
 def log_step_from_recovery_env(
-    logger: DatasetStepLogger,
+    session: DatagenEpisodeSession,
     env: Any,
     *,
-    observation: dict[str, Any] | None,
+    post_step_observation: dict[str, Any] | None,
     executed_action: np.ndarray | list[float],
     task: str,
     phase: str | None,
     sim_step: int,
     recording_stride: int,
+    is_drop_episode: bool,
     env_idx: int = 0,
 ) -> None:
     state = env.fault._states[env_idx]
-    is_drop_frame = bool(state.drop_injection_step)
+    is_drop_frame = bool(is_drop_episode and state.drop_injection_step)
     if sim_step % recording_stride != 0 and not is_drop_frame:
         return
-    if observation is None:
+    if post_step_observation is None:
         return
-    executed = executed_action
-    if np.asarray(executed).ndim == 2:
-        executed = np.asarray(executed)[0]
-    mask = loss_mask_for_recovery_env(env, env_idx)
-    annotation = env.failure_annotation(env_idx)
-    log_fault_recovery_step(
-        logger,
-        observation_dict=observation,
-        executed_action=executed,
+    log_post_step_to_session(
+        session,
+        env=env,
+        post_step_observation=post_step_observation,
+        executed_action=executed_action,
         task=task,
-        loss_mask=mask,
-        phase=phase,
-        annotation=annotation,
+        phase=phase or "",
+        is_drop_episode=is_drop_episode,
+        env_idx=env_idx,
     )

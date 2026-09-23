@@ -100,6 +100,7 @@ def run_drop_datagen_matrix(
         ) from exc
     writer = dataset_writer if dataset_writer is not None else RunDatasetWriter(recipe)
     results: list[EpisodeResult] = []
+    run_ok = False
     try:
         for logical_index in logical_episode_indices:
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
@@ -151,8 +152,12 @@ def run_drop_datagen_matrix(
                     ) from exc
                 writer.record_episode_outcome(request, result, session)
                 results.append(result)
+        run_ok = True
     finally:
-        writer.finalize()
+        if run_ok:
+            writer.finalize()
+        else:
+            writer.finalize_loggers_only()
     return tuple(results)
 
 

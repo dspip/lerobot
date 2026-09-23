@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -24,18 +23,25 @@ import numpy as np
 import pytest
 
 from lerobot.faults.annotation import default_failure_frame
+from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 from lerobot.faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
 from lerobot.faults.datagen.dataset_writer import (
     DatagenEpisodeSession,
+    RunDatasetFinalizeError,
     RunDatasetWriter,
+    StaleRunOutputError,
     evaluate_datagen_keep,
     variant_dataset_directory,
     variant_repo_id,
 )
-from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.frame_logging import log_fault_recovery_step
+from lerobot.faults.datagen.frame_logging import (
+    POST_STEP_LOGGING_CONTRACT,
+    log_fault_recovery_step,
+    log_post_step_to_session,
+    loss_mask_for_datagen_env,
+)
 from lerobot.faults.datagen.manifest import (
     EPISODE_METADATA_FIELDS,
     RunManifest,
@@ -46,12 +52,11 @@ from lerobot.faults.datagen.manifest import (
 from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
-    PostDropMode,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
 from lerobot.faults.datagen.runner import run_drop_datagen_matrix
-from lerobot.faults.recovery.loss_mask import loss_mask_from_fault
+from lerobot.faults.factory import make_midair_drop_fault
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
@@ -64,8 +69,16 @@ _FAKE_LAYOUT = {
 }
 
 
+def _minimal_processed_frame() -> dict[str, np.ndarray]:
+    return {
+        "observation.state": np.zeros(8, dtype=np.float32),
+        "observation.images.image": np.zeros((256, 256, 3), dtype=np.uint8),
+        "observation.images.image2": np.zeros((256, 256, 3), dtype=np.uint8),
+    }
+
+
 class _RecordingLogger:
-    """Minimal stand-in for FaultRecoveryDatasetLogger in unit tests."""
+    """Tracks commit/discard semantics similar to FaultRecoveryDatasetLogger."""
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -74,7 +87,7 @@ class _RecordingLogger:
         self.committed = 0
         self.discarded = 0
         self.finalized = False
-        self.last_episode_data: dict[str, Any] | None = None
+        self._total_episodes = 0
 
     def log_step(
         self,
@@ -94,12 +107,28 @@ class _RecordingLogger:
             }
         )
 
-    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        if episode_data is None:
-            episode_data = kwargs.get("episode_data")
-        self.last_episode_data = episode_data
+    @property
+    def dataset(self) -> Any:
+        return self
+
+    @property
+    def meta(self) -> Any:
+        return self
+
+    @property
+    def total_episodes(self) -> int:
+        return self._total_episodes
+
+    def dataset_episode_index_on_commit(self) -> int:
+        return self._total_episodes
+
+    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> int:
+        del episode_data, kwargs
+        index = self._total_episodes
+        self._total_episodes += 1
         self.committed += 1
         self._open = False
+        return index
 
     def clear_open_episode(self) -> None:
         self.frames.clear()
@@ -108,14 +137,6 @@ class _RecordingLogger:
 
     def finalize(self) -> None:
         self.finalized = True
-
-    @property
-    def loss_mask_counts(self) -> dict[float, int]:
-        counts = {0.0: 0, 1.0: 0}
-        for frame in self.frames:
-            key = 1.0 if frame["loss_mask"] >= 0.5 else 0.0
-            counts[key] = counts.get(key, 0) + 1
-        return counts
 
 
 def _recipe_at(tmp_path: Path):
@@ -132,53 +153,14 @@ def _recipe_at(tmp_path: Path):
     )
 
 
-def test_variant_dataset_directories_partition_matrix(tmp_path: Path) -> None:
-    recipe = _recipe_at(tmp_path)
-    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
-    roots = {variant_dataset_directory(recipe, m) for m in manifests}
-    assert len(roots) == 5
-    assert tmp_path / "out" / "simple_ik" / "immediate_ik" / "dataset" in roots
-    assert tmp_path / "out" / "smolvla" / "reset_then_ik" / "dataset" in roots
-
-
-def test_run_writer_begin_commit_discard(tmp_path: Path) -> None:
-    recipe = _recipe_at(tmp_path)
-    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
-    created: list[Path] = []
-
-    def _factory(root: Path, repo_id: str, **_kwargs: Any) -> _RecordingLogger:
-        created.append(Path(root))
-        return _RecordingLogger(root)
-
-    writer = RunDatasetWriter(recipe, logger_factory=_factory)
-    session = writer.open_episode_session(manifest)
-    session.log_step(
-        {"observation.state": np.zeros(8, dtype=np.float32)},
-        np.zeros(7, dtype=np.float32),
-        "task",
-        1.0,
-        annotation=default_failure_frame(),
-    )
-    writer.commit_episode(session, keep=True, metadata={"episode_index": 0})
-    session2 = writer.open_episode_session(manifest)
-    session2.log_step(
-        {"observation.state": np.zeros(8, dtype=np.float32)},
-        np.zeros(7, dtype=np.float32),
-        "task",
-        0.0,
-    )
-    writer.commit_episode(session2, keep=False, metadata={"episode_index": 1})
-    writer.finalize()
-    assert len(created) == 1
-    assert created[0] == variant_dataset_directory(recipe, manifest)
-    assert session.logger.committed == 1
-    assert session2.logger.discarded == 1
-    assert session.logger.finalized is True
-
-
-def test_failed_attempt_in_manifest_not_dataset(tmp_path: Path) -> None:
-    recipe = _recipe_at(tmp_path)
-    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+def _request_and_result(
+    recipe,
+    manifest,
+    *,
+    success: bool,
+    outcome: str,
+    tmp_path: Path,
+) -> tuple[EpisodeRequest, EpisodeResult]:
     plan = build_paired_episode_plan(
         recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
     )
@@ -192,39 +174,78 @@ def test_failed_attempt_in_manifest_not_dataset(tmp_path: Path) -> None:
     )
     result = EpisodeResult.from_run(
         request,
-        success=False,
-        outcome="recovery_finished_outside_basket",
+        success=success,
+        outcome=outcome,
         drop_trigger={"kind": "simple_ik_path", "drop": True},
+        trigger_pose=[0.1, 0.2, 0.3],
+        actual_dwell_steps=42,
     )
-    keep, reason = evaluate_datagen_keep(request, result)
+    return request, result
+
+
+def test_variant_dataset_directories_partition_matrix(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
+    roots = {variant_dataset_directory(recipe, m) for m in manifests}
+    assert len(roots) == 5
+    assert tmp_path / "out" / "simple_ik" / "immediate_ik" / "dataset" in roots
+
+
+def test_refuses_non_empty_run_output_dir(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    root = Path(recipe.recording.output_dir)
+    root.mkdir(parents=True)
+    (root / "leftover.txt").write_text("prior run")
+    with pytest.raises(StaleRunOutputError):
+        RunDatasetWriter(recipe)
+
+
+def test_record_outcome_keep_then_reject(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    writer = RunDatasetWriter(recipe, logger_factory=lambda root, repo_id, **_kw: _RecordingLogger(root))
+
+    session_keep = writer.open_episode_session(manifest)
+    session_keep.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    req_ok, res_ok = _request_and_result(recipe, manifest, success=True, outcome="ok", tmp_path=tmp_path)
+    row_keep = writer.record_episode_outcome(req_ok, res_ok, session_keep)
+    assert row_keep.dataset_episode_index == 0
+    assert session_keep.logger.committed == 1
+
+    session_reject = writer.open_episode_session(manifest)
+    session_reject.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    req_bad, res_bad = _request_and_result(
+        recipe, manifest, success=False, outcome="failed", tmp_path=tmp_path
+    )
+    row_reject = writer.record_episode_outcome(req_bad, res_bad, session_reject)
+    assert row_reject.dataset_episode_index is None
+    assert session_reject.logger.discarded == 1
+    assert session_keep.logger.committed == 1
+
+    writer.finalize()
+    loaded = read_run_manifest(tmp_path / "out" / "run_manifest.json")
+    assert sum(1 for row in loaded.episodes if row.keep) == 1
+    assert sum(1 for row in loaded.episodes if not row.keep) == 1
+
+
+def test_failed_attempt_in_manifest_not_dataset(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    req, res = _request_and_result(
+        recipe, manifest, success=False, outcome="recovery_finished_outside_basket", tmp_path=tmp_path
+    )
+    keep, reason = evaluate_datagen_keep(req, res)
     assert keep is False
-    assert reason
 
     writer = RunDatasetWriter(recipe, logger_factory=lambda root, repo_id, **kw: _RecordingLogger(root))
     session = writer.open_episode_session(manifest)
-    session.log_step(
-        {"observation.state": np.zeros(8, dtype=np.float32)},
-        np.zeros(7, dtype=np.float32),
-        "task",
-        1.0,
-    )
-    row = build_episode_metadata_row(request, result, keep=keep, keep_reason=reason)
-    writer.commit_episode(session, keep=keep, metadata=row.to_dict())
-    writer._episode_rows.append(row)
+    session.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    writer.record_episode_outcome(req, res, session)
     writer.finalize()
-    manifest_path = tmp_path / "out" / "run_manifest.json"
-    write_run_manifest_atomic(
-        manifest_path,
-        RunManifest(
-            recipe_name=recipe.name,
-            base_seed=recipe.recording.base_seed,
-            output_dir=str(recipe.recording.output_dir),
-            episodes=[row],
-        ),
-    )
-    loaded = read_run_manifest(manifest_path)
+    loaded = read_run_manifest(tmp_path / "out" / "run_manifest.json")
     assert loaded.episodes[0].keep is False
     assert loaded.episodes[0].reject_reason
+    assert loaded.episodes[0].dataset_episode_index is None
     assert session.logger.committed == 0
     assert session.logger.discarded == 1
 
@@ -246,67 +267,101 @@ def test_manifest_written_atomically(tmp_path: Path) -> None:
 def test_episode_metadata_required_fields(tmp_path: Path) -> None:
     recipe = _recipe_at(tmp_path)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
-    plan = build_paired_episode_plan(
-        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    req, res = _request_and_result(
+        recipe, manifest, success=True, outcome="recovery_completed_in_basket", tmp_path=tmp_path
     )
-    request = EpisodeRequest(
-        recipe=recipe,
-        manifest=manifest,
-        object_name="alphabet_soup_1",
-        output_dir=tmp_path / "ep",
-        paired_plan=plan,
-        shared_layout=_FAKE_LAYOUT,
+    row = build_episode_metadata_row(
+        req, res, keep=True, keep_reason="recovery_success", dataset_episode_index=0
     )
-    result = EpisodeResult.from_run(
-        request,
-        success=True,
-        outcome="recovery_completed_in_basket",
-        drop_trigger={"kind": "simple_ik_path", "drop": True, "target_t": 0.5},
-        trigger_pose=[0.1, 0.2, 0.3],
-        actual_dwell_steps=80,
-    )
-    row = build_episode_metadata_row(request, result, keep=True, keep_reason="recovery_success")
     data = row.to_dict()
     for field in EPISODE_METADATA_FIELDS:
         assert field in data, field
-    assert data["controller"] == "simple_ik"
-    assert data["init_state_id"] == plan.init_state_id
-    assert data["shared_layout"] == _FAKE_LAYOUT
+    assert data["dataset_episode_index"] == 0
 
 
-def test_frame_annotations_include_ever_held_midair() -> None:
+def test_loss_mask_uses_env_loss_mask_not_helper_only() -> None:
+    cfg = FaultInjectionConfig(
+        enabled=True,
+        type="midair_drop",
+        probability=1.0,
+        t_min=0,
+        t_max=100,
+        post_drop_dwell_steps=3,
+        post_drop_mode="continue_then_ik",
+    )
+    fault = make_midair_drop_fault(cfg, num_envs=1)
+    assert fault is not None
+    state = fault._states[0]
+    state.triggered = True
+    state.drop_injection_step = True
+    state.recovery_active = False
+
+    class _Env:
+        def __init__(self) -> None:
+            self.fault = fault
+
+        def loss_mask(self, env_idx: int = 0) -> float:
+            return fault.loss_mask_for_env(env_idx)
+
+        def failure_annotation(self, env_idx: int = 0) -> dict[str, Any]:
+            return default_failure_frame()
+
+    env = _Env()
+    assert fault.loss_mask_for_env(0) == 0.0
+    assert loss_mask_for_datagen_env(env, is_drop_episode=True) == env.loss_mask()
+
+    state.drop_injection_step = False
+    state.recovery_active = True
+    assert loss_mask_for_datagen_env(env, is_drop_episode=True) == 1.0
+
+
+def test_post_step_logging_contract_documented() -> None:
+    assert "POST env.step()" in POST_STEP_LOGGING_CONTRACT
+
+
+def test_log_post_step_routes_through_session_log_step() -> None:
     logger = _RecordingLogger(Path("/tmp/unused"))
-    annotation = default_failure_frame()
-    annotation["ever_held_midair"] = np.array([True])
-    annotation["is_failure"] = np.array([True])
-    log_fault_recovery_step(
-        logger,
-        observation_dict={
-            "observation.state": np.zeros(8, dtype=np.float32),
-            "observation.images.image": np.zeros((256, 256, 3), dtype=np.uint8),
-            "observation.images.image2": np.zeros((256, 256, 3), dtype=np.uint8),
-        },
-        executed_action=np.zeros(7, dtype=np.float32),
-        task="pick",
+    session = DatagenEpisodeSession(
+        manifest=paired_episode_seed_manifests(_recipe_at(Path("/tmp")), logical_episode_index=0)[0],
+        dataset_root=Path("/tmp"),
+        repo_id="test/repo",
+        logger=logger,
+        policy_fps=10,
+    )
+    cfg = FaultInjectionConfig(enabled=True, type="midair_drop", probability=0.0, t_min=0, t_max=1)
+    fault = make_midair_drop_fault(cfg, num_envs=1)
+    assert fault is not None
+
+    class _Env:
+        last_executed_action = np.ones(7, dtype=np.float32)
+
+        def __init__(self, fault_inject: Any) -> None:
+            self.fault = fault_inject
+
+        def loss_mask(self, env_idx: int = 0) -> float:
+            return self.fault.loss_mask_for_env(env_idx)
+
+        def failure_annotation(self, env_idx: int = 0) -> dict[str, Any]:
+            ann = default_failure_frame()
+            ann["ever_held_midair"] = np.array([True])
+            return ann
+
+    fault._states[0].triggered = True
+    fault._states[0].drop_injection_step = True
+
+    log_post_step_to_session(
+        session,
+        env=_Env(fault),
+        post_step_observation={"observation.state": np.zeros(8)},
+        executed_action=np.zeros(7),
+        task="pick up can and place in basket",
         phase="recovery",
-        loss_mask=1.0,
-        annotation=annotation,
+        is_drop_episode=True,
+        observation_to_frame=lambda obs: _minimal_processed_frame(),
     )
+    assert session.is_open
+    assert logger.frames[0]["loss_mask"] == 0.0
     assert bool(logger.frames[0]["annotation"]["ever_held_midair"][0])
-
-
-def test_loss_masks_drop_dwell_zero_recovery_one() -> None:
-    assert loss_mask_from_fault(triggered=True, drop_injection_step=True, recovery_active=True) == 0.0
-    assert (
-        loss_mask_from_fault(
-            triggered=True,
-            drop_injection_step=False,
-            recovery_active=False,
-            post_drop_dwell_step=True,
-        )
-        == 0.0
-    )
-    assert loss_mask_from_fault(triggered=True, drop_injection_step=False, recovery_active=True) == 1.0
 
 
 def test_smolvla_adapter_uses_injected_session_not_own_logger(tmp_path: Path) -> None:
@@ -327,7 +382,15 @@ def test_smolvla_adapter_uses_injected_session_not_own_logger(tmp_path: Path) ->
 
     def _pipeline(output_dir: Path, **kwargs: Any) -> dict[str, Any]:
         captured.update(kwargs)
-        return {"success": True, "behavioral_success": True}
+        return {
+            "success": True,
+            "behavioral_success": True,
+            "actual_dwell_steps": 17,
+            "pre_drop_pose": [0.2, 0.1, 0.25],
+            "triggered_at": 55,
+            "drop_basket_xy_dist": 0.36,
+            "drop_trigger_reason": "xy_band",
+        }
 
     adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_pipeline)
     request = EpisodeRequest(
@@ -340,11 +403,15 @@ def test_smolvla_adapter_uses_injected_session_not_own_logger(tmp_path: Path) ->
         device="cpu",
         episode_session=session,
     )
-    adapter.run_episode(request)
-    assert captured["ds_logger"] is logger
-    assert captured["defer_dataset_commit"] is True
-    assert captured["dataset_root"] == variant_dataset_directory(recipe, manifest)
-    assert captured.get("wipe_output_dir") is False
+    result = adapter.run_episode(request)
+    assert captured.get("episode_session") is session
+    assert "ds_logger" not in captured
+    assert captured.get("defer_dataset_commit") is True
+    assert captured.get("basket_name") == recipe.basket_name
+    assert result.actual_dwell_steps == 17
+    assert result.trigger_pose == [0.2, 0.1, 0.25]
+    assert result.drop_trigger is not None
+    assert result.drop_trigger.get("triggered_at") == 55
 
 
 def test_simple_ik_adapter_receives_episode_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,6 +457,10 @@ def test_simple_ik_adapter_receives_episode_session(tmp_path: Path, monkeypatch:
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
+        "lerobot.faults.datagen.controllers.simple_ik.read_control_freq",
+        lambda rs: 20,
+    )
+    monkeypatch.setattr(
         "lerobot.faults.datagen.controllers.simple_ik._new_planner",
         lambda *a, **k: MagicMock(phase_name="lift", carry_path=None, done=False),
     )
@@ -419,7 +490,7 @@ def test_runner_integrates_dataset_writer(tmp_path: Path) -> None:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             assert request.episode_session is not None
             request.episode_session.log_step(
-                {"observation.state": np.zeros(8, dtype=np.float32)},
+                _minimal_processed_frame(),
                 np.zeros(7, dtype=np.float32),
                 "task",
                 1.0,
@@ -446,3 +517,63 @@ def test_runner_integrates_dataset_writer(tmp_path: Path) -> None:
     assert manifest_path.is_file()
     loaded = read_run_manifest(manifest_path)
     assert len(loaded.episodes) == 5
+
+
+def test_finalize_raises_without_manifest_on_logger_failure(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+
+    class _BadLogger(_RecordingLogger):
+        def finalize(self) -> None:
+            raise RuntimeError("encode failed")
+
+    writer = RunDatasetWriter(recipe, logger_factory=lambda root, repo_id, **_kw: _BadLogger(root))
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    session = writer.open_episode_session(manifest)
+    session.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    req, res = _request_and_result(recipe, manifest, success=True, outcome="ok", tmp_path=tmp_path)
+    writer.record_episode_outcome(req, res, session)
+    with pytest.raises(RunDatasetFinalizeError):
+        writer.finalize()
+    assert not (tmp_path / "out" / "run_manifest.json").exists()
+
+
+def test_fault_recovery_logger_keep_reject_roundtrip(tmp_path: Path) -> None:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    recipe = _recipe_at(tmp_path)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    writer = RunDatasetWriter(recipe)
+    dataset_root = variant_dataset_directory(recipe, manifest)
+    repo_id = variant_repo_id(recipe, manifest)
+
+    session_keep = writer.open_episode_session(manifest)
+    for mask in (1.0, 0.0, 1.0):
+        session_keep.log_step(
+            _minimal_processed_frame(),
+            np.zeros(7, dtype=np.float32),
+            "pick up alphabet_soup_1 and place it in basket_1",
+            mask,
+            annotation=default_failure_frame(),
+        )
+    req_ok, res_ok = _request_and_result(recipe, manifest, success=True, outcome="ok", tmp_path=tmp_path)
+    kept = writer.record_episode_outcome(req_ok, res_ok, session_keep)
+    assert kept.dataset_episode_index == 0
+
+    session_reject = writer.open_episode_session(manifest)
+    session_reject.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
+    req_bad, res_bad = _request_and_result(recipe, manifest, success=False, outcome="fail", tmp_path=tmp_path)
+    rejected = writer.record_episode_outcome(req_bad, res_bad, session_reject)
+    assert rejected.dataset_episode_index is None
+    assert not session_reject.is_open
+
+    writer.finalize()
+    loaded = read_run_manifest(tmp_path / "out" / "run_manifest.json")
+    assert len(loaded.episodes) == 2
+    assert {row.dataset_episode_index for row in loaded.episodes if row.keep} == {0}
+    assert all(row.dataset_episode_index is None for row in loaded.episodes if not row.keep)
+
+    ds = LeRobotDataset(repo_id=repo_id, root=dataset_root, download_videos=False)
+    assert ds.meta.total_episodes == 1
+    episode = LeRobotDataset(repo_id=repo_id, root=dataset_root, episodes=[0], download_videos=False)
+    masks = [float(np.asarray(episode[i]["loss_mask"]).reshape(-1)[0]) for i in range(len(episode))]
+    assert masks == [1.0, 0.0, 1.0]

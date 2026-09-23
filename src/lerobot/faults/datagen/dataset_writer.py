@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +35,9 @@ from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest
 __all__ = [
     "DatagenEpisodeSession",
     "LoggerFactory",
+    "RunDatasetFinalizeError",
     "RunDatasetWriter",
+    "StaleRunOutputError",
     "evaluate_datagen_keep",
     "variant_dataset_directory",
     "variant_repo_id",
@@ -45,6 +46,19 @@ __all__ = [
 LoggerFactory = Callable[..., Any]
 
 VariantKey = tuple[str, str]
+
+
+class StaleRunOutputError(FileExistsError):
+    """Raised when a new run targets a non-empty output directory."""
+
+
+class RunDatasetFinalizeError(RuntimeError):
+    """Raised when one or more variant loggers fail to finalize."""
+
+    def __init__(self, errors: list[BaseException]) -> None:
+        self.errors = list(errors)
+        msg = "; ".join(str(exc) for exc in errors)
+        super().__init__(f"dataset logger finalize failed: {msg}")
 
 
 def variant_dataset_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> Path:
@@ -60,6 +74,17 @@ def _variant_key(manifest: EpisodeSeedManifest) -> VariantKey:
     return (manifest.controller.value, manifest.post_drop_mode.value)
 
 
+def assert_fresh_run_output_dir(recipe: DropDatagenRecipe) -> None:
+    root = Path(recipe.recording.output_dir)
+    if not root.exists():
+        return
+    if any(root.iterdir()):
+        raise StaleRunOutputError(
+            f"Recording output {root} is not empty. "
+            "Use a fresh output_dir for a new run (resume is not supported)."
+        )
+
+
 def evaluate_datagen_keep(request: EpisodeRequest, result: EpisodeResult) -> tuple[bool, str | None]:
     plan = request.paired_plan
     if not plan.drop_decision.drop:
@@ -73,12 +98,18 @@ def evaluate_datagen_keep(request: EpisodeRequest, result: EpisodeResult) -> tup
 
 @dataclass
 class DatagenEpisodeSession:
+    """One open episode buffer on a shared variant logger."""
+
     manifest: EpisodeSeedManifest
     dataset_root: Path
     repo_id: str
     logger: Any
     policy_fps: int
     _open: bool = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
 
     def log_step(
         self,
@@ -105,23 +136,33 @@ class DatagenEpisodeSession:
             self.logger.clear_open_episode()
         self._open = False
 
-    def discard(self) -> None:
-        self.logger.clear_open_episode()
+    def commit(self) -> int:
+        """Persist buffered frames; return the dataset episode index written."""
+        if not self._open:
+            raise RuntimeError("cannot commit datagen episode: no open frame buffer")
+        index = int(self.logger.dataset_episode_index_on_commit())
+        self.logger.end_episode()
+        self._open = False
+        return index
 
 
 class RunDatasetWriter:
-    """One logger per controller/mode variant; run-level manifest on finalize."""
+    """One logger per controller/mode variant; run-level manifest after successful finalize."""
 
     def __init__(
         self,
         recipe: DropDatagenRecipe,
         *,
         logger_factory: LoggerFactory | None = None,
+        skip_fresh_output_check: bool = False,
     ) -> None:
+        if not skip_fresh_output_check:
+            assert_fresh_run_output_dir(recipe)
         self._recipe = recipe
         self._logger_factory = logger_factory or _default_logger_factory
         self._loggers: dict[VariantKey, Any] = {}
         self._episode_rows: list[EpisodeMetadataRow] = []
+        self._manifest_written = False
 
     @property
     def episode_rows(self) -> tuple[EpisodeMetadataRow, ...]:
@@ -133,14 +174,17 @@ class RunDatasetWriter:
         repo_id = variant_repo_id(self._recipe, manifest)
         if key not in self._loggers:
             info_path = root / "meta" / "info.json"
-            if root.exists() and not info_path.is_file():
-                shutil.rmtree(root)
-            append = info_path.is_file()
+            if info_path.is_file():
+                raise StaleRunOutputError(
+                    f"Variant dataset already exists at {root}. "
+                    "Refusing to append to a prior run."
+                )
+            root.parent.mkdir(parents=True, exist_ok=True)
             self._loggers[key] = self._logger_factory(
                 root,
                 repo_id,
                 policy_fps=self._recipe.recording.dataset_fps,
-                append=append,
+                append=False,
             )
         return DatagenEpisodeSession(
             manifest=manifest,
@@ -150,26 +194,6 @@ class RunDatasetWriter:
             policy_fps=int(self._recipe.recording.dataset_fps),
         )
 
-    def commit_episode(
-        self,
-        session: DatagenEpisodeSession,
-        *,
-        keep: bool,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        episode_data = metadata if keep else None
-        _commit_logger_episode(session.logger, keep=keep, episode_data=episode_data)
-        if metadata is not None and "controller" in metadata:
-            self._episode_rows.append(_row_from_metadata_dict(metadata))
-
-    def record_episode(
-        self,
-        request: EpisodeRequest,
-        result: EpisodeResult,
-        session: DatagenEpisodeSession,
-    ) -> EpisodeMetadataRow:
-        return self.record_episode_outcome(request, result, session)
-
     def record_episode_outcome(
         self,
         request: EpisodeRequest,
@@ -177,10 +201,19 @@ class RunDatasetWriter:
         session: DatagenEpisodeSession,
     ) -> EpisodeMetadataRow:
         keep, reason = evaluate_datagen_keep(request, result)
-        row = build_episode_metadata_row(request, result, keep=keep, keep_reason=reason)
-        if session._open:
-            _commit_logger_episode(session.logger, keep=keep, episode_data=row.to_dict() if keep else None)
-            session._open = False
+        dataset_episode_index: int | None = None
+        if session.is_open:
+            if keep:
+                dataset_episode_index = session.commit()
+            else:
+                session.discard()
+        row = build_episode_metadata_row(
+            request,
+            result,
+            keep=keep,
+            keep_reason=reason,
+            dataset_episode_index=dataset_episode_index,
+        )
         self._episode_rows.append(row)
         result.keep = keep
         result.keep_reason = reason if keep else None
@@ -188,8 +221,9 @@ class RunDatasetWriter:
         return row
 
     def finalize(self) -> Path:
-        for logger in self._loggers.values():
-            logger.finalize()
+        if self._manifest_written:
+            return Path(self._recipe.recording.output_dir) / "run_manifest.json"
+        self._finalize_loggers()
         manifest_path = Path(self._recipe.recording.output_dir) / "run_manifest.json"
         write_run_manifest_atomic(
             manifest_path,
@@ -200,37 +234,22 @@ class RunDatasetWriter:
                 episodes=list(self._episode_rows),
             ),
         )
+        self._manifest_written = True
         return manifest_path
 
-    def __enter__(self) -> RunDatasetWriter:
-        return self
+    def finalize_loggers_only(self) -> None:
+        """Flush variant datasets without writing run_manifest.json (failed matrix run)."""
+        self._finalize_loggers()
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if exc_type is not None:
-            for logger in self._loggers.values():
-                if hasattr(logger, "clear_open_episode"):
-                    try:
-                        logger.clear_open_episode()
-                    except Exception:
-                        pass
-        self.finalize()
-
-
-def _row_from_metadata_dict(metadata: dict[str, Any]) -> EpisodeMetadataRow:
-    from lerobot.faults.datagen.manifest import EPISODE_METADATA_FIELDS
-
-    kwargs = {field: metadata.get(field) for field in EPISODE_METADATA_FIELDS}
-    return EpisodeMetadataRow(**kwargs)  # type: ignore[arg-type]
-
-
-def _commit_logger_episode(logger: Any, *, keep: bool, episode_data: dict[str, Any] | None) -> None:
-    if keep:
-        try:
-            logger.end_episode(episode_data=episode_data)
-        except TypeError:
-            logger.end_episode()
-    else:
-        logger.clear_open_episode()
+    def _finalize_loggers(self) -> None:
+        errors: list[BaseException] = []
+        for logger in self._loggers.values():
+            try:
+                logger.finalize()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise RunDatasetFinalizeError(errors)
 
 
 def _default_logger_factory(

@@ -21,11 +21,28 @@ from typing import Any
 
 from lerobot.faults.datagen.drop_trigger import smolvla_fault_drop_fields
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.dataset_writer import variant_dataset_directory
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, effective_post_drop_dwell_steps
 from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 
 PipelineRunner = Callable[..., dict[str, Any]]
+
+
+def _drop_trigger_from_summary(
+    summary: dict[str, Any],
+    *,
+    drop_fields: dict[str, Any],
+    band_name: str,
+) -> dict[str, Any]:
+    return {
+        "kind": "smolvla_xy_target",
+        **drop_fields,
+        "band_name": band_name,
+        "triggered_at": summary.get("triggered_at"),
+        "drop_basket_xy_dist": summary.get("drop_basket_xy_dist"),
+        "drop_trigger_reason": summary.get("drop_trigger_reason"),
+        "pre_drop_pose": summary.get("pre_drop_pose"),
+        "post_drop_pose": summary.get("post_drop_pose"),
+    }
 
 
 class SmolVLADatagenAdapter:
@@ -43,8 +60,8 @@ class SmolVLADatagenAdapter:
         manifest = request.manifest
         plan = request.paired_plan
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
-
         session = request.episode_session
+
         base_pipeline_kwargs: dict[str, Any] = {
             "policy_path": recipe.smolvla.policy_path,
             "device": request.device,
@@ -54,6 +71,7 @@ class SmolVLADatagenAdapter:
             "post_drop_mode": manifest.post_drop_mode.value,
             "min_drop_distance_from_basket_m": recipe.smolvla.min_drop_distance_from_basket_m,
             "object_name": request.object_name,
+            "basket_name": recipe.basket_name,
             "init_state_id": plan.init_state_id,
             "shared_layout": request.shared_layout,
             "wipe_output_dir": session is None,
@@ -61,14 +79,8 @@ class SmolVLADatagenAdapter:
             "copy_demo_gif": False,
         }
         if session is not None:
-            base_pipeline_kwargs.update(
-                {
-                    "dataset_root": variant_dataset_directory(recipe, manifest),
-                    "ds_logger": session.logger,
-                    "defer_dataset_commit": True,
-                    "repo_id": session.repo_id,
-                }
-            )
+            base_pipeline_kwargs["episode_session"] = session
+            base_pipeline_kwargs["defer_dataset_commit"] = True
 
         if not plan.drop_decision.drop:
             summary = self._pipeline_runner(
@@ -101,17 +113,22 @@ class SmolVLADatagenAdapter:
             },
         )
         success = bool(summary.get("success", summary.get("behavioral_success", False)))
+        actual_dwell = summary.get("actual_dwell_steps")
+        trigger_pose = summary.get("trigger_pose") or summary.get("pre_drop_pose")
+        if isinstance(trigger_pose, list):
+            trigger_pose_list = [float(x) for x in trigger_pose]
+        else:
+            trigger_pose_list = None
         return EpisodeResult.from_run(
             request,
             success=success,
             outcome="completed" if success else "pipeline_failed",
-            drop_trigger={
-                "kind": "smolvla_xy_target",
-                **drop_fields,
-                "band_name": plan.smolvla_target.band.name,
-            },
-            actual_dwell_steps=int(
-                summary.get("fault_config", {}).get("post_drop_dwell_steps", dwell_steps)
+            drop_trigger=_drop_trigger_from_summary(
+                summary,
+                drop_fields=drop_fields,
+                band_name=plan.smolvla_target.band.name,
             ),
+            trigger_pose=trigger_pose_list,
+            actual_dwell_steps=int(actual_dwell) if actual_dwell is not None else None,
             pipeline_summary=summary,
         )

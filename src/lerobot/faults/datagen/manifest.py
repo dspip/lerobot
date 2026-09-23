@@ -57,6 +57,7 @@ EPISODE_METADATA_FIELDS: tuple[str, ...] = (
     "reject_reason",
     "fault_config",
     "output_dir",
+    "dataset_episode_index",
 )
 
 
@@ -85,6 +86,7 @@ class EpisodeMetadataRow:
     reject_reason: str | None = None
     fault_config: dict[str, Any] = field(default_factory=dict)
     output_dir: str = ""
+    dataset_episode_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +114,7 @@ def build_episode_metadata_row(
     *,
     keep: bool,
     keep_reason: str | None,
+    dataset_episode_index: int | None = None,
 ) -> EpisodeMetadataRow:
     manifest = request.manifest
     plan = request.paired_plan
@@ -155,6 +158,7 @@ def build_episode_metadata_row(
         reject_reason=reject_reason,
         fault_config=fault_config,
         output_dir=str(request.output_dir),
+        dataset_episode_index=dataset_episode_index if keep else None,
     )
 
 

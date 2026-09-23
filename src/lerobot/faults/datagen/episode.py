@@ -59,7 +59,6 @@ class EpisodeRequest:
     headless: bool = True
     device: str = "cuda"
     episode_session: DatagenEpisodeSession | None = None
-    episode_session: Any | None = None
 
 
 @dataclass
