@@ -34,6 +34,13 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.faults.datagen.episode_preview import (
+    _final_proof_shot,
+    _overlay_banner,
+    _write_gif,
+    _write_mp4,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -47,116 +54,10 @@ def _drop_phase_banner(mode: str, dwell_completed: int, dwell_total: int) -> str
     return f"PHASE: DROP {mode}"
 
 
-def _overlay_banner(frame: np.ndarray, text: str, color: tuple[int, int, int]) -> np.ndarray:
-    """Draw a simple top banner (no OpenCV dependency)."""
-    out = frame.copy()
-    h, w = out.shape[:2]
-    banner_h = max(28, h // 12)
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-
-        img = Image.fromarray(out)
-        draw = ImageDraw.Draw(img)
-        font = ImageFont.load_default()
-        draw.rectangle([0, 0, w, banner_h], fill=color)
-        draw.text((8, 6), text, fill=(255, 255, 255), font=font)
-        return np.asarray(img)
-    except Exception:
-        out[:banner_h] = (out[:banner_h].astype(np.float32) * 0.35).astype(np.uint8)
-        return out
-
-
-def _write_gif(path: Path, frames: list[np.ndarray], fps: int = 10) -> None:
-    from PIL import Image
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    imgs = [Image.fromarray(f) for f in frames]
-    duration_ms = int(1000 / max(fps, 1))
-    imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=duration_ms, loop=0)
-
-
-def _write_mp4(path: Path, frames: list[np.ndarray], fps: int = 10) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        from lerobot.utils.io_utils import write_video
-
-        write_video(str(path), np.stack(frames), fps)
-        return
-    except (ImportError, OSError, RuntimeError, ValueError):
-        pass  # fall back to imageio when lerobot video backend is unavailable
-    try:
-        import imageio.v2 as imageio
-
-        imageio.mimsave(path, frames, fps=fps)
-    except Exception as exc:
-        raise RuntimeError(f"Could not write mp4: {exc}") from exc
-
-
 def _in_view(pos: np.ndarray, *, z_min: float = 0.0, z_max: float = 0.8, xy_lim: float = 0.7) -> bool:
     """Rough workspace visibility check (object not under table / blasted away)."""
     x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
     return (z_min <= z <= z_max) and (abs(x) <= xy_lim) and (abs(y) <= xy_lim)
-
-
-def _render_looking_into_basket(rs: Any, size: int = 384) -> np.ndarray | None:
-    """Render steeply down onto the basket using a free camera.
-
-    Every camera baked into the scene views the basket from the side, and the
-    basket rim (~0.15 m) is taller than a can standing on its floor (top ~0.10 m),
-    so a correctly placed can is fully occluded and the basket reads as empty.
-    Only a view from above can show the outcome.
-    """
-    try:
-        import mujoco
-
-        from lerobot.faults.sim.libero import DEFAULT_BASKET_NAME, _body_xpos
-
-        model = rs.sim.model._model
-        data = rs.sim.data._data
-        basket = _body_xpos(rs, DEFAULT_BASKET_NAME)
-        if basket is None:
-            return None
-
-        cam = mujoco.MjvCamera()
-        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        cam.lookat[:] = [float(basket[0]), float(basket[1]), float(basket[2])]
-        cam.distance = 0.55
-        cam.azimuth = 90.0
-        cam.elevation = -75.0  # steep, but not exactly top-down, to keep depth cues
-
-        with mujoco.Renderer(model, height=size, width=size) as renderer:
-            renderer.update_scene(data, camera=cam)
-            return np.asarray(renderer.render(), dtype=np.uint8)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[pipeline] basket top-view render failed: {exc}", flush=True)
-        return None
-
-
-def _final_proof_shot(rs: Any, out_path: Path) -> str | None:
-    """Save a multi-camera still of the end state.
-
-    The recording camera looks at the basket side-on, so a can resting on the
-    basket floor is hidden behind the near wall — indistinguishable from an empty
-    basket. Extra viewpoints make the outcome checkable instead of inferred from
-    coordinates.
-    """
-    shots: list[np.ndarray] = []
-    top = _render_looking_into_basket(rs)
-    if top is not None:
-        shots.append(top)
-    for camera in ("agentview", "frontview", "birdview", "sideview"):
-        try:
-            img = rs.sim.render(height=384, width=384, camera_name=camera)
-        except Exception:  # nosec B112 — optional proof cameras may be absent in some scenes
-            continue
-        shots.append(np.asarray(img, dtype=np.uint8)[::-1])
-    if not shots:
-        return None
-    import imageio.v2 as imageio
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    imageio.imwrite(out_path, np.concatenate(shots, axis=1))
-    return str(out_path)
 
 
 def _settle_after_release(
