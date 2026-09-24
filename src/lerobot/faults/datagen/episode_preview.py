@@ -115,7 +115,7 @@ def _final_proof_shot(rs: Any, out_path: Path) -> str | None:
         try:
             img = rs.sim.render(height=384, width=384, camera_name=camera)
             arr = np.asarray(img, dtype=np.uint8)[::-1]
-            if arr.ndim != 3:  # guard against mocks or broken renderers
+            if arr.ndim != 3 or arr.shape[2] != 3:  # must be H×W×3 RGB
                 continue
         except Exception:  # nosec B112 — optional proof cameras may be absent in some scenes
             continue
@@ -152,9 +152,10 @@ class EpisodePreview:
         """
         try:
             raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
-            frame = np.asarray(raw[0], dtype=np.uint8)
+            frame = np.asarray(raw[0])  # preserve original dtype; do not coerce to uint8 here
             if frame.ndim != 3 or frame.shape[2] != 3:
                 raise ValueError(f"render returned unexpected shape {frame.shape!r}")
+            # Fallback frames intentionally reuse the previous frame and omit the new label.
             self.frames.append(_overlay_banner(frame, label, color))
         except Exception:  # noqa: BLE001
             if self.frames:
