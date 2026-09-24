@@ -476,6 +476,11 @@ def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path
     mock_preview.finalize.assert_called_once_with(mock_rs_env)
     assert "on_post_step" in loop_kwargs, "on_post_step callback must be passed to run_simple_ik_episode_loop"
     assert callable(loop_kwargs["on_post_step"])
+    # Invoke the captured callback directly and verify it drives preview.capture with the right signature.
+    loop_kwargs["on_post_step"](0, "lift")
+    mock_preview.capture.assert_called_with(
+        mock_env, "PHASE: SIMPLE IK lift step=0", (30, 90, 200)
+    )
     assert result.details["video_mp4"].endswith("full_pipeline.mp4")
     assert result.details["video_gif"].endswith("full_pipeline.gif")
     assert result.details["final_state_multicam"].endswith("final_state_multicam.png")
@@ -496,11 +501,14 @@ def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: P
         from lerobot.faults.datagen.controllers import simple_ik as mod
         return mod.SimpleIKEpisodeFacts(False, "nominal_completed_after_drop", None, None, 0)
 
+    fail_artifact_mp4 = str(tmp_path / "ep" / "videos" / "full_pipeline.mp4")
+    fail_artifact_gif = str(tmp_path / "ep" / "videos" / "full_pipeline.gif")
+    fail_artifact_multicam = str(tmp_path / "ep" / "final_state_multicam.png")
     mock_preview = MagicMock()
     mock_preview.finalize.return_value = {
-        "video_mp4": None,
-        "video_gif": None,
-        "final_state_multicam": None,
+        "video_mp4": fail_artifact_mp4,
+        "video_gif": fail_artifact_gif,
+        "final_state_multicam": fail_artifact_multicam,
     }
     mock_rs_env = MagicMock()
 
@@ -524,6 +532,9 @@ def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: P
 
     mock_preview.finalize.assert_called_once_with(mock_rs_env)
     assert not result.success, "episode should be unsuccessful"
+    assert result.details["video_mp4"] == fail_artifact_mp4
+    assert result.details["video_gif"] == fail_artifact_gif
+    assert result.details["final_state_multicam"] == fail_artifact_multicam
 
 
 def test_simple_ik_adapter_closes_env_after_finalization(tmp_path: Path) -> None:

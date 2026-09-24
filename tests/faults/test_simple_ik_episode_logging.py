@@ -274,3 +274,4 @@ def test_simple_ik_loop_calls_on_post_step() -> None:
 
         assert captured, "on_post_step should have been called at least once"
         assert captured[0][0] == 0, f"first captured step should be 0, got {captured[0][0]}"
+        assert captured[0][1] == "lift", f"first captured phase should be 'lift', got {captured[0][1]!r}"
