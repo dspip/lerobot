@@ -199,3 +199,6 @@ ft_inventory/
 
 # Gangelia project third-party repository
 /third_party/Gangelia_Project/
+
+# Superpowers scratch reports and agent working notes (kept locally, not tracked)
+/.superpowers/
