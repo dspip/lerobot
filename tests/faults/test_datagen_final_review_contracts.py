@@ -178,6 +178,17 @@ def test_smolvla_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_in
     assert captured["motion_profile"] == plan.motion_profile
 
 
+def _fake_preview_cls() -> MagicMock:
+    """Return a MagicMock that behaves like EpisodePreview (finalize returns a valid artifact dict)."""
+    mock_preview = MagicMock()
+    mock_preview.finalize.return_value = {
+        "video_mp4": "/tmp/ep/videos/full_pipeline.mp4",
+        "video_gif": "/tmp/ep/videos/full_pipeline.gif",
+        "final_state_multicam": "/tmp/ep/final_state_multicam.png",
+    }
+    return mock_preview
+
+
 @pytest.mark.parametrize("manifest_index", (0, 1))
 def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_index: int) -> None:
     from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
@@ -219,6 +230,7 @@ def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_
         mp.setattr(
             simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock(phase_name="lift", carry_path=None)
         )
+        mp.setattr(simple_ik_mod, "EpisodePreview", lambda *a, **k: _fake_preview_cls())
         mock_env.reset = MagicMock(return_value=({}, {}))
         request = EpisodeRequest(
             recipe=recipe,
@@ -393,3 +405,167 @@ def test_read_run_manifest_includes_run_status(tmp_path: Path) -> None:
     )
     loaded = read_run_manifest(path)
     assert loaded.run_status == "complete"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: SimpleIK preview artifact tests
+# ---------------------------------------------------------------------------
+
+def _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, mock_rs_env, fake_loop, recipe) -> None:  # noqa: ANN001
+    """Apply standard MonkeyPatch entries used by SimpleIK adapter tests."""
+    mp.setattr(simple_ik_mod, "run_simple_ik_episode_loop", fake_loop)
+    mp.setattr(simple_ik_mod, "make_env", lambda *a, **k: {"libero_object": {0: MagicMock()}})
+    mp.setattr(simple_ik_mod, "DropRecoveryEnvWrapper", lambda *a, **k: mock_env)
+    mp.setattr(simple_ik_mod, "unwrap_libero_env", lambda v: MagicMock(_init_states=[0], init_state_id=0))
+    mp.setattr(simple_ik_mod, "get_robosuite_env", lambda e, i=0: mock_rs_env)
+    mp.setattr(simple_ik_mod, "apply_serializable_layout", lambda *a, **k: None)
+    mp.setattr(simple_ik_mod, "read_control_freq", lambda rs: recipe.control_hz)
+    mp.setattr(simple_ik_mod, "read_libero_task_description", lambda v: LIBERO_TASK_DESCRIPTION)
+    mp.setattr(simple_ik_mod, "_new_planner", lambda *a, **k: MagicMock(phase_name="lift", carry_path=None))
+    mock_env.reset = MagicMock(return_value=({}, {}))
+
+
+def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path) -> None:
+    """Adapter creates EpisodePreview, passes on_post_step callback, finalizes with rs_env, and merges artifacts."""
+    from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import lerobot.faults.datagen.controllers.simple_ik as simple_ik_mod
+
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    assert manifest.controller == DatagenController.SIMPLE_IK
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    loop_kwargs: dict = {}
+
+    def _fake_loop(*_args, **kwargs):  # noqa: ANN003
+        loop_kwargs.update(kwargs)
+        from lerobot.faults.datagen.controllers import simple_ik as mod
+        return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
+
+    mock_preview = MagicMock()
+    artifact_mp4 = str(tmp_path / "ep" / "videos" / "full_pipeline.mp4")
+    artifact_gif = str(tmp_path / "ep" / "videos" / "full_pipeline.gif")
+    artifact_multicam = str(tmp_path / "ep" / "final_state_multicam.png")
+    mock_preview.finalize.return_value = {
+        "video_mp4": artifact_mp4,
+        "video_gif": artifact_gif,
+        "final_state_multicam": artifact_multicam,
+    }
+    mock_rs_env = MagicMock()
+
+    adapter = SimpleIKDatagenAdapter(recipe)
+    mock_env = MagicMock()
+    mock_env.fault = MagicMock()
+    mock_env.fault.set_recovery_motion_profile = MagicMock()
+
+    with pytest.MonkeyPatch.context() as mp:
+        _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, mock_rs_env, _fake_loop, recipe)
+        mp.setattr(simple_ik_mod, "EpisodePreview", lambda *a, **k: mock_preview)
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        )
+        result = adapter.run_episode(request)
+
+    mock_preview.finalize.assert_called_once_with(mock_rs_env)
+    assert "on_post_step" in loop_kwargs, "on_post_step callback must be passed to run_simple_ik_episode_loop"
+    assert callable(loop_kwargs["on_post_step"])
+    assert result.details["video_mp4"].endswith("full_pipeline.mp4")
+    assert result.details["video_gif"].endswith("full_pipeline.gif")
+    assert result.details["final_state_multicam"].endswith("final_state_multicam.png")
+
+
+def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: Path) -> None:
+    """Preview finalization runs even when the episode outcome is not success."""
+    from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import lerobot.faults.datagen.controllers.simple_ik as simple_ik_mod
+
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    def _fake_loop_fail(*_args, **kwargs):  # noqa: ANN003
+        from lerobot.faults.datagen.controllers import simple_ik as mod
+        return mod.SimpleIKEpisodeFacts(False, "nominal_completed_after_drop", None, None, 0)
+
+    mock_preview = MagicMock()
+    mock_preview.finalize.return_value = {
+        "video_mp4": None,
+        "video_gif": None,
+        "final_state_multicam": None,
+    }
+    mock_rs_env = MagicMock()
+
+    adapter = SimpleIKDatagenAdapter(recipe)
+    mock_env = MagicMock()
+    mock_env.fault = MagicMock()
+    mock_env.fault.set_recovery_motion_profile = MagicMock()
+
+    with pytest.MonkeyPatch.context() as mp:
+        _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, mock_rs_env, _fake_loop_fail, recipe)
+        mp.setattr(simple_ik_mod, "EpisodePreview", lambda *a, **k: mock_preview)
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        )
+        result = adapter.run_episode(request)
+
+    mock_preview.finalize.assert_called_once_with(mock_rs_env)
+    assert not result.success, "episode should be unsuccessful"
+
+
+def test_simple_ik_adapter_closes_env_after_finalization(tmp_path: Path) -> None:
+    """env.close() must be called after preview.finalize(), not before."""
+    from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import lerobot.faults.datagen.controllers.simple_ik as simple_ik_mod
+
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    def _fake_loop(*_args, **kwargs):  # noqa: ANN003
+        from lerobot.faults.datagen.controllers import simple_ik as mod
+        return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
+
+    order: list[str] = []
+    mock_preview = MagicMock()
+    mock_preview.finalize.side_effect = lambda rs: order.append("finalize") or {
+        "video_mp4": None,
+        "video_gif": None,
+        "final_state_multicam": None,
+    }
+
+    adapter = SimpleIKDatagenAdapter(recipe)
+    mock_env = MagicMock()
+    mock_env.fault = MagicMock()
+    mock_env.fault.set_recovery_motion_profile = MagicMock()
+    mock_env.close.side_effect = lambda: order.append("close")
+
+    with pytest.MonkeyPatch.context() as mp:
+        _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, MagicMock(), _fake_loop, recipe)
+        mp.setattr(simple_ik_mod, "EpisodePreview", lambda *a, **k: mock_preview)
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout={"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}},
+        )
+        adapter.run_episode(request)
+
+    assert order == ["finalize", "close"], f"expected finalize before close, got {order}"

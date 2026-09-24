@@ -207,3 +207,70 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert injection_idx < recovery_idx
         assert all(ctx.loss_mask == 0.0 for ctx in logged_ctx[injection_idx:recovery_idx])
         assert logged_ctx[injection_idx - 1].loss_mask == 1.0 if injection_idx > 0 else True
+
+
+def test_simple_ik_loop_calls_on_post_step() -> None:
+    """on_post_step is invoked with (step_index, phase_name) after each env.step call."""
+    with (
+        patch("lerobot.faults.recovery.midair_drop.get_place_destination") as mock_dest,
+        patch("lerobot.faults.recovery.midair_drop.midair_drop") as mock_drop,
+        patch("lerobot.faults.recovery.midair_drop.get_object_pose") as mock_obj_pose,
+        patch("lerobot.faults.recovery.midair_drop.get_eef_pose") as mock_eef,
+        patch("lerobot.faults.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
+        patch("lerobot.faults.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
+        patch("lerobot.faults.recovery.midair_drop.is_object_grasped") as mock_grasped,
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik._nominal_action",
+            return_value=np.ones(7),
+        ),
+        patch("lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket", return_value=True),
+        patch("lerobot.faults.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=False,
+        ),
+        patch("lerobot.faults.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
+        patch("lerobot.faults.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
+    ):
+        _setup_drop_mocks(
+            mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
+        )
+        mock_obj_pose_simple.return_value = {"pos": np.array([0.55, 0.0, 0.2])}
+        mock_dest_simple.return_value = np.array([0.0, 0.0, 0.0])
+
+        env = _wrapped_continue_env()
+        rs_env = MagicMock()
+
+        carry_path = CarryPath(
+            segments=(PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+            requested_transport_offset_m=0.0,
+            resolved_transport_offset_m=0.0,
+            fallback=False,
+        )
+        planner = MagicMock(phase_name="lift", carry_path=carry_path, done=False)
+        paired_plan = SimpleNamespace(
+            drop_decision=DropDecision(True, None, "injected"),
+            drop_u=0.05,
+        )
+
+        captured = []
+        run_simple_ik_episode_loop(
+            env,
+            rs_env,
+            fault=env.fault,
+            planner=planner,
+            recipe_drop=MagicMock(
+                min_drop_distance_from_basket_m=0.3,
+                hard_keepout_floor_m=0.22,
+            ),
+            object_name="alphabet_soup_1",
+            basket_name="basket_1",
+            q=1.0,
+            drop_rng=np.random.default_rng(0),
+            paired_plan=paired_plan,
+            max_steps=5,
+            on_post_step=lambda step, phase: captured.append((step, phase)),
+        )
+
+        assert captured, "on_post_step should have been called at least once"
+        assert captured[0][0] == 0, f"first captured step should be 0, got {captured[0][0]}"

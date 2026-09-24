@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -25,6 +26,7 @@ import numpy as np
 from lerobot.envs.factory import make_env
 from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.episode_preview import EpisodePreview
 from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
 from lerobot.faults.datagen.path_drop import (
@@ -63,6 +65,9 @@ from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
 MAX_PLAN_STEPS = 800
 POST_RECOVERY_SETTLE_STEPS = 40
+
+# Banner colour for SimpleIK preview frames (blue-ish)
+_PREVIEW_COLOR: tuple[int, int, int] = (30, 90, 200)
 
 
 @dataclass
@@ -120,6 +125,7 @@ def run_simple_ik_episode_loop(
     recording_stride: int = 1,
     task: str | None = None,
     eligible_phases: tuple[str, ...] | None = None,
+    on_post_step: Callable[[int, str], None] | None = None,
 ) -> SimpleIKEpisodeFacts:
     """Drive one SimpleIK episode with path-based drop timing and optional recording."""
     if episode_session is not None and task is None:
@@ -262,6 +268,8 @@ def run_simple_ik_episode_loop(
         step_out = env.step(action)
         observation = step_out[0] if isinstance(step_out, tuple) and step_out else None
         state = fault._states[0]
+        if on_post_step is not None:
+            on_post_step(step, planner.phase_name)
         is_drop_episode = paired_plan is None or paired_plan.drop_decision.drop
         drop_injection = bool(is_drop_episode and state.drop_injection_step)
         if (
@@ -448,6 +456,8 @@ class SimpleIKDatagenAdapter:
             path_drop = recipe.simple_ik.path_drop
             assert path_drop is not None
             task = read_libero_task_description(vec)
+            preview = EpisodePreview(output_dir=request.output_dir, control_fps=int(control_freq))
+            preview.capture(env, "PHASE: SIMPLE IK init step=0", _PREVIEW_COLOR)
             facts = run_simple_ik_episode_loop(
                 env,
                 rs_env,
@@ -464,7 +474,11 @@ class SimpleIKDatagenAdapter:
                 recording_stride=stride,
                 task=task,
                 eligible_phases=path_drop.eligible_phases,
+                on_post_step=lambda step, phase: preview.capture(
+                    env, f"PHASE: SIMPLE IK {phase} step={step}", _PREVIEW_COLOR
+                ),
             )
+            artifacts = preview.finalize(rs_env)
             return EpisodeResult.from_run(
                 request,
                 success=facts.success,
@@ -474,6 +488,7 @@ class SimpleIKDatagenAdapter:
                 actual_dwell_steps=facts.actual_dwell_steps,
                 layout=request.shared_layout,
                 motion_profile=asdict(plan.motion_profile),
+                **artifacts,
             )
         finally:
             if env is not None:
