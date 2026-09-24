@@ -488,3 +488,47 @@ def test_smolvla_gets_stock_layout_simple_ik_gets_random(tmp_path: Path) -> None
     assert [request_layout_by_key[c] for c in simple_modes] == [{"kind": "random"}] * 2
     assert [request_layout_by_key[c] for c in smolvla_modes] == [{"kind": "stock"}] * 3
     assert len(layout_provider_calls) == 2
+
+
+def test_use_stock_layout_false_calls_layout_provider_once_all_same(tmp_path: Path) -> None:
+    """When use_stock_layout=False the runner calls layout_fn exactly once and
+    every controller variant receives the same randomized layout."""
+    from dataclasses import replace as dc_replace
+
+    base_recipe = _recipe_with_output(tmp_path)
+    recipe = dc_replace(
+        base_recipe,
+        smolvla=dc_replace(base_recipe.smolvla, use_stock_layout=False),
+    )
+
+    call_count: list[int] = []
+    received_layouts: list[dict] = []
+
+    def layout_provider(ctx: LayoutProviderContext) -> dict:
+        call_count.append(1)
+        return {"kind": "random", "xy_range_m": ctx.recipe.placement.xy_range_m}
+
+    class _SpyAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            received_layouts.append(request.shared_layout)
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _SpyAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _SpyAdapter(),
+    }
+    run_drop_datagen_matrix(
+        recipe,
+        logical_episode_indices=(0,),
+        adapter_factories=factories,
+        layout_provider=layout_provider,
+        init_state_count_provider=_fake_init_count,
+        dataset_writer=_writer_for(recipe),
+    )
+
+    assert len(call_count) == 1, f"layout_fn called {len(call_count)} time(s), want exactly 1"
+    assert len(received_layouts) == 5
+    first = received_layouts[0]
+    assert all(layout == first for layout in received_layouts), "all 5 variants must receive the same layout"

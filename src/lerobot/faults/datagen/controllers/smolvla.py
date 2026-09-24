@@ -153,6 +153,7 @@ class SmolVLADatagenAdapter:
                 outcome="nominal_no_drop",
                 drop_trigger={"kind": "paired_skipped", "reason": plan.drop_decision.reason},
                 actual_dwell_steps=0,
+                layout=request.shared_layout,
                 pipeline_summary=summary,
                 motion_profile=profile_dict,
             )
@@ -187,6 +188,7 @@ class SmolVLADatagenAdapter:
             ),
             trigger_pose=trigger_pose_list,
             actual_dwell_steps=int(actual_dwell) if actual_dwell is not None else None,
+            layout=request.shared_layout,
             pipeline_summary=summary,
             motion_profile=profile_dict,
         )

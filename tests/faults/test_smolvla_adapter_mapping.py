@@ -143,3 +143,61 @@ def test_smolvla_adapter_nominal_when_paired_plan_skips_drop(tmp_path: Path) -> 
     assert captured["episode_kind"] == "nominal"
     assert "drop_xy_target_m" not in captured
     assert "fault_overrides" not in captured
+
+
+# ---------------------------------------------------------------------------
+# Task 3 review fixes: applied layout must be recorded in result.details
+# ---------------------------------------------------------------------------
+
+_STOCK_LAYOUT = {"alphabet_soup_1": {"pos": [0.1, 0.2, 0.03], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}}
+
+
+def test_smolvla_adapter_drop_path_records_applied_layout(tmp_path: Path) -> None:
+    """Drop-path EpisodeResult must store request.shared_layout in result.details['layout']."""
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+
+    def _ok_pipeline(output_dir: Path, **kwargs):  # noqa: ANN003
+        return {"behavioral_success": True, "triggered_at": 0}
+
+    adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_ok_pipeline)
+    request = EpisodeRequest(
+        recipe=recipe,
+        manifest=manifest,
+        object_name="alphabet_soup_1",
+        output_dir=tmp_path,
+        paired_plan=plan,
+        shared_layout=_STOCK_LAYOUT,
+        device="cpu",
+    )
+    result = adapter.run_episode(request)
+    assert result.details.get("layout") == _STOCK_LAYOUT
+
+
+def test_smolvla_adapter_nominal_path_records_applied_layout(tmp_path: Path) -> None:
+    """Nominal-path EpisodeResult must store request.shared_layout in result.details['layout']."""
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    plan = build_paired_episode_plan(
+        recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    plan = replace(plan, drop_decision=DropDecision(False, None, "paired_no_drop"))
+
+    def _ok_pipeline(output_dir: Path, **kwargs):  # noqa: ANN003
+        return {"behavioral_success": True}
+
+    adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_ok_pipeline)
+    request = EpisodeRequest(
+        recipe=recipe,
+        manifest=manifest,
+        object_name="alphabet_soup_1",
+        output_dir=tmp_path,
+        paired_plan=plan,
+        shared_layout=_STOCK_LAYOUT,
+        device="cpu",
+    )
+    result = adapter.run_episode(request)
+    assert result.details.get("layout") == _STOCK_LAYOUT
