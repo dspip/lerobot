@@ -57,10 +57,15 @@ class DropDatagenRunnerError(RuntimeError):
 def variant_output_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> Path:
     """Per-episode artifact directory for one controller/mode variant."""
     base = Path(recipe.recording.output_dir)
+    # No-drop rows reuse a post_drop_mode they never reach, so they need their own
+    # directory or they overwrite the dropping row's diagnostics.
+    mode = manifest.post_drop_mode.value
+    if not manifest.drop:
+        mode = f"{mode}_no_drop"
     return (
         base
         / manifest.controller.value
-        / manifest.post_drop_mode.value
+        / mode
         / f"episode_{manifest.logical_episode_index:04d}"
     )
 
@@ -117,15 +122,18 @@ def run_drop_datagen_matrix(
             if not manifests:
                 raise DropDatagenRunnerError(f"No manifests for logical episode index {logical_index}")
             object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
-            paired_plan = build_paired_episode_plan(
-                recipe,
-                manifest=manifests[0],
-                object_name=object_name,
-                num_init_states=num_init_states,
-            )
+            paired_plans = [
+                build_paired_episode_plan(
+                    recipe,
+                    manifest=manifest,
+                    object_name=object_name,
+                    num_init_states=num_init_states,
+                )
+                for manifest in manifests
+            ]
             layout_ctx = LayoutProviderContext(
                 recipe=recipe,
-                plan=paired_plan,
+                plan=paired_plans[0],
                 object_name=object_name,
             )
             try:
@@ -150,7 +158,7 @@ def run_drop_datagen_matrix(
                 DatagenController.SIMPLE_IK: randomized_layout,
                 DatagenController.SMOLVLA: stock_layout,
             }
-            for manifest in manifests:
+            for manifest, paired_plan in zip(manifests, paired_plans, strict=True):
                 adapter = _adapter_for(manifest.controller, recipe, factories)
                 output_dir = variant_output_directory(recipe, manifest)
                 output_dir.mkdir(parents=True, exist_ok=True)

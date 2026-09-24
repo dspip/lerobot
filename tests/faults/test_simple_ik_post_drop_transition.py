@@ -333,6 +333,79 @@ def test_paired_no_drop_success_when_object_in_basket(
 
 
 @patch("lerobot.faults.datagen.controllers.simple_ik.sample_path_drop")
+@patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+def test_paired_no_drop_stops_on_success_termination_before_autoreset(
+    _mock_nominal: MagicMock,
+    mock_sample_path_drop: MagicMock,
+) -> None:
+    fault = _fault_continue()
+    env = MagicMock()
+    env.step.return_value = (
+        {},
+        1.0,
+        np.array([True]),
+        np.array([False]),
+        {"is_success": np.array([True])},
+    )
+    rs_env = MagicMock()
+    paired_plan = SimpleNamespace(
+        drop_decision=DropDecision(False, None, "matrix_no_drop"),
+        drop_u=0.05,
+    )
+    carry_path = CarryPath(
+        segments=(PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+        requested_transport_offset_m=0.0,
+        resolved_transport_offset_m=0.0,
+        fallback=False,
+    )
+    planner = MagicMock(phase_name="open_place", carry_path=carry_path, done=False)
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.01, 0.25, 0.17])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.25, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=False,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_in_basket",
+            return_value=False,
+        ),
+    ):
+        facts = run_simple_ik_episode_loop(
+            env,
+            rs_env,
+            fault=fault,
+            planner=planner,
+            recipe_drop=MagicMock(
+                min_drop_distance_from_basket_m=0.3,
+                hard_keepout_floor_m=0.22,
+            ),
+            object_name="alphabet_soup_1",
+            basket_name="basket_1",
+            q=1.0,
+            drop_rng=np.random.default_rng(0),
+            paired_plan=paired_plan,
+            max_steps=3,
+            gripper_settle_steps=0,
+        )
+
+    mock_sample_path_drop.assert_not_called()
+    assert env.step.call_count == 1
+    assert facts.success is True
+    assert facts.outcome == "nominal_no_drop"
+    assert facts.drop_trigger == {
+        "kind": "paired_skipped",
+        "reason": "matrix_no_drop",
+    }
+
+
+@patch("lerobot.faults.datagen.controllers.simple_ik.sample_path_drop")
 @patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=None)
 def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
     _mock_nominal: MagicMock,

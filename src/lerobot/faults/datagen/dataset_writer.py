@@ -31,7 +31,7 @@ from lerobot.faults.datagen.manifest import (
     build_episode_metadata_row,
     write_run_manifest_atomic,
 )
-from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest
+from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest, PostDropMode
 
 __all__ = [
     "DatagenEpisodeSession",
@@ -46,7 +46,8 @@ __all__ = [
 
 LoggerFactory = Callable[..., Any]
 
-VariantKey = tuple[str, str]
+VariantKey = str
+_SINGLE_DATASET_KEY = "dataset"
 
 
 class StaleRunOutputError(FileExistsError):
@@ -64,18 +65,20 @@ class RunDatasetFinalizeError(RuntimeError):
 
 
 def variant_dataset_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> Path:
-    """Return the on-disk LeRobot dataset root for one controller/mode variant."""
-    base = Path(recipe.recording.output_dir)
-    return base / manifest.controller.value / manifest.post_drop_mode.value / "dataset"
+    """Return the single LeRobot dataset root for the recording job."""
+    del manifest
+    return Path(recipe.recording.output_dir) / "dataset"
 
 
 def variant_repo_id(recipe: DropDatagenRecipe, manifest: EpisodeSeedManifest) -> str:
-    """Hub-style repo id for a controller/mode variant dataset."""
-    return f"{recipe.name}/{manifest.controller.value}/{manifest.post_drop_mode.value}"
+    """Hub-style repo id for the single recorded dataset."""
+    del manifest
+    return str(recipe.name)
 
 
 def _variant_key(manifest: EpisodeSeedManifest) -> VariantKey:
-    return (manifest.controller.value, manifest.post_drop_mode.value)
+    del manifest
+    return _SINGLE_DATASET_KEY
 
 
 def assert_fresh_run_output_dir(recipe: DropDatagenRecipe) -> None:
@@ -92,10 +95,21 @@ def assert_fresh_run_output_dir(recipe: DropDatagenRecipe) -> None:
 def evaluate_datagen_keep(request: EpisodeRequest, result: EpisodeResult) -> tuple[bool, str | None]:
     """Decide whether logged frames should be committed for this matrix outcome."""
     plan = request.paired_plan
+    mode = request.manifest.post_drop_mode
     if not plan.drop_decision.drop:
         if result.success:
             return True, "nominal_placement_success"
         return False, result.outcome or "nominal_failed"
+    if mode is PostDropMode.IMMEDIATE_SMOLVLA:
+        if result.outcome in {
+            "no_eligible_path",
+            "nominal_completed_without_drop",
+            "runtime_keepout",
+        }:
+            return False, result.outcome
+        if result.success:
+            return True, "smolvla_placed_after_drop"
+        return True, "planned_smolvla_fail"
     if result.success:
         return True, "recovery_success"
     return False, result.outcome or "recovery_failed"
@@ -144,12 +158,12 @@ class DatagenEpisodeSession:
             self.logger.clear_open_episode()
         self._open = False
 
-    def commit(self) -> int:
+    def commit(self, *, success: bool) -> int:
         """Persist buffered frames; return the dataset episode index written."""
         if not self._open:
             raise RuntimeError("cannot commit datagen episode: no open frame buffer")
         index = int(self.logger.dataset_episode_index_on_commit())
-        self.logger.end_episode()
+        self.logger.end_episode(episode_metadata={"success": bool(success)})
         self._open = False
         return index
 
@@ -253,7 +267,7 @@ class RunDatasetWriter:
                     "cannot keep datagen episode with no logged frames "
                     f"({manifest.controller.value} × {manifest.post_drop_mode.value})"
                 )
-            dataset_episode_index = session.commit()
+            dataset_episode_index = session.commit(success=result.success)
         elif session.is_open:
             session.discard()
         row = build_episode_metadata_row(

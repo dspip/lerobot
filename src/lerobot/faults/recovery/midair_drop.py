@@ -450,6 +450,18 @@ class MidAirDropFault:
         state.triggered = True
         dwell_steps = int(self.config.post_drop_dwell_steps)
         if dwell_steps == 0:
+            if self.config.post_drop_mode == "immediate_smolvla":
+                state.awaiting_manual_recovery = True
+                self._log_event(
+                    env_idx=env_idx,
+                    status="triggered",
+                    telemetry=telemetry,
+                    arm_q=get_arm_qpos(rs_env),
+                    proposed_action=proposed_action,
+                    executed_recovery_action=None,
+                    destination_pos=None,
+                )
+                return proposed_action
             destination = self._start_recovery_planner(env, env_idx, state)
             recovery_action = self._next_recovery_action(env_idx, env=env)
             self._log_event(

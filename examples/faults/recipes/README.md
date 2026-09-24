@@ -1,6 +1,6 @@
 Shared JSON recipes for fault datagen live here.
 
-- **`can_drop_datagen.json`** — sole drop-datagen recipe (experiment matrix, placement, SimpleIK + SmolVLA settings, recording).
+- **`can_drop_datagen.json`** — one dataset, five episode kinds (SimpleIK carry; three IK recoveries, one no-drop, one SmolVLA-after-drop fail). Type 3 (`reset_then_ik`) is SimpleIK → drop → SmolVLA dwell → IK place.
 
 Record datasets with:
 

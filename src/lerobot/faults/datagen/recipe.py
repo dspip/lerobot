@@ -94,7 +94,7 @@ _SMOLVLA_KEYS = frozenset(
 _BAND_KEYS = frozenset({"name", "min_m", "max_m"})
 _POST_DROP_KEYS = frozenset({"dwell_steps"})
 _RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps"})
-_MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "episodes"})
+_MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "drop", "episodes"})
 
 
 def _reject_unknown_keys(raw: dict[str, Any], allowed: frozenset[str], section: str) -> None:
@@ -117,12 +117,15 @@ class PostDropMode(StrEnum):
     IMMEDIATE_IK = "immediate_ik"
     CONTINUE_THEN_IK = "continue_then_ik"
     RESET_THEN_IK = "reset_then_ik"
+    IMMEDIATE_SMOLVLA = "immediate_smolvla"
 
 
 _ALLOWED_CONTROLLER_MODES: frozenset[tuple[DatagenController, PostDropMode]] = frozenset(
     {
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
         (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
+        (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK),
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA),
         (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
         (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
         (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
@@ -132,9 +135,11 @@ _ALLOWED_CONTROLLER_MODES: frozenset[tuple[DatagenController, PostDropMode]] = f
 _CONTROLLER_MODE_TAGS: dict[tuple[DatagenController, PostDropMode], int] = {
     (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK): 1,
     (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK): 2,
-    (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK): 3,
-    (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK): 4,
-    (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK): 5,
+    (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK): 3,
+    (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA): 4,
+    (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK): 5,
+    (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK): 6,
+    (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK): 7,
 }
 
 
@@ -219,10 +224,11 @@ class RecordingRecipe:
 
 @dataclass(frozen=True)
 class MatrixVariant:
-    """One controller/mode pair and its per-run episode count."""
+    """One controller/mode pair, whether the row injects a drop, and its episode count."""
 
     controller: DatagenController
     post_drop_mode: PostDropMode
+    drop: bool
     episodes: int
 
 
@@ -232,6 +238,7 @@ class ExpandedMatrixRun:
 
     controller: DatagenController
     post_drop_mode: PostDropMode
+    drop: bool
     episode_index: int
     logical_episode_index: int
 
@@ -242,6 +249,8 @@ class EpisodeSeedManifest:
 
     controller: DatagenController
     post_drop_mode: PostDropMode
+    drop: bool
+    variant_index: int
     logical_episode_index: int
     episode_index: int
     episode_seed: int
@@ -344,31 +353,24 @@ def validate_controller_mode_pair(
     """Raise ``RecipeError`` when a controller/post-drop mode pair is not allowed."""
     pair = (controller, mode)
     if pair not in _ALLOWED_CONTROLLER_MODES:
-        if controller is DatagenController.SIMPLE_IK and mode is PostDropMode.RESET_THEN_IK:
-            raise RecipeError(f"{section}: simple_ik cannot use reset_then_ik (SmolVLA-only mode)")
         raise RecipeError(f"{section}: invalid controller/mode pair {controller.value} × {mode.value}")
 
 
 def validate_experiment_matrix_entries(matrix: tuple[MatrixVariant, ...]) -> None:
-    """Require each approved controller/mode pair exactly once with equal episode counts."""
-    expected = len(_ALLOWED_CONTROLLER_MODES)
-    if len(matrix) != expected:
-        raise RecipeError(f"experiment_matrix must contain exactly {expected} variants (got {len(matrix)})")
-    seen: set[tuple[DatagenController, PostDropMode]] = set()
+    """Require unique (controller, mode, drop) triples and equal episode counts."""
+    if not matrix:
+        raise RecipeError("experiment_matrix must be a non-empty array")
+    seen: set[tuple[DatagenController, PostDropMode, bool]] = set()
     episode_counts: set[int] = set()
     for variant in matrix:
-        pair = (variant.controller, variant.post_drop_mode)
-        if pair in seen:
+        triple = (variant.controller, variant.post_drop_mode, variant.drop)
+        if triple in seen:
             raise RecipeError(
-                "experiment_matrix: duplicate controller/mode pair "
-                f"{variant.controller.value} × {variant.post_drop_mode.value}"
+                "experiment_matrix: duplicate controller/mode/drop triple "
+                f"{variant.controller.value} × {variant.post_drop_mode.value} × drop={variant.drop}"
             )
-        seen.add(pair)
+        seen.add(triple)
         episode_counts.add(variant.episodes)
-    missing = _ALLOWED_CONTROLLER_MODES - seen
-    if missing:
-        labels = ", ".join(f"{c.value} × {m.value}" for c, m in missing)
-        raise RecipeError(f"experiment_matrix: missing controller/mode pair(s): {labels}")
     if len(episode_counts) != 1:
         raise RecipeError("experiment_matrix: all variants must have the same episodes count")
 
@@ -390,7 +392,7 @@ def effective_post_drop_dwell_steps(
     mode: PostDropMode,
 ) -> int:
     """Return configured dwell steps for ``mode`` (zero for immediate IK)."""
-    if mode is PostDropMode.IMMEDIATE_IK:
+    if mode is PostDropMode.IMMEDIATE_IK or mode is PostDropMode.IMMEDIATE_SMOLVLA:
         return 0
     return int(recipe.post_drop.dwell_steps)
 
@@ -404,6 +406,7 @@ def expand_experiment_matrix(recipe: DropDatagenRecipe) -> tuple[ExpandedMatrixR
                 ExpandedMatrixRun(
                     controller=variant.controller,
                     post_drop_mode=variant.post_drop_mode,
+                    drop=variant.drop,
                     episode_index=episode_index,
                     logical_episode_index=episode_index,
                 )
@@ -430,16 +433,24 @@ def paired_episode_seed_manifests(
     layout_seed = _derive_seed(ep_seed, _LAYOUT_SEED_TAG)
     drop_seed = _derive_seed(ep_seed, _DROP_SEED_TAG)
     manifests: list[EpisodeSeedManifest] = []
-    for variant in recipe.experiment_matrix:
+    for variant_index, variant in enumerate(recipe.experiment_matrix):
         for episode_index in range(int(variant.episodes)):
             if episode_index != logical_episode_index:
                 continue
-            ctrl_tag = _CONTROLLER_MODE_TAGS[(variant.controller, variant.post_drop_mode)]
-            controller_seed = _derive_seed(ep_seed, _CONTROLLER_SEED_TAG, ctrl_tag)
+            ctrl_tag = _CONTROLLER_MODE_TAGS.get((variant.controller, variant.post_drop_mode), 0)
+            controller_seed = _derive_seed(
+                ep_seed,
+                _CONTROLLER_SEED_TAG,
+                ctrl_tag,
+                int(variant_index),
+                int(variant.drop),
+            )
             manifests.append(
                 EpisodeSeedManifest(
                     controller=variant.controller,
                     post_drop_mode=variant.post_drop_mode,
+                    drop=bool(variant.drop),
+                    variant_index=int(variant_index),
                     logical_episode_index=logical_episode_index,
                     episode_index=episode_index,
                     episode_seed=ep_seed,
@@ -793,6 +804,10 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
             strict=True,
         )
         validate_controller_mode_pair(controller, mode, section=section)
+        drop = _require_json_bool(
+            _required(entry, "drop", section=section),
+            field=f"{section}.drop",
+        )
         episodes = _require_json_int(
             _required(entry, "episodes", section=section),
             field=f"{section}.episodes",
@@ -802,6 +817,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
             MatrixVariant(
                 controller=controller,
                 post_drop_mode=mode,
+                drop=drop,
                 episodes=episodes,
             )
         )

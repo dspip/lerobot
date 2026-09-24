@@ -269,12 +269,13 @@ class FaultRecoveryDatasetLogger:
         """Flush the current episode buffer to disk. Returns saved episode index."""
         if episode_data is None:
             episode_data = kwargs.get("episode_data")
+        episode_metadata = kwargs.get("episode_metadata")
         if not self._episode_open:
             return None
         index = self.dataset_episode_index_on_commit()
-        # Disable parallel camera encoding: ProcessPool encoding can race with
-        # image-path stats (FileNotFoundError on frame PNG files during merge/export).
-        self.dataset.save_episode(episode_data, parallel_encoding=False)
+        self.dataset.save_episode(
+            episode_data, parallel_encoding=False, episode_metadata=episode_metadata
+        )
         self._episode_open = False
         return index
 

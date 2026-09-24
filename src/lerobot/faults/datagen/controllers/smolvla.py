@@ -129,13 +129,14 @@ class SmolVLADatagenAdapter:
             "init_state_id": plan.init_state_id,
             "shared_layout": request.shared_layout,
             "motion_profile": motion,
-            "policy_resources": self._policy_bundle(request.device),
             "wipe_output_dir": session is None,
             "raise_on_failure": False,
             "copy_demo_gif": False,
             "record_dataset": session is not None,
             "dataset_fps": recipe.recording.dataset_fps,
         }
+        if self._policy_resources is not None or self._pipeline_runner is run_pipeline:
+            base_pipeline_kwargs["policy_resources"] = self._policy_bundle(request.device)
         if session is not None:
             base_pipeline_kwargs["episode_session"] = session
             base_pipeline_kwargs["defer_dataset_commit"] = True

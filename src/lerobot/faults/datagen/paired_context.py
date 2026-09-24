@@ -88,11 +88,15 @@ def build_paired_episode_plan(
 ) -> PairedEpisodePlan:
     """Sample motion profile and drop draws shared across controller variants."""
     motion_profile = sample_episode_motion_profile(recipe.simple_ik, manifest.drop_seed)
-    decision, drop_u, smolvla_target = _paired_drop_draws(
+    _, drop_u, smolvla_target = _paired_drop_draws(
         manifest.drop_seed,
-        recipe.q,
+        1.0,
         recipe.smolvla.drop_xy_bands,
     )
+    if manifest.drop:
+        decision = DropDecision(drop=True, step=None, reason="matrix_drop")
+    else:
+        decision = DropDecision(drop=False, step=None, reason="matrix_no_drop")
     return PairedEpisodePlan(
         episode_seed=manifest.episode_seed,
         layout_seed=manifest.layout_seed,

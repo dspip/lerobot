@@ -173,6 +173,22 @@ def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
     assert path == tmp_path / "out" / "simple_ik" / "immediate_ik" / "episode_0000"
 
 
+def test_variant_output_directory_separates_drop_and_no_drop_rows(tmp_path: Path) -> None:
+    """The two immediate_ik rows differ only by drop, so their artifacts must not collide."""
+    recipe = _recipe_with_output(tmp_path)
+    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
+    same_mode = [
+        m
+        for m in manifests
+        if m.controller is DatagenController.SIMPLE_IK
+        and m.post_drop_mode is PostDropMode.IMMEDIATE_IK
+    ]
+
+    assert {m.drop for m in same_mode} == {True, False}
+    directories = {variant_output_directory(recipe, m) for m in same_mode}
+    assert len(directories) == len(same_mode)
+
+
 def test_run_matrix_invokes_all_variants_with_injected_adapters(tmp_path: Path) -> None:
     recipe = _recipe_with_output(tmp_path)
     seen: list[tuple[DatagenController, PostDropMode]] = []
@@ -372,11 +388,11 @@ def test_record_episode_outcome_commit_failure_leaves_no_manifest_row(tmp_path: 
     commit_attempts = {"n": 0}
     original_commit = DatagenEpisodeSession.commit
 
-    def commit_fail_on_third(self: DatagenEpisodeSession) -> int:
+    def commit_fail_on_third(self: DatagenEpisodeSession, *args, **kwargs) -> int:
         commit_attempts["n"] += 1
         if commit_attempts["n"] == 3:
             raise RuntimeError("commit failed")
-        return original_commit(self)
+        return original_commit(self, *args, **kwargs)
 
     class _AlwaysLogAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
@@ -438,26 +454,64 @@ def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
     assert all(p.drop_u == captured[0].drop_u for p in captured)
 
 
+def test_paired_plan_honours_per_variant_drop_flag(tmp_path: Path) -> None:
+    """Each matrix row gets its own drop decision while staying paired on the scene draws."""
+    recipe = _recipe_with_output(tmp_path)
+    captured: list[tuple[bool, Any]] = []
+
+    class _SpyAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            captured.append((request.manifest.drop, request.paired_plan))
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _SpyAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _SpyAdapter(),
+    }
+    run_drop_datagen_matrix(
+        recipe,
+        logical_episode_indices=(0,),
+        adapter_factories=factories,
+        layout_provider=_fake_layout_provider,
+        init_state_count_provider=_fake_init_count,
+        dataset_writer=_writer_for(recipe),
+    )
+
+    assert {manifest_drop for manifest_drop, _ in captured} == {True, False}
+    for manifest_drop, plan in captured:
+        assert plan.drop_decision.drop is manifest_drop
+        expected_reason = "matrix_drop" if manifest_drop else "matrix_no_drop"
+        assert plan.drop_decision.reason == expected_reason
+    first_plan = captured[0][1]
+    for _, plan in captured:
+        assert plan.drop_u == first_plan.drop_u
+        assert plan.layout_seed == first_plan.layout_seed
+        assert plan.drop_seed == first_plan.drop_seed
+        assert plan.init_state_id == first_plan.init_state_id
+        assert plan.motion_profile == first_plan.motion_profile
+
+
 # ---------------------------------------------------------------------------
 # Task 3: per-controller layout routing (use_stock_layout)
 # ---------------------------------------------------------------------------
 
-def test_smolvla_gets_stock_layout_simple_ik_gets_random(tmp_path: Path) -> None:
-    """Runner must call layout_fn twice and route stock layout to SmolVLA controllers."""
+def test_canonical_matrix_shares_randomized_layout(tmp_path: Path) -> None:
+    """Canonical recipe is SimpleIK-only with use_stock_layout false: one layout, all rows."""
     recipe = _recipe_with_output(tmp_path)
 
     layout_provider_calls: list[int] = []
-    request_layout_by_key: dict[tuple[DatagenController, PostDropMode], dict] = {}
+    received: list[dict] = []
 
     def layout_provider(ctx: LayoutProviderContext) -> dict:
+        del ctx
         layout_provider_calls.append(1)
-        p = ctx.recipe.placement
-        return {"kind": "stock" if p.xy_range_m == 0 and p.yaw_range_deg == (0.0, 0.0) else "random"}
+        return {"kind": "random"}
 
     class _SpyAdapter:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
-            key = (request.manifest.controller, request.manifest.post_drop_mode)
-            request_layout_by_key[key] = request.shared_layout
+            received.append(request.shared_layout)
             if request.episode_session is not None:
                 request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
             return EpisodeResult.from_run(request, success=True, outcome="ok")
@@ -475,19 +529,9 @@ def test_smolvla_gets_stock_layout_simple_ik_gets_random(tmp_path: Path) -> None
         dataset_writer=_writer_for(recipe),
     )
 
-    simple_modes = [
-        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
-    ]
-    smolvla_modes = [
-        (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
-        (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
-    ]
-
-    assert [request_layout_by_key[c] for c in simple_modes] == [{"kind": "random"}] * 2
-    assert [request_layout_by_key[c] for c in smolvla_modes] == [{"kind": "stock"}] * 3
-    assert len(layout_provider_calls) == 2
+    assert recipe.smolvla.use_stock_layout is False
+    assert len(layout_provider_calls) == 1
+    assert received == [{"kind": "random"}] * 5
 
 
 def test_use_stock_layout_false_calls_layout_provider_once_all_same(tmp_path: Path) -> None:

@@ -38,7 +38,7 @@ _WINDOW_PHYSICAL_TYPES = frozenset({"object_slip", "eef_bump", "midair_drop"})
 _SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
 _RECOVERY_TYPES = frozenset({"midair_drop"})
 
-POST_DROP_MODES = ("immediate_ik", "continue_then_ik", "reset_then_ik")
+POST_DROP_MODES = ("immediate_ik", "continue_then_ik", "reset_then_ik", "immediate_smolvla")
 
 
 @dataclass

@@ -44,26 +44,26 @@ def test_paired_plan_identical_for_all_variants_same_logical_episode() -> None:
         "motion_profile",
         "drop_u",
         "smolvla_target",
-        "drop_decision",
     )
     for key in keys:
         ref = getattr(plans[0], key) if key != "motion_profile" else plans[0].motion_profile
         for plan in plans[1:]:
             other = getattr(plan, key) if key != "motion_profile" else plan.motion_profile
             assert other == ref
+    assert {plan.drop_decision.drop for plan in plans} == {True, False}
 
 
 def test_controller_seed_does_not_change_pre_drop_plan() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     simple = next(m for m in manifests if m.controller.value == "simple_ik")
-    smol = next(m for m in manifests if m.controller.value == "smolvla")
-    assert simple.controller_seed != smol.controller_seed
+    other = next(m for m in manifests if m.controller_seed != simple.controller_seed)
+    assert simple.controller_seed != other.controller_seed
     plan_a = build_paired_episode_plan(
         recipe, manifest=simple, object_name="alphabet_soup_1", num_init_states=50
     )
     plan_b = build_paired_episode_plan(
-        recipe, manifest=smol, object_name="alphabet_soup_1", num_init_states=50
+        recipe, manifest=other, object_name="alphabet_soup_1", num_init_states=50
     )
     assert plan_a.drop_u == plan_b.drop_u
     assert plan_a.smolvla_target == plan_b.smolvla_target

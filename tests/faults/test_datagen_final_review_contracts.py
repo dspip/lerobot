@@ -369,6 +369,7 @@ def test_smolvla_adapter_reuses_policy_resources(tmp_path: Path) -> None:
     adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_pipe)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(smolvla_mod, "load_smolvla_policy_resources", _fake_load)
+        adapter._policy_bundle("cpu")
         for manifest in manifests[:2]:
             plan = build_paired_episode_plan(
                 recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50

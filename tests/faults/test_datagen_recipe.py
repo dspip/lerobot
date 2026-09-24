@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
     PostDropMode,
@@ -68,7 +69,7 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "policy_path": "lerobot/smolvla_libero",
             "post_grasp_delay_steps": 0,
             "min_drop_distance_from_basket_m": 0.30,
-            "use_stock_layout": True,
+            "use_stock_layout": False,
             "drop_xy_bands": [
                 {"name": "lift", "min_m": 0.48, "max_m": 0.52},
                 {"name": "early", "min_m": 0.42, "max_m": 0.46},
@@ -83,11 +84,11 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "dataset_fps": 10,
         },
         "experiment_matrix": [
-            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "episodes": 1},
-            {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "episodes": 1},
-            {"controller": "smolvla", "post_drop_mode": "immediate_ik", "episodes": 1},
-            {"controller": "smolvla", "post_drop_mode": "continue_then_ik", "episodes": 1},
-            {"controller": "smolvla", "post_drop_mode": "reset_then_ik", "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": True, "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "drop": True, "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": False, "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "episodes": 1},
         ],
     }
     recipe.update(overrides)
@@ -114,26 +115,31 @@ def test_expand_matrix_stable_order_and_episode_count() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     runs = expand_experiment_matrix(recipe)
     assert len(runs) == 5
-    assert [(r.controller, r.post_drop_mode) for r in runs] == [
-        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
-        (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
-        (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
-        (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
+    assert [(r.controller, r.post_drop_mode, r.drop) for r in runs] == [
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK, True),
+        (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK, True),
+        (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK, True),
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK, False),
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA, True),
     ]
     assert all(r.episode_index == 0 for r in runs)
     assert all(r.logical_episode_index == 0 for r in runs)
 
 
-def test_rejects_simple_ik_reset_then_ik(tmp_path: Path) -> None:
+def test_accepts_simple_ik_reset_then_ik_and_immediate_smolvla(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
-        {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "episodes": 1},
+        {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "episodes": 1},
+        {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "episodes": 1},
     ]
     _write_recipe(path, payload)
-    with pytest.raises(RecipeError, match="reset_then_ik"):
-        load_drop_datagen_recipe(path)
+    recipe = load_drop_datagen_recipe(path)
+    assert [v.post_drop_mode for v in recipe.experiment_matrix] == [
+        PostDropMode.RESET_THEN_IK,
+        PostDropMode.IMMEDIATE_SMOLVLA,
+    ]
+    assert all(v.controller is DatagenController.SIMPLE_IK for v in recipe.experiment_matrix)
 
 
 @pytest.mark.parametrize(
@@ -159,6 +165,7 @@ def test_effective_dwell_steps() -> None:
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.IMMEDIATE_IK) == 0
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.CONTINUE_THEN_IK) == 80
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.RESET_THEN_IK) == 80
+    assert effective_post_drop_dwell_steps(recipe, PostDropMode.IMMEDIATE_SMOLVLA) == 0
 
 
 def test_paired_seed_manifests_share_layout_and_drop(tmp_path: Path) -> None:
@@ -173,6 +180,9 @@ def test_paired_seed_manifests_share_layout_and_drop(tmp_path: Path) -> None:
     assert len(drop) == 1
     controller = {m.controller_seed for m in manifests}
     assert len(controller) == 5
+    assert {m.drop for m in manifests} == {True, False}
+    drop_true_u = {m.drop for m in manifests if m.post_drop_mode is PostDropMode.IMMEDIATE_IK}
+    assert drop_true_u == {True, False}
 
 
 def test_paired_seed_manifests_deterministic_and_vary_by_episode(tmp_path: Path) -> None:
@@ -199,13 +209,13 @@ def test_object_names_rejects_non_poc_values(tmp_path: Path) -> None:
         load_drop_datagen_recipe(path)
 
 
-def test_rejects_missing_experiment_matrix_pair(tmp_path: Path) -> None:
+def test_allows_shorter_matrix_if_triples_unique(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
-    payload["experiment_matrix"] = payload["experiment_matrix"][:4]
+    payload["experiment_matrix"] = payload["experiment_matrix"][:2]
     _write_recipe(path, payload)
-    with pytest.raises(RecipeError, match="exactly 5"):
-        load_drop_datagen_recipe(path)
+    recipe = load_drop_datagen_recipe(path)
+    assert len(recipe.experiment_matrix) == 2
 
 
 def test_rejects_duplicate_experiment_matrix_pair(tmp_path: Path) -> None:
@@ -266,6 +276,38 @@ def test_unified_simple_ik_requires_path_drop_object(tmp_path: Path) -> None:
         load_drop_datagen_recipe(path)
 
 
+def test_matrix_drop_flag_required(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    payload["experiment_matrix"] = [
+        {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "episodes": 1},
+    ]
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="drop"):
+        load_drop_datagen_recipe(path)
+
+
+def test_paired_plan_honors_matrix_drop_not_q(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe(q=0.0)
+    _write_recipe(path, payload)
+    recipe = load_drop_datagen_recipe(path)
+    drop_manifest, *_, no_drop_manifest, type5 = paired_episode_seed_manifests(
+        recipe, logical_episode_index=0
+    )
+    del type5
+    drop_plan = build_paired_episode_plan(
+        recipe, manifest=drop_manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    no_drop_plan = build_paired_episode_plan(
+        recipe, manifest=no_drop_manifest, object_name="alphabet_soup_1", num_init_states=50
+    )
+    assert drop_plan.drop_decision.drop is True
+    assert drop_plan.drop_u is not None
+    assert no_drop_plan.drop_decision.drop is False
+    assert drop_plan.drop_seed == no_drop_plan.drop_seed
+
+
 def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
@@ -283,10 +325,12 @@ def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
 # Task 3: use_stock_layout
 # ---------------------------------------------------------------------------
 
-def test_can_drop_recipe_has_use_stock_layout_true() -> None:
-    """The canonical recipe must declare use_stock_layout = true for SmolVLA."""
+def test_can_drop_recipe_has_use_stock_layout_false() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
-    assert recipe.smolvla.use_stock_layout is True
+    assert recipe.smolvla.use_stock_layout is False
+    assert [v.drop for v in recipe.experiment_matrix] == [True, True, True, False, True]
+    assert recipe.experiment_matrix[2].post_drop_mode is PostDropMode.RESET_THEN_IK
+    assert recipe.experiment_matrix[4].post_drop_mode is PostDropMode.IMMEDIATE_SMOLVLA
 
 
 def test_smolvla_rejects_non_bool_use_stock_layout(tmp_path: Path) -> None:

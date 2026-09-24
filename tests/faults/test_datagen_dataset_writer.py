@@ -121,7 +121,8 @@ class _RecordingLogger:
         return self._total_episodes
 
     def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> int:
-        del episode_data, kwargs
+        self.last_episode_metadata = kwargs.get("episode_metadata")
+        del episode_data
         index = self._total_episodes
         self._total_episodes += 1
         self.committed += 1
@@ -183,12 +184,12 @@ def _request_and_result(
     return request, result
 
 
-def test_variant_dataset_directories_partition_matrix(tmp_path: Path) -> None:
+def test_variant_dataset_directories_share_one_root(tmp_path: Path) -> None:
     recipe = _recipe_at(tmp_path)
     manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     roots = {variant_dataset_directory(recipe, m) for m in manifests}
-    assert len(roots) == 5
-    assert tmp_path / "out" / "simple_ik" / "immediate_ik" / "dataset" in roots
+    assert roots == {tmp_path / "out" / "dataset"}
+    assert {variant_repo_id(recipe, m) for m in manifests} == {recipe.name}
 
 
 def test_refuses_non_empty_run_output_dir(tmp_path: Path) -> None:
@@ -223,6 +224,7 @@ def test_record_outcome_keep_then_reject(tmp_path: Path) -> None:
     row_keep = writer.record_episode_outcome(req_ok, res_ok, session_keep)
     assert row_keep.dataset_episode_index == 0
     assert session_keep.logger.committed == 1
+    assert session_keep.logger.last_episode_metadata == {"success": True}
 
     session_reject = writer.open_episode_session(manifest)
     session_reject.log_step(_minimal_processed_frame(), np.zeros(7), "task", 1.0)
@@ -238,6 +240,22 @@ def test_record_outcome_keep_then_reject(tmp_path: Path) -> None:
     loaded = read_run_manifest(tmp_path / "out" / "run_manifest.json")
     assert sum(1 for row in loaded.episodes if row.keep) == 1
     assert sum(1 for row in loaded.episodes if not row.keep) == 1
+
+
+def test_failed_ik_recovery_discards_type5_failed_commits(tmp_path: Path) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
+    ik_fail_req, ik_fail_res = _request_and_result(
+        recipe, manifests[0], success=False, outcome="recovery_finished_outside_basket", tmp_path=tmp_path
+    )
+    keep_ik, _ = evaluate_datagen_keep(ik_fail_req, ik_fail_res)
+    assert keep_ik is False
+    type5_req, type5_res = _request_and_result(
+        recipe, manifests[-1], success=False, outcome="not_in_basket", tmp_path=tmp_path
+    )
+    keep_t5, reason = evaluate_datagen_keep(type5_req, type5_res)
+    assert keep_t5 is True
+    assert reason == "planned_smolvla_fail"
 
 
 def test_failed_attempt_in_manifest_not_dataset(tmp_path: Path) -> None:
@@ -379,7 +397,7 @@ def test_log_post_step_routes_through_session_log_step() -> None:
 
 def test_smolvla_adapter_uses_injected_session_not_own_logger(tmp_path: Path) -> None:
     recipe = _recipe_at(tmp_path)
-    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[2]
+    manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
     plan = build_paired_episode_plan(
         recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
     )
@@ -593,3 +611,5 @@ def test_fault_recovery_logger_keep_reject_roundtrip(tmp_path: Path) -> None:
     episode = LeRobotDataset(repo_id=repo_id, root=dataset_root, episodes=[0], download_videos=False)
     masks = [float(np.asarray(episode[i]["loss_mask"]).reshape(-1)[0]) for i in range(len(episode))]
     assert masks == [1.0, 0.0, 1.0]
+    success_col = ds.meta.episodes["success"]
+    assert bool(np.asarray(success_col).reshape(-1)[0]) is True

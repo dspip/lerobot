@@ -4,12 +4,15 @@ This is the only recorder for the current POC. Do not use `run_can_simpleik_data
 
 **Branch:** `feat/unified-drop-datagen`
 
-**Goal:** two comparable datasets, same object / same init+drop pairing / three post-drop modes:
+**Goal:** one LeRobot dataset, five episode kinds, same object / same init+drop pairing:
 
-1. SimpleIK always (carry + recovery).
-2. SmolVLA until drop, then IK recovery (and dwell / reset-then-IK on SmolVLA variants).
+1. SimpleIK → drop → immediate IK
+2. SimpleIK → drop → dwell → IK
+3. SimpleIK → drop → SmolVLA dwell → IK place (`reset_then_ik`)
+4. SimpleIK, no drop
+5. SimpleIK → drop → SmolVLA only (`immediate_smolvla`, planned fail)
 
-`reset_then_ik` is **invalid** for SimpleIK carry. The recipe already excludes it.
+Failed IK recoveries (1–3) are discarded. Type 5 is kept.
 
 ---
 
@@ -28,6 +31,7 @@ These lock pairing, recipe, masks, and keep/reject. Run them before recording.
 
 ```bash
 cd /path/to/lerobot
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 uv run pytest tests/faults -q --tb=short
 ```
 
@@ -55,15 +59,15 @@ uv run python examples/faults/run_drop_recovery_demo.py --dry-run
 
 Checked-in matrix is **1 episode per variant** (5 variants) so a first pass is cheap. Raise `--episodes` for the real sets.
 
-| controller | post_drop_mode |
-|---|---|
-| simple_ik | immediate_ik |
-| simple_ik | continue_then_ik |
-| smolvla | immediate_ik |
-| smolvla | continue_then_ik |
-| smolvla | reset_then_ik |
+| controller | post_drop_mode | drop |
+|---|---|---|
+| simple_ik | immediate_ik | true |
+| simple_ik | continue_then_ik | true |
+| simple_ik | reset_then_ik | true |
+| simple_ik | immediate_ik | false |
+| simple_ik | immediate_smolvla | true |
 
-Outputs land under `outputs/can_drop_datagen/<controller>/<post_drop_mode>/` unless you override `--output`.
+Outputs land under `outputs/can_drop_datagen/dataset/` unless you override `--output`.
 
 ---
 
@@ -97,27 +101,23 @@ CPU SmolVLA is possible (`--device cpu`) but slow; do not use it for the trainin
 
 ## 4. What to check after a run
 
-Per variant directory:
+Single dataset directory `dataset/`:
 
 - `data/**/*.parquet` + `videos/` + `meta/`
-- `episode_metadata.jsonl` — one row per attempt (`keep`, `reject_reason`, `episode_seed`, `layout_seed`, `drop_seed`, `controller_seed`, `post_drop_mode`)
-- `manifest.json` — accepted episodes only
+- `meta/episodes` has per-episode `success`
+- `run_manifest.json` — one row per attempt (`keep`, `success`, seeds, `post_drop_mode`)
 
-Paired check: same `logical_episode_index` across controllers must share `layout_seed` / `drop_seed` / `episode_seed` / `init_state_id`. `controller_seed` / `variant_seed` may differ.
+Paired check: same `logical_episode_index` shares `layout_seed` / `drop_seed` / `episode_seed` / `init_state_id`.
 
-**Layout pairing (Task 3):** When `smolvla.use_stock_layout = true` (default in canonical recipe), SmolVLA and SimpleIK controllers receive *different physical object poses* for the same logical episode:
-- `simple_ik` variants → randomized layout (sampled from `placement.xy_range_m` / `yaw_range_deg`)
-- `smolvla` variants → stock layout (placement zeroed: `xy_range_m=0`, `yaw_range_deg=[0,0]`)
+Canonical `use_stock_layout` is false: all five SimpleIK rows share one randomized layout.
 
-Seeds (`layout_seed`, `drop_seed`, `episode_seed`, `init_state_id`) remain identical across all five variants at the same `logical_episode_index`; only the physical pose applied to the scene differs. Cross-controller physical pose pairing is intentionally removed when `use_stock_layout` is enabled.
+Frame check:
 
-Frame check (first kept episode):
-
-- `loss_mask == 0` on drop + dwell frames
-- `loss_mask == 1` on recovery IK
+- types 1–3: `loss_mask == 0` on drop + dwell; `1` on IK recovery
+- type 5: `loss_mask == 0` from drop to end
 - `ever_held_midair` present
 
-If `keep` is false for a row, the episode was discarded (never written as a training episode). That is expected for failed grasp / reject reasons.
+If `keep` is false, the episode is not in the training dataset. Failed IK recoveries (types 1–3) are discarded. Type 5 failed runs are kept.
 
 ---
 
@@ -125,5 +125,4 @@ If `keep` is false for a row, the episode was discarded (never written as a trai
 
 - Edit `src/lerobot/faults/datagen/smolvla_pipeline.py` “just to record”
 - Point training at `outputs/failure_annotation_verify/`
-- Mix SimpleIK and SmolVLA into one LeRobot repo without the variant split (the runner already partitions)
-- Use `reset_then_ik` on SimpleIK
+- Treat `reset_then_ik` as a MuJoCo scene reset; it is SimpleIK → drop → SmolVLA dwell → IK
