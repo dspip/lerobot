@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from lerobot.faults.datagen.controllers.base import DatagenControllerAdapter
@@ -128,11 +129,27 @@ def run_drop_datagen_matrix(
                 object_name=object_name,
             )
             try:
-                shared_layout = layout_fn(layout_ctx)
+                randomized_layout = layout_fn(layout_ctx)
+                if recipe.smolvla.use_stock_layout:
+                    stock_recipe = replace(
+                        recipe,
+                        placement=replace(
+                            recipe.placement,
+                            xy_range_m=0.0,
+                            yaw_range_deg=(0.0, 0.0),
+                        ),
+                    )
+                    stock_layout = layout_fn(replace(layout_ctx, recipe=stock_recipe))
+                else:
+                    stock_layout = randomized_layout
             except Exception as exc:
                 raise DropDatagenRunnerError(
                     f"logical episode {logical_index}: shared layout failed: {exc}"
                 ) from exc
+            layout_by_controller = {
+                DatagenController.SIMPLE_IK: randomized_layout,
+                DatagenController.SMOLVLA: stock_layout,
+            }
             for manifest in manifests:
                 adapter = _adapter_for(manifest.controller, recipe, factories)
                 output_dir = variant_output_directory(recipe, manifest)
@@ -144,7 +161,7 @@ def run_drop_datagen_matrix(
                     object_name=object_name,
                     output_dir=output_dir,
                     paired_plan=paired_plan,
-                    shared_layout=shared_layout,
+                    shared_layout=layout_by_controller[manifest.controller],
                     device=device,
                     episode_session=active_session,
                 )

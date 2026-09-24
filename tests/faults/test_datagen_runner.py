@@ -436,3 +436,55 @@ def test_paired_plan_attached_to_requests(tmp_path: Path) -> None:
     )
     assert len(captured) == 5
     assert all(p.drop_u == captured[0].drop_u for p in captured)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: per-controller layout routing (use_stock_layout)
+# ---------------------------------------------------------------------------
+
+def test_smolvla_gets_stock_layout_simple_ik_gets_random(tmp_path: Path) -> None:
+    """Runner must call layout_fn twice and route stock layout to SmolVLA controllers."""
+    recipe = _recipe_with_output(tmp_path)
+
+    layout_provider_calls: list[int] = []
+    request_layout_by_key: dict[tuple[DatagenController, PostDropMode], dict] = {}
+
+    def layout_provider(ctx: LayoutProviderContext) -> dict:
+        layout_provider_calls.append(1)
+        p = ctx.recipe.placement
+        return {"kind": "stock" if p.xy_range_m == 0 and p.yaw_range_deg == (0.0, 0.0) else "random"}
+
+    class _SpyAdapter:
+        def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
+            key = (request.manifest.controller, request.manifest.post_drop_mode)
+            request_layout_by_key[key] = request.shared_layout
+            if request.episode_session is not None:
+                request.episode_session.log_step(_minimal_frame(), np.zeros(7), "task", 1.0)
+            return EpisodeResult.from_run(request, success=True, outcome="ok")
+
+    factories = {
+        DatagenController.SIMPLE_IK: lambda _recipe: _SpyAdapter(),
+        DatagenController.SMOLVLA: lambda _recipe: _SpyAdapter(),
+    }
+    run_drop_datagen_matrix(
+        recipe,
+        logical_episode_indices=(0,),
+        adapter_factories=factories,
+        layout_provider=layout_provider,
+        init_state_count_provider=_fake_init_count,
+        dataset_writer=_writer_for(recipe),
+    )
+
+    simple_modes = [
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
+        (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
+    ]
+    smolvla_modes = [
+        (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
+        (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
+        (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
+    ]
+
+    assert [request_layout_by_key[c] for c in simple_modes] == [{"kind": "random"}] * 2
+    assert [request_layout_by_key[c] for c in smolvla_modes] == [{"kind": "stock"}] * 3
+    assert len(layout_provider_calls) == 2

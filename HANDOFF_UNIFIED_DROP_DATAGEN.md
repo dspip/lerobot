@@ -103,7 +103,13 @@ Per variant directory:
 - `episode_metadata.jsonl` — one row per attempt (`keep`, `reject_reason`, `episode_seed`, `layout_seed`, `drop_seed`, `controller_seed`, `post_drop_mode`)
 - `manifest.json` — accepted episodes only
 
-Paired check: same `logical_episode_index` across controllers must share `layout_seed` / `drop_seed` / `episode_seed`. `controller_seed` / `variant_seed` may differ.
+Paired check: same `logical_episode_index` across controllers must share `layout_seed` / `drop_seed` / `episode_seed` / `init_state_id`. `controller_seed` / `variant_seed` may differ.
+
+**Layout pairing (Task 3):** When `smolvla.use_stock_layout = true` (default in canonical recipe), SmolVLA and SimpleIK controllers receive *different physical object poses* for the same logical episode:
+- `simple_ik` variants → randomized layout (sampled from `placement.xy_range_m` / `yaw_range_deg`)
+- `smolvla` variants → stock layout (placement zeroed: `xy_range_m=0`, `yaw_range_deg=[0,0]`)
+
+Seeds (`layout_seed`, `drop_seed`, `episode_seed`, `init_state_id`) remain identical across all five variants at the same `logical_episode_index`; only the physical pose applied to the scene differs. Cross-controller physical pose pairing is intentionally removed when `use_stock_layout` is enabled.
 
 Frame check (first kept episode):
 

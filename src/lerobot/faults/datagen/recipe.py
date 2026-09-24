@@ -88,6 +88,7 @@ _SMOLVLA_KEYS = frozenset(
         "post_grasp_delay_steps",
         "min_drop_distance_from_basket_m",
         "drop_xy_bands",
+        "use_stock_layout",
     }
 )
 _BAND_KEYS = frozenset({"name", "min_m", "max_m"})
@@ -197,6 +198,7 @@ class SmolVLARecipe:
     post_grasp_delay_steps: int
     min_drop_distance_from_basket_m: float
     drop_xy_bands: tuple[DropXYBand, ...]
+    use_stock_layout: bool = False
 
 
 @dataclass(frozen=True)
@@ -732,11 +734,16 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     )
     if smolvla_min_drop < 0:
         raise RecipeError("smolvla.min_drop_distance_from_basket_m must be >= 0")
+    use_stock_layout = _require_json_bool(
+        _required(smolvla_raw, "use_stock_layout", section="smolvla"),
+        field="smolvla.use_stock_layout",
+    )
     smolvla = SmolVLARecipe(
         policy_path=policy_path,
         post_grasp_delay_steps=delay,
         min_drop_distance_from_basket_m=float(smolvla_min_drop),
         drop_xy_bands=tuple(bands),
+        use_stock_layout=use_stock_layout,
     )
 
     dwell = _require_json_int(

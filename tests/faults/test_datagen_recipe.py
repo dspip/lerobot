@@ -68,6 +68,7 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "policy_path": "lerobot/smolvla_libero",
             "post_grasp_delay_steps": 0,
             "min_drop_distance_from_basket_m": 0.30,
+            "use_stock_layout": True,
             "drop_xy_bands": [
                 {"name": "lift", "min_m": 0.48, "max_m": 0.52},
                 {"name": "early", "min_m": 0.42, "max_m": 0.46},
@@ -275,4 +276,24 @@ def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
     }
     _write_recipe(path, payload)
     with pytest.raises(RecipeError, match="drop"):
+        load_drop_datagen_recipe(path)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: use_stock_layout
+# ---------------------------------------------------------------------------
+
+def test_can_drop_recipe_has_use_stock_layout_true() -> None:
+    """The canonical recipe must declare use_stock_layout = true for SmolVLA."""
+    recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
+    assert recipe.smolvla.use_stock_layout is True
+
+
+def test_smolvla_rejects_non_bool_use_stock_layout(tmp_path: Path) -> None:
+    """use_stock_layout must be a JSON boolean, not a string or number."""
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    payload["smolvla"]["use_stock_layout"] = "true"  # type: ignore[index]
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="use_stock_layout"):
         load_drop_datagen_recipe(path)
