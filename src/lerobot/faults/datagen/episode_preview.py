@@ -114,9 +114,12 @@ def _final_proof_shot(rs: Any, out_path: Path) -> str | None:
     for camera in ("agentview", "frontview", "birdview", "sideview"):
         try:
             img = rs.sim.render(height=384, width=384, camera_name=camera)
+            arr = np.asarray(img, dtype=np.uint8)[::-1]
+            if arr.ndim != 3:  # guard against mocks or broken renderers
+                continue
         except Exception:  # nosec B112 — optional proof cameras may be absent in some scenes
             continue
-        shots.append(np.asarray(img, dtype=np.uint8)[::-1])
+        shots.append(arr)
     if not shots:
         return None
     import imageio.v2 as imageio
@@ -132,9 +135,34 @@ class EpisodePreview:
         self.control_fps = int(control_fps)
         self.frames: list[np.ndarray] = []
 
+    #: Fallback resolution when a render produces a bad/non-image value.
+    _FALLBACK_SIZE: int = 256
+
     def capture(self, env: Any, label: str, color: tuple[int, int, int]) -> None:
-        raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
-        self.frames.append(_overlay_banner(np.asarray(raw[0]), label, color))
+        """Capture one frame from *env* and append it to :attr:`frames`.
+
+        If the environment render returns a malformed value (wrong shape, wrong
+        dtype, or raises an exception), the method falls back silently:
+
+        * When at least one frame has already been captured the last captured
+          frame is duplicated so the video timeline is never shorter than the
+          episode — consistent with the spec's *last-frame fallback* requirement.
+        * On the very first call, a valid black ``(256, 256, 3)`` uint8 frame is
+          appended so :meth:`finalize` can always succeed.
+        """
+        try:
+            raw = env.call("render") if hasattr(env, "call") else [env.envs[0].render()]
+            frame = np.asarray(raw[0], dtype=np.uint8)
+            if frame.ndim != 3 or frame.shape[2] != 3:
+                raise ValueError(f"render returned unexpected shape {frame.shape!r}")
+            self.frames.append(_overlay_banner(frame, label, color))
+        except Exception:  # noqa: BLE001
+            if self.frames:
+                self.frames.append(self.frames[-1].copy())
+            else:
+                self.frames.append(
+                    np.zeros((self._FALLBACK_SIZE, self._FALLBACK_SIZE, 3), dtype=np.uint8)
+                )
 
     def finalize(self, rs_env: Any) -> dict[str, str | None]:
         if not self.frames:

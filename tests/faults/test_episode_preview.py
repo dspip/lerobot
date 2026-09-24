@@ -78,3 +78,60 @@ def test_episode_preview_finalize_raises_without_frames(tmp_path):
     recorder = preview.EpisodePreview(tmp_path, control_fps=20)
     with pytest.raises(RuntimeError, match="cannot finalize an episode preview without frames"):
         recorder.finalize(object())
+
+
+# ---------------------------------------------------------------------------
+# Robust-capture / last-frame-fallback tests (required by spec §"environment
+# frame capture with last-frame fallback")
+# ---------------------------------------------------------------------------
+
+
+class _BadRenderEnv:
+    """Env whose render() returns a MagicMock — simulates the MagicMock test double."""
+
+    def call(self, name: str):  # noqa: ANN001
+        from unittest.mock import MagicMock
+
+        return [MagicMock()]  # np.asarray(MagicMock()) → 0-d array
+
+
+class _ScalarRenderEnv:
+    """Env whose render() returns a 1-D array — wrong ndim, not a valid frame."""
+
+    def call(self, name: str) -> list[np.ndarray]:
+        return [np.array([42], dtype=np.uint8)]  # shape (1,) — ndim != 3
+
+
+def test_episode_preview_capture_falls_back_to_last_frame_on_bad_render(tmp_path):
+    """(a) When render is malformed AND a previous frame exists, the last frame
+    is duplicated rather than crashing or losing a timeline slot."""
+    recorder = preview.EpisodePreview(tmp_path, control_fps=20)
+    # Seed one valid frame first.
+    recorder.capture(_FakeRenderEnv(), "PHASE: good", (0, 0, 255))
+    assert len(recorder.frames) == 1
+    good_frame = recorder.frames[0].copy()
+
+    # Now feed a bad render — should not raise, should duplicate the last frame.
+    recorder.capture(_BadRenderEnv(), "PHASE: bad-render", (255, 0, 0))
+    assert len(recorder.frames) == 2
+    np.testing.assert_array_equal(recorder.frames[1], good_frame)
+
+    # Also check with a wrong-ndim env.
+    recorder.capture(_ScalarRenderEnv(), "PHASE: scalar-render", (255, 0, 0))
+    assert len(recorder.frames) == 3
+    np.testing.assert_array_equal(recorder.frames[2], good_frame)
+
+
+def test_episode_preview_capture_produces_black_frame_on_first_failure(tmp_path):
+    """(b) When the very first capture fails the recorder still appends a valid
+    256×256×3 uint8 black frame so finalize() remains possible."""
+    recorder = preview.EpisodePreview(tmp_path, control_fps=20)
+    assert len(recorder.frames) == 0
+
+    recorder.capture(_BadRenderEnv(), "PHASE: first-bad", (255, 0, 0))
+
+    assert len(recorder.frames) == 1
+    frame = recorder.frames[0]
+    assert frame.dtype == np.uint8, f"expected uint8, got {frame.dtype}"
+    assert frame.shape == (256, 256, 3), f"expected (256,256,3), got {frame.shape}"
+    assert frame.sum() == 0, "first-failure fallback frame must be all-black"
