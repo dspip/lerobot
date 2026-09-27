@@ -385,6 +385,13 @@ class DropRecoveryEnvWrapper:
             else:
                 terminated = term.reshape(np.asarray(terminated).shape)
                 truncated = trunc.reshape(np.asarray(truncated).shape)
+            for i, state in enumerate(self.fault._states):
+                if i < len(trunc) and state.fall_aborted:
+                    if np.asarray(truncated).ndim == 0:
+                        truncated = True
+                    else:
+                        trunc[i] = True
+                        truncated = trunc.reshape(np.asarray(truncated).shape)
             result = (obs, reward, terminated, truncated, info)
 
         self._clear_autoreset_latch(recovery_mask)

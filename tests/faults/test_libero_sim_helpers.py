@@ -108,7 +108,7 @@ def test_force_open_gripper_settles_before_return():
 @patch("lerobot.faults.sim.libero.get_eef_pose", return_value=(np.zeros(3), np.ones(4)))
 @patch("lerobot.faults.sim.libero.get_object_pose")
 @patch("lerobot.faults.sim.libero.is_object_grasped")
-def test_midair_drop_opens_then_impulses(
+def test_midair_drop_opens_then_nudges_without_impulse(
     mock_grasp, mock_pose, mock_eef, mock_arm, mock_open, mock_impulse, mock_nudge
 ):
     mock_pose.return_value = {"pos": np.zeros(3), "quat_wxyz": np.ones(4)}
@@ -116,12 +116,13 @@ def test_midair_drop_opens_then_impulses(
     mock_grasp.side_effect = [True, True, False]
     rs_env = MagicMock()
 
-    midair_drop(rs_env, gripper_settle_steps=7, settle_steps=5)
+    telemetry = midair_drop(rs_env, gripper_settle_steps=7, settle_steps=5)
 
     assert mock_open.call_count == 2
     mock_nudge.assert_called_once()
-    mock_impulse.assert_called_once()
-    assert mock_impulse.call_args.kwargs["settle_steps"] == 80
+    mock_impulse.assert_not_called()
+    np.testing.assert_allclose(telemetry["impulse"]["lin_vel"], 0.0)
+    np.testing.assert_allclose(telemetry["impulse"]["ang_vel"], 0.0)
 
 
 def test_gripper_settle_default_at_least_five():

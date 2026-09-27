@@ -25,6 +25,7 @@ from lerobot.faults.sim.libero import (
     get_arm_qpos,
     get_eef_pose,
     get_gripper_closing_axis,
+    get_object_linear_velocity,
     get_object_pose,
     get_place_destination,
     get_robosuite_env,
@@ -37,6 +38,10 @@ from lerobot.faults.sim.libero import (
     object_pose_orientation,
     seat_object_in_basket_if_above,
 )
+
+_FALL_TIMEOUT_STEPS = 15
+_LANDING_VZ_THRESHOLD = 0.05
+_LANDING_VZ_CONSECUTIVE = 2
 
 # Never inject a drop closer than this XY distance to the basket (meters).
 # ``min_drop_distance_from_basket_m`` is a skip radius: if the object is still
@@ -106,6 +111,19 @@ class _EnvDropState:
     recovery_skip_reason: str | None = None
     # Set by trigger_manual_drop; hold policy actions until request_recovery.
     awaiting_manual_recovery: bool = False
+    falling: bool = False
+    fall_steps: int = 0
+    low_vz_steps: int = 0
+    fall_aborted: bool = False
+    manual_recovery_after_fall: bool = False
+
+
+def _hold_drop_action(proposed_action: np.ndarray) -> np.ndarray:
+    """Arm still, gripper open — shape matches ``proposed_action``."""
+    hold = np.zeros_like(proposed_action, dtype=np.float32)
+    if hold.shape[-1] >= 7:
+        hold[..., 6] = -1.0
+    return hold
 
 
 def _episode_seed(config_seed: int | None, episode_id: int | None) -> int:
@@ -258,6 +276,47 @@ class MidAirDropFault:
                 state.episode_step += 1
                 continue
 
+            if state.falling:
+                state.drop_injection_step = True
+                hold = _hold_drop_action(actions[env_idx])
+                rs_env = get_robosuite_env(env, env_idx=env_idx)
+                if state.fall_steps >= 1:
+                    grasped = is_object_grasped(rs_env, self.config.object_name)
+                    vz = float(get_object_linear_velocity(rs_env, self.config.object_name)[2])
+                    if not grasped and abs(vz) < _LANDING_VZ_THRESHOLD:
+                        state.low_vz_steps += 1
+                    else:
+                        state.low_vz_steps = 0
+
+                if state.low_vz_steps >= _LANDING_VZ_CONSECUTIVE:
+                    state.falling = False
+                    self._begin_post_fall_phase(state)
+                    executed[env_idx] = hold
+                    state.episode_step += 1
+                    continue
+
+                if state.fall_steps >= _FALL_TIMEOUT_STEPS:
+                    state.falling = False
+                    state.fall_aborted = True
+                    state.finished = True
+                    self._log_event(
+                        env_idx=env_idx,
+                        status="fall_aborted",
+                        telemetry=None,
+                        arm_q=get_arm_qpos(rs_env),
+                        proposed_action=actions[env_idx],
+                        executed_recovery_action=None,
+                        destination_pos=None,
+                    )
+                    executed[env_idx] = hold
+                    state.episode_step += 1
+                    continue
+
+                state.fall_steps += 1
+                executed[env_idx] = hold
+                state.episode_step += 1
+                continue
+
             if state.triggered and not state.recovery_active:
                 if state.awaiting_manual_recovery:
                     executed[env_idx] = actions[env_idx]
@@ -311,8 +370,10 @@ class MidAirDropFault:
 
             if self._should_trigger(env, env_idx, state):
                 proposed = actions[env_idx].copy()
-                recovery_action = self._trigger_drop(env, env_idx, state, proposed_action=proposed)
-                executed[env_idx] = recovery_action
+                executed[env_idx] = self._trigger_drop(env, env_idx, state, proposed_action=proposed)
+                # This on_step's env.step is the first hold, so the next on_step
+                # may sample velocity. Scheduled drops stay at 0 until their step.
+                state.fall_steps = 1
                 state.drop_injection_step = True
                 state.episode_step += 1
                 continue
@@ -430,11 +491,7 @@ class MidAirDropFault:
         state.drop_trigger_reason = str(reason)
         state.will_activate = True
         executed = self._trigger_drop(env, env_idx, state, proposed_action=np.asarray(proposed_action))
-        dwell_steps = int(self.config.post_drop_dwell_steps)
-        if dwell_steps > 0:
-            state.externally_scheduled_drop = True
-        elif state.recovery_active:
-            state.pending_first_recovery_action = np.asarray(executed, dtype=np.float32).copy()
+        state.externally_scheduled_drop = False
         state.mark_drop_injection_on_next_step = True
         return executed
 
@@ -448,37 +505,11 @@ class MidAirDropFault:
     ) -> np.ndarray:
         telemetry, rs_env = self._drop_object(env, env_idx, state)
         state.triggered = True
-        dwell_steps = int(self.config.post_drop_dwell_steps)
-        if dwell_steps == 0:
-            if self.config.post_drop_mode == "immediate_smolvla":
-                state.awaiting_manual_recovery = True
-                self._log_event(
-                    env_idx=env_idx,
-                    status="triggered",
-                    telemetry=telemetry,
-                    arm_q=get_arm_qpos(rs_env),
-                    proposed_action=proposed_action,
-                    executed_recovery_action=None,
-                    destination_pos=None,
-                )
-                return proposed_action
-            destination = self._start_recovery_planner(env, env_idx, state)
-            recovery_action = self._next_recovery_action(env_idx, env=env)
-            self._log_event(
-                env_idx=env_idx,
-                status="triggered",
-                telemetry=telemetry,
-                arm_q=get_arm_qpos(rs_env),
-                proposed_action=proposed_action,
-                executed_recovery_action=recovery_action,
-                destination_pos=destination,
-            )
-            return recovery_action
-
-        state.dwell_steps_completed = 0
-        state.suppress_grasp_skip = True
-        if self.config.post_drop_mode == "reset_then_ik":
-            state.policy_reset_requested = True
+        state.falling = True
+        state.fall_steps = 0
+        state.low_vz_steps = 0
+        state.externally_scheduled_drop = False
+        hold = _hold_drop_action(proposed_action)
         self._log_event(
             env_idx=env_idx,
             status="triggered",
@@ -488,7 +519,21 @@ class MidAirDropFault:
             executed_recovery_action=None,
             destination_pos=None,
         )
-        return proposed_action
+        return hold
+
+    def _begin_post_fall_phase(self, state: _EnvDropState) -> None:
+        """After landing is confirmed, set up dwell / manual recovery / IK on next step."""
+        state.dwell_steps_completed = 0
+        dwell_steps = int(self.config.post_drop_dwell_steps)
+        if state.manual_recovery_after_fall:
+            state.manual_recovery_after_fall = False
+            state.awaiting_manual_recovery = True
+        elif dwell_steps > 0:
+            state.suppress_grasp_skip = True
+            if self.config.post_drop_mode == "reset_then_ik":
+                state.policy_reset_requested = True
+        elif self.config.post_drop_mode == "immediate_smolvla":
+            state.awaiting_manual_recovery = True
 
     def trigger_manual_drop(self, env: gym.Env | VectorEnv, env_idx: int, *, reason: str = "manual") -> bool:
         """Drop the configured object immediately without starting recovery.
@@ -507,7 +552,10 @@ class MidAirDropFault:
         state.drop_trigger_reason = reason
         telemetry, rs_env = self._drop_object(env, env_idx, state)
         state.triggered = True
-        state.awaiting_manual_recovery = True
+        state.falling = True
+        state.fall_steps = 0
+        state.low_vz_steps = 0
+        state.manual_recovery_after_fall = True
         self._log_event(
             env_idx=env_idx,
             status="manual_triggered",
@@ -522,28 +570,13 @@ class MidAirDropFault:
         env_idx: int,
         state: _EnvDropState,
     ) -> tuple[dict[str, Any], Any]:
-        """Apply the configured physical drop and retain its sampled impulse."""
+        """Open the gripper in sim; fall continues over subsequent control steps."""
         rs_env = get_robosuite_env(env, env_idx=env_idx)
-        # Bias + Gaussian noise. Keep |v| modest so the can stays in-camera.
-        bias = np.asarray(self.config.impulse_lin_bias, dtype=np.float64).reshape(3)
-        lin_std = float(self.config.impulse_lin_std)
-        ang_std = float(self.config.impulse_ang_std)
-        lin_vel = bias + self._rng.normal(0.0, lin_std, size=3)
-        # Always ensure a clear downward kick if bias Z was near zero.
-        if lin_vel[2] > -0.15:
-            lin_vel[2] = -0.45 - abs(float(self._rng.normal(0.0, 0.08)))
-        # Soft clamp so extreme draws don't yeet the object out of view.
-        lin_vel[:2] = np.clip(lin_vel[:2], -0.25, 0.25)
-        lin_vel[2] = float(np.clip(lin_vel[2], -0.9, -0.15))
-        ang_vel = self._rng.normal(0.0, ang_std, size=3)
-        ang_vel = np.clip(ang_vel, -0.35, 0.35)
-        state.last_impulse_lin = lin_vel.copy()
-        state.last_impulse_ang = ang_vel.copy()
+        state.last_impulse_lin = np.zeros(3, dtype=np.float64)
+        state.last_impulse_ang = np.zeros(3, dtype=np.float64)
         telemetry = midair_drop(
             rs_env,
             self.config.object_name,
-            lin_vel,
-            ang_vel,
             settle_steps=self.config.settle_steps,
             gripper_settle_steps=self.config.gripper_settle_steps,
         )
@@ -986,5 +1019,11 @@ class MidAirDropFault:
         if telemetry is not None:
             event["object_pose"] = telemetry.get("object_pose_after", telemetry.get("object_pose_before"))
             event["arm_q"] = telemetry.get("arm_q", arm_q.tolist() if arm_q is not None else None)
-            event["impulse"] = telemetry.get("impulse")
+            if state.last_impulse_lin is not None and state.last_impulse_ang is not None:
+                event["impulse"] = {
+                    "lin_vel": state.last_impulse_lin.astype(float).tolist(),
+                    "ang_vel": state.last_impulse_ang.astype(float).tolist(),
+                }
+            else:
+                event["impulse"] = telemetry.get("impulse")
         self.event_logger.log(event)

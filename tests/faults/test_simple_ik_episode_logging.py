@@ -102,6 +102,7 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         patch("lerobot.faults.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
         patch("lerobot.faults.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
         patch("lerobot.faults.recovery.midair_drop.is_object_grasped") as mock_grasped,
+        patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
         patch(
             "lerobot.faults.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),
@@ -123,6 +124,8 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         _setup_drop_mocks(
             mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
         )
+        mock_lin_vel.return_value = np.array([0.0, 0.0, 0.01])
+        mock_grasped.return_value = False
         mock_obj_pose_simple.return_value = {"pos": np.array([0.55, 0.0, 0.2])}
         mock_dest_simple.return_value = np.array([0.0, 0.0, 0.0])
 
@@ -182,10 +185,10 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
 
         logged_ctx = [_ctx_from_frame(frame) for frame in logger.frames]
         injection_logged = [ctx for ctx in logged_ctx if ctx.drop_injection_step]
-        assert len(injection_logged) == 1
+        assert len(injection_logged) >= 1
         assert injection_logged[0].sim_step == DROP_SIM_STEP
         assert injection_logged[0].sim_step % RECORDING_STRIDE == 1
-        assert injection_logged[0].loss_mask == 0.0
+        assert all(ctx.loss_mask == 0.0 for ctx in injection_logged)
 
         dwell_logged = [ctx for ctx in logged_ctx if ctx.post_drop_dwell_step]
         assert dwell_logged, "expected at least one logged dwell frame"
@@ -219,6 +222,7 @@ def test_simple_ik_loop_calls_on_post_step() -> None:
         patch("lerobot.faults.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
         patch("lerobot.faults.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
         patch("lerobot.faults.recovery.midair_drop.is_object_grasped") as mock_grasped,
+        patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
         patch(
             "lerobot.faults.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),

@@ -25,6 +25,7 @@ from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from tests.faults.test_midair_drop_fault import _action, _cfg, _mock_rs_env, _setup_drop_mocks
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
 @patch("lerobot.faults.recovery.midair_drop.get_object_pose")
@@ -38,6 +39,7 @@ def test_trigger_scheduled_drop_uses_dwell_not_immediate_recovery(
     mock_obj_pose,
     mock_drop,
     mock_dest,
+    mock_lin_vel,
 ) -> None:
     mock_get_rs.return_value = _mock_rs_env()
     mock_arm_q.return_value = np.zeros(7)
@@ -54,8 +56,11 @@ def test_trigger_scheduled_drop_uses_dwell_not_immediate_recovery(
     proposed = np.full(7, 3.0, dtype=np.float32)
     out = inj.trigger_scheduled_drop(env, 0, proposed, reason="path_uniform")
     assert inj._states[0].triggered
+    assert inj._states[0].falling
     assert not inj._states[0].recovery_active
-    np.testing.assert_allclose(out, proposed)
+    hold = np.zeros(7, dtype=np.float32)
+    hold[6] = -1.0
+    np.testing.assert_allclose(out, hold)
     mock_dest.assert_not_called()
 
 
@@ -82,6 +87,7 @@ def test_reset_then_ik_zero_dwell_raises_at_config() -> None:
         )
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
 @patch("lerobot.faults.recovery.midair_drop.get_object_pose")
@@ -97,7 +103,10 @@ def test_zero_dwell_scheduled_drop_executes_first_recovery_once(
     mock_obj_pose,
     mock_drop,
     mock_dest,
+    mock_lin_vel,
 ) -> None:
+    from tests.faults.test_midair_drop_fault import _complete_fall
+
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(post_drop_dwell_steps=0, post_drop_mode="immediate_ik", require_grasp=False),
@@ -105,12 +114,18 @@ def test_zero_dwell_scheduled_drop_executes_first_recovery_once(
     )
     env = MagicMock()
     first = inj.trigger_scheduled_drop(env, 0, _action(1, 7, 5.0)[0], reason="path_uniform")
-    assert inj._states[0].recovery_active
+    assert inj._states[0].falling
+    assert not inj._states[0].recovery_active
+    _complete_fall(inj, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
     second = inj.on_step(env, _action(1, 7, 99.0))
-    np.testing.assert_allclose(first, second[0])
-    assert inj._states[0].pending_first_recovery_action is None
+    assert inj._states[0].recovery_active
+    assert not np.allclose(second, _action(1, 7, 99.0))
+    hold = np.zeros(7, dtype=np.float32)
+    hold[6] = -1.0
+    np.testing.assert_allclose(first, hold)
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
 @patch("lerobot.faults.recovery.midair_drop.get_object_pose")
@@ -130,9 +145,12 @@ def test_scheduled_external_drop_marks_physical_injection_step(
     mock_obj_pose,
     mock_drop,
     mock_dest,
+    mock_lin_vel,
     dwell_steps: int,
     post_drop_mode: str,
 ) -> None:
+    from tests.faults.test_midair_drop_fault import _complete_fall
+
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     inj = MidAirDropFault(
         _cfg(
@@ -152,10 +170,13 @@ def test_scheduled_external_drop_marks_physical_injection_step(
     assert inj.loss_mask_for_env(0) == 0.0
     assert injector_injection_active(inj, 0)
 
+    mock_lin_vel.return_value = np.array([0.0, 0.0, 0.5])
     inj.on_step(env, _action(1, 7, 9.0))
-    assert not inj._states[0].drop_injection_step
-    assert not injector_injection_active(inj, 0)
+    assert inj._states[0].drop_injection_step
+    assert inj.loss_mask_for_env(0) == 0.0
+    _complete_fall(inj, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
     if dwell_steps == 0:
+        inj.on_step(env, _action(1, 7, 10.0))
         assert inj.loss_mask_for_env(0) == 1.0
     else:
         assert inj.loss_mask_for_env(0) == 0.0

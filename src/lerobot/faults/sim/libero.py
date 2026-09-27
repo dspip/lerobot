@@ -848,6 +848,26 @@ def object_basket_xy_distance(
     return float(np.linalg.norm(obj[:2] - basket[:2]))
 
 
+def get_object_linear_velocity(rs_env: Any, object_name: str) -> np.ndarray:
+    """Return world-frame linear velocity (3,) for ``object_name`` free joint."""
+    joint_name = _free_joint_name(rs_env, object_name)
+    sim = rs_env.sim
+    if hasattr(sim.data, "get_joint_qvel"):
+        qvel = np.asarray(sim.data.get_joint_qvel(joint_name), dtype=np.float64)
+    else:
+        qvel_addr = sim.model.get_joint_qvel_addr(joint_name)
+        qvel_full = np.asarray(sim.data.qvel, dtype=np.float64)
+        if isinstance(qvel_addr, slice):
+            qvel = qvel_full[qvel_addr].copy()
+        elif isinstance(qvel_addr, tuple) and len(qvel_addr) == 2:
+            qvel = qvel_full[int(qvel_addr[0]) : int(qvel_addr[1])].copy()
+        else:
+            raise RuntimeError(f"Unexpected qvel address for joint {joint_name!r}: {qvel_addr!r}")
+    if qvel.size < 3:
+        raise RuntimeError(f"Joint {joint_name!r} qvel width {qvel.size} < 3.")
+    return qvel[:3].copy()
+
+
 def apply_object_impulse(
     rs_env: Any,
     object_name: str,
@@ -1141,31 +1161,28 @@ def midair_drop(
     settle_steps: int = 5,
     gripper_settle_steps: int = DEFAULT_GRIPPER_SETTLE_STEPS,
 ) -> dict[str, Any]:
-    """Force-open gripper, impulse the object, return telemetry."""
-    if lin_vel is None:
-        lin_vel = [0.0, 0.0, -0.5]
-    if ang_vel is None:
-        ang_vel = [0.0, 0.0, 0.0]
+    """Release-only drop: open gripper (and nudge if still grasped), no fall fast-forward.
+
+    ``lin_vel``, ``ang_vel``, and ``settle_steps`` are ignored (callers may still pass them).
+    Ballistic fall is stepped by the env at control rate via :class:`MidAirDropFault`.
+    """
+    del lin_vel, ang_vel, settle_steps
 
     pre_grasped = is_object_grasped(rs_env, object_name)
     pre_pose = get_object_pose(rs_env, object_name)
     eef_pre = get_eef_pose(rs_env)
 
-    # Need enough settle after snap-open for contacts to clear.
     grip_settle = max(int(gripper_settle_steps), 20)
     force_open_gripper(rs_env, gripper_settle_steps=grip_settle)
     if is_object_grasped(rs_env, object_name):
-        # Residual pad contact — separate geometrically then re-open.
         _nudge_object_down(rs_env, object_name, dz=0.04)
         force_open_gripper(rs_env, gripper_settle_steps=10)
-    # MuJoCo dt≈0.002s: need many substeps for a visible fall (env step ≈25 substeps).
-    physics_settle = max(int(settle_steps), 80)
-    apply_object_impulse(rs_env, object_name, lin_vel, ang_vel, settle_steps=physics_settle)
 
     post_pose = get_object_pose(rs_env, object_name)
     post_grasped = is_object_grasped(rs_env, object_name)
     eef_post = get_eef_pose(rs_env)
     arm_q = get_arm_qpos(rs_env)
+    zero3 = np.zeros(3, dtype=np.float64)
 
     return {
         "object_name": object_name,
@@ -1175,13 +1192,13 @@ def midair_drop(
         "post_object_pos": post_pose["pos"],
         "object_pose_before": pre_pose,
         "object_pose_after": post_pose,
-        "lin_vel": _as_f64(lin_vel, 3),
-        "ang_vel": _as_f64(ang_vel, 3),
-        "impulse": {"lin_vel": _as_f64(lin_vel, 3), "ang_vel": _as_f64(ang_vel, 3)},
+        "lin_vel": zero3,
+        "ang_vel": zero3,
+        "impulse": {"lin_vel": zero3, "ang_vel": zero3},
         "eef_pre": eef_pre[0],
         "eef_post": eef_post[0],
         "arm_q": arm_q,
-        "settle_steps": int(settle_steps),
+        "settle_steps": 0,
         "gripper_settle_steps": int(gripper_settle_steps),
     }
 

@@ -167,6 +167,7 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
     assert not fault._states[0].recovery_active
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
 @patch("lerobot.faults.recovery.midair_drop.get_object_pose")
@@ -182,7 +183,10 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     mock_obj_pose,
     mock_drop,
     mock_dest,
+    mock_lin_vel,
 ) -> None:
+    from tests.faults.test_midair_drop_fault import _complete_fall, _hold_action
+
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     fault = _fault_continue(dwell=2)
     env = MagicMock()
@@ -190,10 +194,11 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     out_drop = fault.trigger_scheduled_drop(env, 0, proposed[0], reason="path_uniform")
     assert fault._states[0].triggered
     assert not fault._states[0].recovery_active
-    np.testing.assert_allclose(out_drop, proposed[0])
+    np.testing.assert_allclose(out_drop, _hold_action()[0])
     mock_dest.assert_not_called()
 
     fault.on_step(env, _action(1, 7, 12.0))
+    _complete_fall(fault, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
 
     for fill in (22.0, 33.0):
         out = fault.on_step(env, _action(1, 7, fill))
@@ -208,6 +213,7 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     assert not np.allclose(out_rec, _action(1, 7, 99.0))
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
@@ -225,14 +231,18 @@ def test_continue_first_post_drop_grasp_clears_suppress_then_skip(
     mock_drop,
     mock_dest,
     mock_in_basket,
+    mock_lin_vel,
 ) -> None:
+    from tests.faults.test_midair_drop_fault import _complete_fall
+
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
-    mock_grasped.side_effect = [False, True, True]
 
     fault = _fault_continue(dwell=2)
     env = MagicMock()
     fault.trigger_scheduled_drop(env, 0, _action(1, 7, 1.0)[0], reason="path_uniform")
     fault.on_step(env, _action(1, 7, 2.0))
+    _complete_fall(fault, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
+    mock_grasped.side_effect = [False, True, True]
     fault.on_step(env, _action(1, 7, 3.0))
     fault.on_step(env, _action(1, 7, 4.0))
     skipped, reason = fault.post_drop_recovery_skipped(0)
@@ -513,6 +523,7 @@ def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
     assert facts.drop_trigger["drop"] is True
 
 
+@patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.is_object_in_basket", return_value=False)
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")
@@ -532,9 +543,11 @@ def test_loop_returns_skipped_recovery_outcome(
     mock_drop,
     mock_dest,
     mock_in_basket,
+    mock_lin_vel,
 ) -> None:
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
-    mock_grasped.side_effect = [False, True, True, True, True, True]
+    mock_lin_vel.return_value = np.array([0.0, 0.0, 0.01])
+    mock_grasped.side_effect = [False, False, False, True, True, True, True, True]
 
     fault = _fault_continue(dwell=2)
     env = MagicMock()
