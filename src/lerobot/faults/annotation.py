@@ -34,6 +34,7 @@ from lerobot.faults.sim.libero import (
     is_object_grasped,
     is_object_held_midair,
     is_object_in_basket,
+    is_object_over_basket,
 )
 
 # Sticky category ids written as int64 (1,) in Parquet.
@@ -170,6 +171,7 @@ class PhysicsSnapshot:
     grasped: bool = False
     held_midair: bool = False
     in_basket: bool = False
+    over_basket: bool = False
     object_z: float | None = None
     available: bool = False
 
@@ -191,11 +193,13 @@ def read_physics_snapshot(
         grasped = bool(is_object_grasped(rs_env, object_name))
         held = bool(is_object_held_midair(rs_env, object_name, min_object_z=min_object_z))
         in_basket = bool(is_object_in_basket(rs_env, object_name, basket_name=basket_name))
+        over_basket = bool(is_object_over_basket(rs_env, object_name, basket_name=basket_name))
         z = float(get_object_pose(rs_env, object_name)["pos"][2])
         return PhysicsSnapshot(
             grasped=grasped,
             held_midair=held,
             in_basket=in_basket,
+            over_basket=over_basket,
             object_z=z,
             available=True,
         )
@@ -278,8 +282,13 @@ class FailureAnnotator:
             if snap.available:
                 if snap.held_midair:
                     self._ever_held[env_idx] = True
-                # Physical drop: was held in air this episode, currently free, not placed.
-                is_failure = bool(self._ever_held[env_idx] and (not snap.grasped) and (not snap.in_basket))
+                # Physical drop: was held in air, free, not placed, not releasing over basket.
+                is_failure = bool(
+                    self._ever_held[env_idx]
+                    and (not snap.grasped)
+                    and (not snap.in_basket)
+                    and (not snap.over_basket)
+                )
             # After the first drop is cleared (regrasp / basket), a later ungrasp is
             # usually the recovery release into the basket — not a second failure.
             if is_failure and self._cleared_after_failure[env_idx]:

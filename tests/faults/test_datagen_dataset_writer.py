@@ -149,6 +149,7 @@ def _recipe_at(tmp_path: Path):
                 base_seed=9000,
                 output_dir=str(tmp_path / "out"),
                 dataset_fps=10,
+                episodes=recipe.recording.episodes,
             ),
         }
     )

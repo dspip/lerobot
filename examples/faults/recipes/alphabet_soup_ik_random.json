@@ -1,5 +1,5 @@
 {
-  "name": "can_drop_datagen",
+  "name": "alphabet_soup_ik_random",
   "task": "libero_object",
   "task_id": 0,
   "control_hz": 20,
@@ -20,7 +20,7 @@
     "max_attempts": 200
   },
   "simple_ik": {
-    "trajectory_randomization_enabled": false,
+    "trajectory_randomization_enabled": true,
     "pickup_via_offset_m": 0.03,
     "transport_via_offset_m": 0.06,
     "arm_posture_noise_deg": 3.0,
@@ -70,8 +70,8 @@
     "dwell_steps": 80
   },
   "recording": {
-    "base_seed": 9000,
-    "output_dir": "outputs/can_drop_datagen",
+    "base_seed": 11000,
+    "output_dir": "outputs/alphabet_soup_success_ik_random",
     "dataset_fps": 10,
     "episodes": 100
   },
@@ -79,31 +79,7 @@
     {
       "controller": "simple_ik",
       "post_drop_mode": "immediate_ik",
-      "drop": true,
-      "weight": 1
-    },
-    {
-      "controller": "simple_ik",
-      "post_drop_mode": "continue_then_ik",
-      "drop": true,
-      "weight": 1
-    },
-    {
-      "controller": "simple_ik",
-      "post_drop_mode": "reset_then_ik",
-      "drop": true,
-      "weight": 1
-    },
-    {
-      "controller": "simple_ik",
-      "post_drop_mode": "immediate_ik",
       "drop": false,
-      "weight": 1
-    },
-    {
-      "controller": "simple_ik",
-      "post_drop_mode": "immediate_smolvla",
-      "drop": true,
       "weight": 1
     }
   ]

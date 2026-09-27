@@ -22,7 +22,12 @@ import sys
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 
-from lerobot.faults.datagen.recipe import DropDatagenRecipe, RecipeError, load_drop_datagen_recipe
+from lerobot.faults.datagen.recipe import (
+    DropDatagenRecipe,
+    RecipeError,
+    apply_recording_episode_total,
+    load_drop_datagen_recipe,
+)
 from lerobot.faults.datagen.runner import run_drop_datagen_matrix
 
 
@@ -50,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--episodes",
         type=int,
         default=None,
-        help="Override episodes count for every matrix variant (must be >= 1).",
+        help="Override recording.episodes (dataset total across matrix rows; must be >= 1).",
     )
     parser.add_argument(
         "--device",
@@ -68,21 +73,17 @@ def _apply_overrides(
     output: Path | None,
     episodes: int | None,
 ) -> DropDatagenRecipe:
-    if episodes is not None and int(episodes) <= 0:
-        raise RecipeError("episodes override must be >= 1")
     recording = recipe.recording
     if base_seed is not None:
         recording = replace(recording, base_seed=int(base_seed))
     if output is not None:
         recording = replace(recording, output_dir=str(output))
-    matrix = recipe.experiment_matrix
+    updated = replace(recipe, recording=recording)
     if episodes is not None:
-        matrix = tuple(replace(variant, episodes=int(episodes)) for variant in matrix)
-    return replace(
-        recipe,
-        recording=recording,
-        experiment_matrix=matrix,
-    )
+        if int(episodes) <= 0:
+            raise RecipeError("episodes override must be >= 1")
+        updated = apply_recording_episode_total(updated, int(episodes))
+    return updated
 
 
 def _serialize_result(result: object) -> dict:

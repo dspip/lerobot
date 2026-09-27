@@ -691,11 +691,13 @@ class MidAirDropFault:
                 object_axis = self._object_long_axis(rs_env)
                 closing_axis = get_gripper_closing_axis(rs_env)
 
+        grasped = None if rs_env is None else bool(is_object_grasped(rs_env, self.config.object_name))
         action = state.planner.next_action(
             eef_pos=eef_pos,
             object_pos=object_pos,
             closing_axis=closing_axis,
             object_axis=object_axis,
+            object_grasped=grasped,
         )
 
         # Snap gripper on phase transitions (Panda speed=0.01 never closes in time).
@@ -885,6 +887,7 @@ class MidAirDropFault:
             object_pos=object_pose["pos"],
             closing_axis=get_gripper_closing_axis(rs_env) if self.config.side_grasp_enabled else None,
             object_axis=self._object_long_axis(rs_env),
+            object_grasped=False,
         )
         if action is None:
             action = np.zeros(7, dtype=np.float32)

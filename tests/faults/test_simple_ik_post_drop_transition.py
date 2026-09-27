@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from lerobot.faults.config import FaultInjectionConfig
-from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
+from lerobot.faults.datagen.controllers.simple_ik import _nominal_action, run_simple_ik_episode_loop
 from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
@@ -39,6 +39,49 @@ def _fault_continue(dwell: int = 2) -> MidAirDropFault:
         ),
         num_envs=1,
     )
+
+
+def test_post_drop_carry_command_stays_open() -> None:
+    planner = MagicMock()
+    planner.next_action.return_value = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    planner.just_entered_close = False
+    planner.just_entered_open = False
+    planner.phase_name = "to_basket_hover"
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_eef_pose",
+            return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.zeros(3)},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_gripper_closing_axis",
+            return_value=np.array([1.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.object_pose_orientation",
+            return_value={"axis": np.array([0.0, 0.0, 1.0])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=False,
+        ),
+        patch("lerobot.faults.datagen.controllers.simple_ik.hold_gripper_closed") as hold_closed,
+    ):
+        action = _nominal_action(
+            planner,
+            MagicMock(),
+            "alphabet_soup_1",
+            gripper_settle_steps=0,
+            release_gripper=True,
+        )
+    assert action is not None
+    assert float(action[6]) == -1.0
+    assert abs(float(action[0]) - 0.65) < 1e-6
+    hold_closed.assert_not_called()
+    assert planner.next_action.call_args.kwargs["object_grasped"] is False
 
 
 @patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))

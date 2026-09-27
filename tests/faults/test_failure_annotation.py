@@ -37,11 +37,18 @@ from lerobot.faults.wrappers import FaultEnvWrapper
 from tests.faults.test_wrappers import _DummyEnv
 
 
-def _snap(*, grasped: bool, held: bool, in_basket: bool = False) -> PhysicsSnapshot:
+def _snap(
+    *,
+    grasped: bool,
+    held: bool,
+    in_basket: bool = False,
+    over_basket: bool = False,
+) -> PhysicsSnapshot:
     return PhysicsSnapshot(
         grasped=grasped,
         held_midair=held,
         in_basket=in_basket,
+        over_basket=over_basket,
         object_z=0.2 if held else 0.05,
         available=True,
     )
@@ -106,6 +113,45 @@ def test_physical_drop_onset_then_sustain_then_regrasp():
     assert bool(rec["is_failure"][0]) is False
     assert int(rec["phase"][0]) == PHASE_RECOVERY
     assert int(rec["failure_type"][0]) == FAILURE_TYPE_MIDAIR_DROP
+
+
+def test_nominal_basket_release_is_not_failure():
+    """Release over the basket before ``in_basket`` must not latch mid-air drop."""
+    ann = FailureAnnotator(num_envs=1)
+    ann.update(None, injection_active=[False], physics=[_snap(grasped=True, held=True)])
+    ann.update(None, injection_active=[False], physics=[_snap(grasped=True, held=True)])
+    release = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=False, held=False, in_basket=False, over_basket=True)],
+    )[0]
+    assert bool(release["is_failure"][0]) is False
+    assert bool(release["failure_onset"][0]) is False
+    assert int(release["failure_type"][0]) == 0
+    assert int(release["phase"][0]) == PHASE_NOMINAL
+
+    placed = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=False, held=False, in_basket=True, over_basket=True)],
+    )[0]
+    assert bool(placed["is_failure"][0]) is False
+    assert bool(placed["failure_onset"][0]) is False
+    assert int(placed["failure_type"][0]) == 0
+    assert int(placed["phase"][0]) == PHASE_NOMINAL
+
+
+def test_nominal_midair_drop_away_from_basket_is_failure():
+    ann = FailureAnnotator(num_envs=1)
+    ann.update(None, injection_active=[False], physics=[_snap(grasped=True, held=True)])
+    drop = ann.update(
+        None,
+        injection_active=[False],
+        physics=[_snap(grasped=False, held=False, in_basket=False, over_basket=False)],
+    )[0]
+    assert bool(drop["is_failure"][0]) is True
+    assert bool(drop["failure_onset"][0]) is True
+    assert int(drop["failure_type"][0]) == FAILURE_TYPE_MIDAIR_DROP
 
 
 def test_recovery_release_is_not_a_second_onset():

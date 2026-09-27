@@ -129,6 +129,7 @@ def _recipe_with_output(tmp_path: Path, *, base_seed: int = 9000):
                 base_seed=base_seed,
                 output_dir=str(tmp_path / "datagen"),
                 dataset_fps=10,
+                episodes=recipe.recording.episodes,
             ),
         }
     )
@@ -163,6 +164,7 @@ def test_variant_output_directory_is_deterministic(tmp_path: Path) -> None:
                 base_seed=recipe.recording.base_seed,
                 output_dir=str(tmp_path / "out"),
                 dataset_fps=recipe.recording.dataset_fps,
+                episodes=recipe.recording.episodes,
             ),
         }
     )
@@ -180,8 +182,7 @@ def test_variant_output_directory_separates_drop_and_no_drop_rows(tmp_path: Path
     same_mode = [
         m
         for m in manifests
-        if m.controller is DatagenController.SIMPLE_IK
-        and m.post_drop_mode is PostDropMode.IMMEDIATE_IK
+        if m.controller is DatagenController.SIMPLE_IK and m.post_drop_mode is PostDropMode.IMMEDIATE_IK
     ]
 
     assert {m.drop for m in same_mode} == {True, False}
@@ -496,6 +497,7 @@ def test_paired_plan_honours_per_variant_drop_flag(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Task 3: per-controller layout routing (use_stock_layout)
 # ---------------------------------------------------------------------------
+
 
 def test_canonical_matrix_shares_randomized_layout(tmp_path: Path) -> None:
     """Canonical recipe is SimpleIK-only with use_stock_layout false: one layout, all rows."""

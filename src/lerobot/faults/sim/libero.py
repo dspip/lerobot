@@ -25,9 +25,7 @@ def unwrap_libero_env(env: Any) -> Any:
     """Peel Gymnasium / fault wrappers until a LeRobot-style ``LiberoEnv`` is found."""
     current = env
     if type(current).__name__ == "AsyncVectorEnv":
-        raise TypeError(
-            "AsyncVectorEnv does not expose `.envs`; use SyncVectorEnv or a single LiberoEnv."
-        )
+        raise TypeError("AsyncVectorEnv does not expose `.envs`; use SyncVectorEnv or a single LiberoEnv.")
     if hasattr(current, "envs"):
         sub_envs = current.envs
         if not sub_envs:
@@ -67,9 +65,7 @@ def get_robosuite_env(libero_or_vec_env: Any, env_idx: int = 0) -> Any:
     type_name = type(env).__name__
 
     if type_name == "AsyncVectorEnv":
-        raise TypeError(
-            "AsyncVectorEnv does not expose `.envs`; use SyncVectorEnv or a single LiberoEnv."
-        )
+        raise TypeError("AsyncVectorEnv does not expose `.envs`; use SyncVectorEnv or a single LiberoEnv.")
 
     if hasattr(env, "envs"):
         try:
@@ -83,9 +79,7 @@ def get_robosuite_env(libero_or_vec_env: Any, env_idx: int = 0) -> Any:
     libero_env = unwrap_libero_env(env)
     offscreen = getattr(libero_env, "_env", None)
     if offscreen is None:
-        raise RuntimeError(
-            "LiberoEnv._env is None — call reset() once so OffScreenRenderEnv is created."
-        )
+        raise RuntimeError("LiberoEnv._env is None — call reset() once so OffScreenRenderEnv is created.")
 
     rs_env = getattr(offscreen, "env", None)
     if rs_env is None:
@@ -378,6 +372,29 @@ def is_object_in_basket(
     return xy <= xy_tol and z_min <= z <= z_max
 
 
+def is_object_over_basket(
+    rs_env: Any,
+    object_name: str,
+    *,
+    basket_name: str = DEFAULT_BASKET_NAME,
+    xy_tol: float = 0.10,
+    z_min: float = -0.05,
+    z_max: float = 0.35,
+) -> bool:
+    """True when ``object_name`` is above the basket opening (looser than ``is_object_in_basket``).
+
+    Used to avoid labeling a successful place release as a mid-air drop while the object
+    is still falling through the opening (not yet inside the tight ``in_basket`` volume).
+    """
+    basket = _body_xpos(rs_env, basket_name)
+    if basket is None:
+        return False
+    obj = get_object_pose(rs_env, object_name)["pos"]
+    xy = float(np.linalg.norm(obj[:2] - basket[:2]))
+    z = float(obj[2] - basket[2])
+    return xy <= xy_tol and z_min <= z <= z_max
+
+
 def seat_object_in_basket_if_above(
     rs_env: Any,
     object_name: str,
@@ -626,9 +643,7 @@ def object_symmetry_axis(quat_wxyz: Any, local_axis: Any = (0.0, 0.0, 1.0)) -> n
 # Body-frame extents are fixed per asset, so measure once per (model, object).
 # Keyed on the model *object* (weakly): an ``id()`` key would be recycled after a
 # model is collected, handing a new env the previous asset's extents.
-_BODY_EXTENTS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, np.ndarray]]" = (
-    weakref.WeakKeyDictionary()
-)
+_BODY_EXTENTS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, np.ndarray]]" = weakref.WeakKeyDictionary()
 
 
 def _extents_cache_for(model: Any) -> dict[str, np.ndarray] | None:
@@ -1018,9 +1033,7 @@ def lay_object_on_side(
     """
     local_axis = object_long_axis_local(rs_env, object_name)
     if local_axis is None:
-        raise RuntimeError(
-            f"{object_name!r} has no measurable long axis; it cannot be laid on its side."
-        )
+        raise RuntimeError(f"{object_name!r} has no measurable long axis; it cannot be laid on its side.")
     extents = object_body_extents(rs_env, object_name)
     if extents is None:
         raise RuntimeError(f"Could not measure extents for {object_name!r}.")

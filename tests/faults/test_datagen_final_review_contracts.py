@@ -303,6 +303,7 @@ def test_run_manifest_tracks_in_progress_and_aborted(tmp_path: Path) -> None:
                 base_seed=9000,
                 output_dir=str(tmp_path / "out"),
                 dataset_fps=10,
+                episodes=recipe.recording.episodes,
             ),
         }
     )
@@ -412,6 +413,7 @@ def test_read_run_manifest_includes_run_status(tmp_path: Path) -> None:
 # Task 2: SimpleIK preview artifact tests
 # ---------------------------------------------------------------------------
 
+
 def _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, mock_rs_env, fake_loop, recipe) -> None:  # noqa: ANN001
     """Apply standard MonkeyPatch entries used by SimpleIK adapter tests."""
     mp.setattr(simple_ik_mod, "run_simple_ik_episode_loop", fake_loop)
@@ -443,6 +445,7 @@ def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path
     def _fake_loop(*_args, **kwargs):  # noqa: ANN003
         loop_kwargs.update(kwargs)
         from lerobot.faults.datagen.controllers import simple_ik as mod
+
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 
     mock_preview = MagicMock()
@@ -479,9 +482,7 @@ def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path
     assert callable(loop_kwargs["on_post_step"])
     # Invoke the captured callback directly and verify it drives preview.capture with the right signature.
     loop_kwargs["on_post_step"](0, "lift")
-    mock_preview.capture.assert_called_with(
-        mock_env, "PHASE: SIMPLE IK lift step=0", (30, 90, 200)
-    )
+    mock_preview.capture.assert_called_with(mock_env, "PHASE: SIMPLE IK lift step=0", (30, 90, 200))
     assert result.details["video_mp4"].endswith("full_pipeline.mp4")
     assert result.details["video_gif"].endswith("full_pipeline.gif")
     assert result.details["final_state_multicam"].endswith("final_state_multicam.png")
@@ -500,6 +501,7 @@ def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: P
 
     def _fake_loop_fail(*_args, **kwargs):  # noqa: ANN003
         from lerobot.faults.datagen.controllers import simple_ik as mod
+
         return mod.SimpleIKEpisodeFacts(False, "nominal_completed_after_drop", None, None, 0)
 
     fail_artifact_mp4 = str(tmp_path / "ep" / "videos" / "full_pipeline.mp4")
@@ -551,15 +553,19 @@ def test_simple_ik_adapter_closes_env_after_finalization(tmp_path: Path) -> None
 
     def _fake_loop(*_args, **kwargs):  # noqa: ANN003
         from lerobot.faults.datagen.controllers import simple_ik as mod
+
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 
     order: list[str] = []
     mock_preview = MagicMock()
-    mock_preview.finalize.side_effect = lambda rs: order.append("finalize") or {
-        "video_mp4": None,
-        "video_gif": None,
-        "final_state_multicam": None,
-    }
+    mock_preview.finalize.side_effect = lambda rs: (
+        order.append("finalize")
+        or {
+            "video_mp4": None,
+            "video_gif": None,
+            "final_state_multicam": None,
+        }
+    )
 
     adapter = SimpleIKDatagenAdapter(recipe)
     mock_env = MagicMock()

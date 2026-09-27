@@ -25,9 +25,9 @@ RECIPES_DIR = REPO_ROOT / "examples" / "faults" / "recipes"
 CAN_DROP_RECIPE = RECIPES_DIR / "can_drop_datagen.json"
 
 
-def test_sole_checked_in_drop_datagen_recipe() -> None:
+def test_checked_in_drop_datagen_recipes() -> None:
     json_files = sorted(p.name for p in RECIPES_DIR.glob("*.json"))
-    assert json_files == ["can_drop_datagen.json"]
+    assert json_files == ["alphabet_soup_ik_random.json", "can_drop_datagen.json"]
     assert CAN_DROP_RECIPE.is_file()
 
 

@@ -89,22 +89,37 @@ def _nominal_action(
     object_name: str,
     *,
     gripper_settle_steps: int,
+    release_gripper: bool = False,
+    latch_release_offset: bool = False,
 ) -> np.ndarray | None:
     eef_pos, _ = get_eef_pose(rs_env)
     object_pos = get_object_pose(rs_env, object_name)["pos"]
+    if latch_release_offset:
+        # The drop settles the can onto the table before the next control step.
+        # Latch the offset from these still-grasped poses, and refuse to leave
+        # hover on this same step.
+        planner.remember_place_offset(eef_pos, object_pos)
+        planner.begin_post_drop_hover_hold()
     action = planner.next_action(
         eef_pos=eef_pos,
         object_pos=object_pos,
         closing_axis=get_gripper_closing_axis(rs_env),
         object_axis=object_pose_orientation(rs_env, object_name)["axis"],
+        object_grasped=bool(is_object_grasped(rs_env, object_name)),
     )
     if planner.just_entered_close:
         force_close_gripper(rs_env, gripper_settle_steps=gripper_settle_steps)
     if planner.just_entered_open:
         force_open_gripper(rs_env, gripper_settle_steps=gripper_settle_steps)
     if action is not None and planner.phase_name in CARRY_PHASES:
-        hold_gripper_closed(rs_env)
-        action = stabilize_carry_action(action)
+        action = np.asarray(action, dtype=np.float32).copy()
+        if release_gripper:
+            # Keep the slower carry rate, but do not re-close on the dropped can.
+            action[:3] = np.clip(action[:3] * 0.65, -1.0, 1.0)
+            action[6] = np.float32(-1.0)
+        else:
+            hold_gripper_closed(rs_env)
+            action = stabilize_carry_action(action)
     return action
 
 
@@ -171,7 +186,13 @@ def run_simple_ik_episode_loop(
                     dtype=np.float32,
                 ).reshape(1, 7)
             else:
-                nominal = _nominal_action(planner, rs_env, object_name, gripper_settle_steps=gripper_settle_steps)
+                nominal = _nominal_action(
+                    planner,
+                    rs_env,
+                    object_name,
+                    gripper_settle_steps=gripper_settle_steps,
+                    release_gripper=True,
+                )
                 if nominal is None or planner.done:
                     return SimpleIKEpisodeFacts(
                         False,
@@ -228,7 +249,11 @@ def run_simple_ik_episode_loop(
 
             if fire:
                 nominal = _nominal_action(
-                    planner, rs_env, object_name, gripper_settle_steps=gripper_settle_steps
+                    planner,
+                    rs_env,
+                    object_name,
+                    gripper_settle_steps=gripper_settle_steps,
+                    latch_release_offset=True,
                 )
                 if nominal is None:
                     return SimpleIKEpisodeFacts(
@@ -240,6 +265,7 @@ def run_simple_ik_episode_loop(
                     )
                 trigger_pose = obj.astype(float).tolist()
                 executed = fault.trigger_scheduled_drop(env, 0, nominal, reason="path_uniform")
+                planner.begin_post_drop_hover_hold()
                 dropped = True
                 action = np.asarray(executed, dtype=np.float32).reshape(1, 7)
             else:
@@ -328,12 +354,7 @@ def run_simple_ik_episode_loop(
             done = bool(np.asarray(terminated).any() or np.asarray(truncated).any())
             if len(step_out) >= 5 and isinstance(step_out[4], dict):
                 success_now = bool(np.asarray(step_out[4].get("is_success", False)).any())
-        if (
-            paired_plan is not None
-            and not paired_plan.drop_decision.drop
-            and not dropped
-            and success_now
-        ):
+        if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped and success_now:
             return _paired_nominal_no_drop_facts(
                 rs_env,
                 object_name=object_name,

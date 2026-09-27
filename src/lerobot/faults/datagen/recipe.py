@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -93,8 +94,8 @@ _SMOLVLA_KEYS = frozenset(
 )
 _BAND_KEYS = frozenset({"name", "min_m", "max_m"})
 _POST_DROP_KEYS = frozenset({"dwell_steps"})
-_RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps"})
-_MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "drop", "episodes"})
+_RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps", "episodes"})
+_MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "drop", "episodes", "weight"})
 
 
 def _reject_unknown_keys(raw: dict[str, Any], allowed: frozenset[str], section: str) -> None:
@@ -215,20 +216,22 @@ class PostDropRecipe:
 
 @dataclass(frozen=True)
 class RecordingRecipe:
-    """Dataset output location, FPS, and base seed for the matrix run."""
+    """Dataset output location, FPS, base seed, and planned total episode count."""
 
     base_seed: int
     output_dir: str
     dataset_fps: int
+    episodes: int
 
 
 @dataclass(frozen=True)
 class MatrixVariant:
-    """One controller/mode pair, whether the row injects a drop, and its episode count."""
+    """One matrix row: controller/mode/drop, mix weight, and allocated episode count."""
 
     controller: DatagenController
     post_drop_mode: PostDropMode
     drop: bool
+    weight: int
     episodes: int
 
 
@@ -356,12 +359,62 @@ def validate_controller_mode_pair(
         raise RecipeError(f"{section}: invalid controller/mode pair {controller.value} × {mode.value}")
 
 
+def allocate_episode_counts(total_episodes: int, weights: Sequence[int]) -> tuple[int, ...]:
+    """Split ``total_episodes`` across rows using largest-remainder (Hamilton) allocation."""
+    row_count = len(weights)
+    if row_count == 0:
+        raise RecipeError("experiment_matrix must be a non-empty array")
+    if total_episodes < 1:
+        raise RecipeError("recording.episodes must be >= 1")
+    if any(weight < 1 for weight in weights):
+        raise RecipeError("experiment_matrix row weight must be >= 1")
+    if total_episodes < row_count:
+        raise RecipeError(
+            "recording.episodes is too small to give every experiment_matrix row at least 1 episode "
+            f"(total={total_episodes}, rows={row_count})"
+        )
+    weight_sum = sum(int(w) for w in weights)
+    exact = [total_episodes * int(w) / weight_sum for w in weights]
+    floors = [int(part) for part in exact]
+    allocated = list(floors)
+    remainder = total_episodes - sum(floors)
+    fractional = sorted(
+        ((exact[i] - floors[i], i) for i in range(row_count)),
+        key=lambda item: (-item[0], item[1]),
+    )
+    for offset in range(remainder):
+        allocated[fractional[offset][1]] += 1
+    if any(count < 1 for count in allocated):
+        raise RecipeError(
+            "recording.episodes is too small to give every experiment_matrix row at least 1 episode "
+            f"(total={total_episodes}, rows={row_count})"
+        )
+    if sum(allocated) != total_episodes:
+        raise RecipeError(
+            f"episode allocation internal error: expected sum {total_episodes}, got {sum(allocated)}"
+        )
+    return tuple(allocated)
+
+
+def apply_recording_episode_total(recipe: DropDatagenRecipe, total_episodes: int) -> DropDatagenRecipe:
+    """Reallocate matrix row episode counts for a new dataset total (weights unchanged)."""
+    allocated = allocate_episode_counts(
+        int(total_episodes),
+        tuple(variant.weight for variant in recipe.experiment_matrix),
+    )
+    matrix = tuple(
+        replace(variant, episodes=count)
+        for variant, count in zip(recipe.experiment_matrix, allocated, strict=True)
+    )
+    recording = replace(recipe.recording, episodes=int(total_episodes))
+    return replace(recipe, recording=recording, experiment_matrix=matrix)
+
+
 def validate_experiment_matrix_entries(matrix: tuple[MatrixVariant, ...]) -> None:
-    """Require unique (controller, mode, drop) triples and equal episode counts."""
+    """Require unique (controller, mode, drop) triples."""
     if not matrix:
         raise RecipeError("experiment_matrix must be a non-empty array")
     seen: set[tuple[DatagenController, PostDropMode, bool]] = set()
-    episode_counts: set[int] = set()
     for variant in matrix:
         triple = (variant.controller, variant.post_drop_mode, variant.drop)
         if triple in seen:
@@ -370,9 +423,6 @@ def validate_experiment_matrix_entries(matrix: tuple[MatrixVariant, ...]) -> Non
                 f"{variant.controller.value} × {variant.post_drop_mode.value} × drop={variant.drop}"
             )
         seen.add(triple)
-        episode_counts.add(variant.episodes)
-    if len(episode_counts) != 1:
-        raise RecipeError("experiment_matrix: all variants must have the same episodes count")
 
 
 def legacy_drop_recipe(recipe: DropDatagenRecipe) -> DropRecipe:
@@ -778,12 +828,6 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         field="recording.dataset_fps",
         min_value=1,
     )
-    recording = RecordingRecipe(
-        base_seed=base_seed,
-        output_dir=output_dir,
-        dataset_fps=dataset_fps,
-    )
-
     control_hz = _require_json_int(_required(raw, "control_hz"), field="control_hz", min_value=1)
     task_id = _require_json_int(_required(raw, "task_id"), field="task_id", min_value=0)
 
@@ -808,21 +852,59 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
             _required(entry, "drop", section=section),
             field=f"{section}.drop",
         )
-        episodes = _require_json_int(
-            _required(entry, "episodes", section=section),
-            field=f"{section}.episodes",
-            min_value=1,
-        )
+        has_weight = "weight" in entry
+        has_legacy_episodes = "episodes" in entry
+        if has_weight and has_legacy_episodes:
+            raise RecipeError(f"{section}: specify weight or episodes, not both")
+        if has_weight:
+            weight = _require_json_int(
+                entry["weight"],
+                field=f"{section}.weight",
+                min_value=1,
+            )
+        elif has_legacy_episodes:
+            weight = _require_json_int(
+                entry["episodes"],
+                field=f"{section}.episodes",
+                min_value=1,
+            )
+        else:
+            raise RecipeError(f"{section}.weight is required")
         matrix.append(
             MatrixVariant(
                 controller=controller,
                 post_drop_mode=mode,
                 drop=drop,
-                episodes=episodes,
+                weight=weight,
+                episodes=0,
             )
         )
 
-    experiment_matrix = tuple(matrix)
+    if "episodes" in recording_raw:
+        recording_episodes = _require_json_int(
+            recording_raw["episodes"],
+            field="recording.episodes",
+            min_value=1,
+        )
+    elif all("episodes" in entry and "weight" not in entry for entry in matrix_raw):
+        recording_episodes = sum(variant.weight for variant in matrix)
+    else:
+        raise RecipeError("recording.episodes is required when experiment_matrix uses weights")
+
+    recording = RecordingRecipe(
+        base_seed=base_seed,
+        output_dir=output_dir,
+        dataset_fps=dataset_fps,
+        episodes=recording_episodes,
+    )
+
+    allocated = allocate_episode_counts(
+        recording_episodes,
+        tuple(variant.weight for variant in matrix),
+    )
+    experiment_matrix = tuple(
+        replace(variant, episodes=count) for variant, count in zip(matrix, allocated, strict=True)
+    )
     validate_experiment_matrix_entries(experiment_matrix)
 
     recipe = DropDatagenRecipe(

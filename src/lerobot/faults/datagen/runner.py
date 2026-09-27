@@ -62,12 +62,7 @@ def variant_output_directory(recipe: DropDatagenRecipe, manifest: EpisodeSeedMan
     mode = manifest.post_drop_mode.value
     if not manifest.drop:
         mode = f"{mode}_no_drop"
-    return (
-        base
-        / manifest.controller.value
-        / mode
-        / f"episode_{manifest.logical_episode_index:04d}"
-    )
+    return base / manifest.controller.value / mode / f"episode_{manifest.logical_episode_index:04d}"
 
 
 def _adapter_for(
@@ -103,8 +98,8 @@ def run_drop_datagen_matrix(
     layout_fn = layout_provider or libero_shared_layout_provider
     init_count_fn = init_state_count_provider or libero_init_state_count
     if logical_episode_indices is None:
-        episodes_per_variant = recipe.experiment_matrix[0].episodes
-        logical_episode_indices = tuple(range(int(episodes_per_variant)))
+        max_episodes = max(int(variant.episodes) for variant in recipe.experiment_matrix)
+        logical_episode_indices = tuple(range(max_episodes))
     try:
         num_init_states = int(init_count_fn(recipe))
     except Exception as exc:

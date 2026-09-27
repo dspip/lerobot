@@ -24,6 +24,7 @@ from lerobot.faults.datagen.recipe import (
     DatagenController,
     PostDropMode,
     RecipeError,
+    allocate_episode_counts,
     effective_post_drop_dwell_steps,
     expand_experiment_matrix,
     legacy_drop_recipe,
@@ -33,6 +34,7 @@ from lerobot.faults.datagen.recipe import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
+IK_RANDOM_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "alphabet_soup_ik_random.json"
 
 
 def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
@@ -82,13 +84,14 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             "base_seed": 9000,
             "output_dir": "outputs/can_drop_datagen",
             "dataset_fps": 10,
+            "episodes": 5,
         },
         "experiment_matrix": [
-            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": True, "episodes": 1},
-            {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "drop": True, "episodes": 1},
-            {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "episodes": 1},
-            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": False, "episodes": 1},
-            {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "episodes": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": True, "weight": 1},
+            {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "drop": True, "weight": 1},
+            {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "weight": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": False, "weight": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "weight": 1},
         ],
     }
     recipe.update(overrides)
@@ -105,34 +108,88 @@ def test_can_drop_recipe_file_loads() -> None:
     assert recipe.smolvla.policy_path == "lerobot/smolvla_libero"
     assert recipe.post_drop.dwell_steps == 80
     assert len(recipe.experiment_matrix) == 5
+    assert recipe.recording.episodes == 100
+    assert all(variant.weight == 1 for variant in recipe.experiment_matrix)
+    assert all(variant.episodes == 20 for variant in recipe.experiment_matrix)
     path_drop = recipe.simple_ik.path_drop
     assert path_drop is not None
     assert path_drop.eligible_phases == ("lift", "to_container")
     assert legacy_drop_recipe(recipe).hard_keepout_floor_m == 0.22
 
 
+def test_legacy_recipe_uses_row_episode_counts_as_dataset_total(tmp_path: Path) -> None:
+    payload = _valid_unified_recipe()
+    del payload["recording"]["episodes"]
+    legacy_matrix = []
+    for entry in payload["experiment_matrix"]:
+        legacy_entry = dict(entry)
+        legacy_entry["episodes"] = legacy_entry.pop("weight")
+        legacy_matrix.append(legacy_entry)
+    payload["experiment_matrix"] = legacy_matrix
+    path = tmp_path / "legacy_recipe.json"
+    _write_recipe(path, payload)
+
+    recipe = load_drop_datagen_recipe(path)
+
+    assert recipe.recording.episodes == 5
+    assert [variant.episodes for variant in recipe.experiment_matrix] == [1, 1, 1, 1, 1]
+
+
+def test_weighted_recipe_requires_recording_episode_total(tmp_path: Path) -> None:
+    payload = _valid_unified_recipe()
+    del payload["recording"]["episodes"]
+    path = tmp_path / "weighted_recipe.json"
+    _write_recipe(path, payload)
+
+    with pytest.raises(RecipeError, match="recording.episodes is required"):
+        load_drop_datagen_recipe(path)
+
+
+def test_alphabet_soup_ik_random_recipe_is_nominal_only() -> None:
+    recipe = load_drop_datagen_recipe(IK_RANDOM_RECIPE)
+    assert recipe.object_names == ("alphabet_soup_1",)
+    assert recipe.simple_ik.trajectory_randomization_enabled is True
+    assert recipe.recording.output_dir == "outputs/alphabet_soup_success_ik_random"
+    assert recipe.recording.base_seed != 9000
+    assert len(recipe.experiment_matrix) == 1
+    row = recipe.experiment_matrix[0]
+    assert row.controller is DatagenController.SIMPLE_IK
+    assert row.drop is False
+    assert row.weight == 1
+    assert row.episodes == 100
+    assert recipe.recording.episodes == 100
+    runs = expand_experiment_matrix(recipe)
+    assert len(runs) == 100
+    assert all(not run.drop for run in runs)
+
+
 def test_expand_matrix_stable_order_and_episode_count() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     runs = expand_experiment_matrix(recipe)
-    assert len(runs) == 5
-    assert [(r.controller, r.post_drop_mode, r.drop) for r in runs] == [
+    assert len(runs) == 100
+    assert sum(r.episodes for r in recipe.experiment_matrix) == 100
+    triples = [(r.controller, r.post_drop_mode, r.drop) for r in runs]
+    expected_triple = [
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK, True),
         (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK, True),
         (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK, True),
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK, False),
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA, True),
     ]
-    assert all(r.episode_index == 0 for r in runs)
-    assert all(r.logical_episode_index == 0 for r in runs)
+    for triple in expected_triple:
+        assert triples.count(triple) == 20
+    assert triples[:20] == [expected_triple[0]] * 20
+    assert [r.episode_index for r in runs[:5]] == [0, 1, 2, 3, 4]
 
 
 def test_accepts_simple_ik_reset_then_ik_and_immediate_smolvla(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
-        {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "episodes": 1},
-        {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "episodes": 1},
+        {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "weight": 1},
+        {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "weight": 1},
     ]
+    payload["recording"]["episodes"] = 2
     _write_recipe(path, payload)
     recipe = load_drop_datagen_recipe(path)
     assert [v.post_drop_mode for v in recipe.experiment_matrix] == [
@@ -153,7 +210,7 @@ def test_rejects_unknown_controller_or_mode(tmp_path: Path, controller: str, mod
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
-        {"controller": controller, "post_drop_mode": mode, "episodes": 1},
+        {"controller": controller, "post_drop_mode": mode, "drop": True, "weight": 1},
     ]
     _write_recipe(path, payload)
     with pytest.raises(RecipeError):
@@ -188,9 +245,11 @@ def test_paired_seed_manifests_share_layout_and_drop(tmp_path: Path) -> None:
 def test_paired_seed_manifests_deterministic_and_vary_by_episode(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
-    payload["experiment_matrix"] = [{**entry, "episodes": 2} for entry in payload["experiment_matrix"]]
+    payload["recording"]["episodes"] = 10
+    payload["experiment_matrix"] = [{**entry, "weight": 2} for entry in payload["experiment_matrix"]]
     _write_recipe(path, payload)
     recipe = load_drop_datagen_recipe(path)
+    assert all(variant.episodes == 2 for variant in recipe.experiment_matrix)
     a = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     b = paired_episode_seed_manifests(recipe, logical_episode_index=0)
     c = paired_episode_seed_manifests(recipe, logical_episode_index=1)
@@ -229,14 +288,42 @@ def test_rejects_duplicate_experiment_matrix_pair(tmp_path: Path) -> None:
         load_drop_datagen_recipe(path)
 
 
-def test_rejects_unequal_matrix_episode_counts(tmp_path: Path) -> None:
+def test_unequal_weights_allocate_by_share(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     matrix = list(payload["experiment_matrix"])
-    matrix[0] = {**matrix[0], "episodes": 2}
+    matrix[0] = {**matrix[0], "weight": 2}
+    payload["experiment_matrix"] = matrix
+    payload["recording"]["episodes"] = 6
+    _write_recipe(path, payload)
+    recipe = load_drop_datagen_recipe(path)
+    counts = [variant.episodes for variant in recipe.experiment_matrix]
+    assert counts == [2, 1, 1, 1, 1]
+    assert sum(counts) == 6
+
+
+def test_allocate_episode_counts_equal_weights() -> None:
+    assert allocate_episode_counts(100, (1, 1, 1, 1, 1)) == (20, 20, 20, 20, 20)
+
+
+def test_allocate_episode_counts_remainder() -> None:
+    assert allocate_episode_counts(11, (1, 1, 1, 1, 1)) == (3, 2, 2, 2, 2)
+    assert sum(allocate_episode_counts(11, (1, 1, 1, 1, 1))) == 11
+
+
+def test_allocate_episode_counts_rejects_too_small_total() -> None:
+    with pytest.raises(RecipeError, match="too small to give every experiment_matrix row"):
+        allocate_episode_counts(3, (1, 1, 1, 1, 1))
+
+
+def test_matrix_rejects_weight_and_episodes_together(tmp_path: Path) -> None:
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    matrix = list(payload["experiment_matrix"])
+    matrix[0] = {**matrix[0], "weight": 1, "episodes": 1}
     payload["experiment_matrix"] = matrix
     _write_recipe(path, payload)
-    with pytest.raises(RecipeError, match="same episodes"):
+    with pytest.raises(RecipeError, match="weight or episodes, not both"):
         load_drop_datagen_recipe(path)
 
 
@@ -280,7 +367,7 @@ def test_matrix_drop_flag_required(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
-        {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "episodes": 1},
+        {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "weight": 1},
     ]
     _write_recipe(path, payload)
     with pytest.raises(RecipeError, match="drop"):
@@ -324,6 +411,7 @@ def test_unified_rejects_top_level_drop_section(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Task 3: use_stock_layout
 # ---------------------------------------------------------------------------
+
 
 def test_can_drop_recipe_has_use_stock_layout_false() -> None:
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)

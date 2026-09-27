@@ -437,3 +437,83 @@ def test_blend_radius_is_capped_by_the_length_of_the_leg():
 def test_negative_blend_radius_is_rejected():
     with pytest.raises(ValueError, match="waypoint_blend_radius_m"):
         SimpleIKRecoveryPlanner(waypoint_blend_radius_m=-0.01)
+
+
+def _track_to_phase(planner, pos, obj, phase, *, grasped, limit=400):
+    """Perfect end-effector tracking until ``phase`` is active."""
+    action = None
+    for _ in range(limit):
+        if planner.phase_name == phase:
+            return pos, action
+        action = planner.next_action(eef_pos=pos, object_pos=obj, object_grasped=grasped)
+        if action is None:
+            break
+        pos = pos + action[:3].astype(np.float64) * planner.max_pos_step
+    raise AssertionError(f"never reached {phase}; stopped in {planner.phase_name}")
+
+
+def test_released_can_does_not_drag_the_hover_target():
+    planner = SimpleIKRecoveryPlanner(fps=10, seed=0, transport_via_offset_m=0.0)
+    eef, _, obj, dest = _default_poses()
+    planner.plan(**_kw(_default_poses()), gripper_open=True)
+    offset = eef[:2] - obj[:2]
+    planner.remember_place_offset(eef, obj)
+    hover_idx = next(i for i, wp in enumerate(planner._waypoints) if wp.name == "to_basket_hover")
+    planner._wp_idx = hover_idx
+    planner._phase_name = "to_basket_hover"
+    planner._hold_left = 5
+    fallen = np.array([0.9, -0.8, 0.02])
+    target = planner._current_target(fallen, eef, object_grasped=False)
+    expected_xy = dest[:2] + offset
+    np.testing.assert_allclose(target.pos[:2], expected_xy, atol=1e-9)
+    runaway_xy = dest[:2] + (eef[:2] - fallen[:2])
+    assert np.linalg.norm(target.pos[:2] - runaway_xy) > 0.5
+
+
+def test_post_drop_hold_finishes_lift_then_stays_on_hover():
+    planner = SimpleIKRecoveryPlanner(
+        fps=10,
+        seed=0,
+        transport_via_offset_m=0.06,
+        basket_keepout_m=0.05,
+        grasp_hold_steps=1,
+        place_hold_steps=1,
+    )
+    eef, _, obj, dest = _default_poses()
+    planner.plan(**_kw(_default_poses()), gripper_open=True)
+    pos = eef.astype(np.float64).copy()
+    held = obj.astype(np.float64).copy()
+    pos, _ = _track_to_phase(planner, pos, held, "lift", grasped=True)
+    release_obj = held.copy()
+    planner.remember_place_offset(pos, release_obj)
+    planner.begin_post_drop_hover_hold()
+    fallen = release_obj.copy()
+    fallen[2] = 0.02
+    phases: list[str] = []
+    action = None
+    for _ in range(500):
+        action = planner.next_action(eef_pos=pos, object_pos=fallen, object_grasped=False)
+        assert action is not None
+        phases.append(planner.phase_name)
+        pos = pos + action[:3].astype(np.float64) * planner.max_pos_step
+    assert "to_basket_via" in phases
+    assert "to_basket_hover" in phases
+    assert "open_place" not in phases
+    assert planner.phase_name == "to_basket_hover"
+    assert action is not None
+    assert float(np.linalg.norm(action[:3])) < 1e-3
+    assert planner._place_offset_xy is not None
+    np.testing.assert_allclose(pos[:2], dest[:2] + planner._place_offset_xy, atol=0.03)
+    # Lift entry rewrites hover Z to the carry height. Holding there matches the
+    # no-drop trajectory; 0.28 m is the later open_place height, which dwell must not enter.
+    assert abs(float(pos[2]) - (float(release_obj[2]) + planner.lift_height)) < 0.03
+
+
+def test_replan_clears_post_drop_hover_hold():
+    planner = SimpleIKRecoveryPlanner(fps=10, seed=0)
+    planner.plan(**_kw(_default_poses()), gripper_open=True)
+    planner.remember_place_offset(np.zeros(3), np.array([0.1, 0.0, 0.0]))
+    planner.begin_post_drop_hover_hold()
+    planner.plan(**_kw(_default_poses()), gripper_open=True)
+    assert planner._hold_at_basket_hover is False
+    assert planner._place_offset_xy is None

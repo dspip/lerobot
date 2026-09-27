@@ -11,6 +11,8 @@ from lerobot.faults.sim.libero import (
     DEFAULT_GRIPPER_SETTLE_STEPS,
     force_open_gripper,
     get_place_destination,
+    is_object_in_basket,
+    is_object_over_basket,
     midair_drop,
 )
 
@@ -35,6 +37,17 @@ def test_loss_mask_from_fault_state():
         )
         == 0.0
     )
+
+
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_is_object_over_basket_wider_than_in_basket(mock_pose):
+    rs_env = MagicMock()
+    rs_env.sim.data.get_body_xpos.return_value = np.array([0.5, 0.0, 0.85], dtype=float)
+    # 0.25 m above basket rim: over opening but outside tight in_basket z_max=0.20.
+    mock_pose.return_value = {"pos": np.array([0.52, 0.0, 1.10], dtype=float)}
+
+    assert is_object_in_basket(rs_env, "alphabet_soup_1") is False
+    assert is_object_over_basket(rs_env, "alphabet_soup_1") is True
 
 
 def test_get_place_destination_prefers_basket():
