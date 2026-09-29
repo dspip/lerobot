@@ -355,6 +355,7 @@ def test_smolvla_adapter_reuses_policy_resources(tmp_path: Path) -> None:
     bundle = SimpleNamespace(
         policy_path=recipe.smolvla.policy_path,
         device="cpu",
+        task_id=0,
     )
 
     def _fake_load(**_kwargs):  # noqa: ANN003
@@ -370,7 +371,7 @@ def test_smolvla_adapter_reuses_policy_resources(tmp_path: Path) -> None:
     adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_pipe)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(smolvla_mod, "load_smolvla_policy_resources", _fake_load)
-        adapter._policy_bundle("cpu")
+        adapter._policy_bundle("cpu", episode_task_id=0)
         for manifest in manifests[:2]:
             plan = build_paired_episode_plan(
                 recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50

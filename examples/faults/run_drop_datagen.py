@@ -22,13 +22,16 @@ import sys
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 
+from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.recipe import (
     DropDatagenRecipe,
     RecipeError,
     apply_recording_episode_total,
     load_drop_datagen_recipe,
 )
+from lerobot.faults.datagen.recipe_identity import recipe_content_hash_from_json_path
 from lerobot.faults.datagen.runner import run_drop_datagen_matrix
+from lerobot.faults.datagen.shard_range import validate_logical_shard_range
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -62,6 +65,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="cuda",
         help="Torch device for SmolVLA runs (e.g. cuda or cpu).",
+    )
+    parser.add_argument(
+        "--logical-start",
+        type=int,
+        default=None,
+        help="Half-open logical episode range start (requires --logical-end).",
+    )
+    parser.add_argument(
+        "--logical-end",
+        type=int,
+        default=None,
+        help="Half-open logical episode range end (exclusive).",
     )
     return parser
 
@@ -109,9 +124,31 @@ def main(argv: list[str] | None = None) -> int:
     except RecipeError as exc:
         print(f"Recipe error: {exc}", file=sys.stderr)
         return 2
+
+    logical_indices: range | None = None
+    logical_range: tuple[int, int] | None = None
+    if args.logical_start is not None or args.logical_end is not None:
+        if args.logical_start is None or args.logical_end is None:
+            print("Both --logical-start and --logical-end are required for sharded runs.", file=sys.stderr)
+            return 2
+        try:
+            logical_range = validate_logical_shard_range(recipe, args.logical_start, args.logical_end)
+        except RecipeError as exc:
+            print(f"Recipe error: {exc}", file=sys.stderr)
+            return 2
+        logical_indices = range(logical_range[0], logical_range[1])
+
+    recipe_hash = recipe_content_hash_from_json_path(args.recipe)
+    writer = RunDatasetWriter(
+        recipe,
+        logical_range=logical_range,
+        recipe_content_hash=recipe_hash,
+    )
     results = run_drop_datagen_matrix(
         recipe,
+        logical_episode_indices=logical_indices,
         device=str(args.device),
+        dataset_writer=writer,
     )
     summary_path = Path(recipe.recording.output_dir) / "matrix_results.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)

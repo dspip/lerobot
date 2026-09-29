@@ -72,7 +72,12 @@ def sample_layout(
                 legal = False
                 break
             if any(
-                float(np.linalg.norm(xy - placed.xy)) < placement.min_pairwise_clearance_m
+                float(np.linalg.norm(xy - placed.xy))
+                < (
+                    placement.target_min_clearance_m
+                    if obj.name == target_name or placed.name == target_name
+                    else placement.min_pairwise_clearance_m
+                )
                 for placed in sampled
             ):
                 legal = False

@@ -58,9 +58,9 @@ def test_trigger_scheduled_drop_uses_dwell_not_immediate_recovery(
     assert inj._states[0].triggered
     assert inj._states[0].falling
     assert not inj._states[0].recovery_active
-    hold = np.zeros(7, dtype=np.float32)
-    hold[6] = -1.0
-    np.testing.assert_allclose(out, hold)
+    expected = proposed.copy()
+    expected[6] = -1.0
+    np.testing.assert_allclose(out, expected)
     mock_dest.assert_not_called()
 
 
@@ -120,9 +120,9 @@ def test_zero_dwell_scheduled_drop_executes_first_recovery_once(
     second = inj.on_step(env, _action(1, 7, 99.0))
     assert inj._states[0].recovery_active
     assert not np.allclose(second, _action(1, 7, 99.0))
-    hold = np.zeros(7, dtype=np.float32)
-    hold[6] = -1.0
-    np.testing.assert_allclose(first, hold)
+    expected = _action(1, 7, 5.0)[0].copy()
+    expected[6] = -1.0
+    np.testing.assert_allclose(first, expected)
 
 
 @patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")

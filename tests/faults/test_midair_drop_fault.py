@@ -40,10 +40,10 @@ def _action(batch: int, dim: int, fill: float) -> np.ndarray:
     return np.full((batch, dim), fill, dtype=np.float32)
 
 
-def _hold_action(batch: int = 1, dim: int = 7) -> np.ndarray:
-    out = np.zeros((batch, dim), dtype=np.float32)
-    if dim >= 7:
-        out[:, 6] = -1.0
+def _fall_command(proposed: np.ndarray) -> np.ndarray:
+    """Arm command kept, gripper forced open. Matches ``_fall_action``."""
+    out = np.array(proposed, dtype=np.float32, copy=True)
+    out[..., 6] = -1.0
     return out
 
 
@@ -261,8 +261,9 @@ def test_after_trigger_returns_planner_actions_not_policy(
     inj = MidAirDropFault(_cfg(t_min=1, t_max=1, require_grasp=False), num_envs=1)
     env = MagicMock()
     inj.on_step(env, _action(1, 7, 1.0))  # step 0: policy
-    out = inj.on_step(env, _action(1, 7, 99.0))  # step 1: trigger + fall hold
-    np.testing.assert_allclose(out, _hold_action())
+    proposed = _action(1, 7, 99.0)
+    out = inj.on_step(env, proposed)  # step 1: trigger, gripper opens, arm command kept
+    np.testing.assert_allclose(out, _fall_command(proposed))
     assert inj._states[0].triggered
     assert inj._states[0].falling
     assert not inj._states[0].recovery_active
@@ -438,7 +439,7 @@ def test_zero_dwell_starts_recovery_on_drop_step(
     assert inj._states[0].triggered
     assert inj._states[0].falling
     assert not inj._states[0].recovery_active
-    np.testing.assert_allclose(out, _hold_action())
+    np.testing.assert_allclose(out, _fall_command(policy))
     mock_dest.assert_not_called()
     _complete_fall(inj, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
     out = inj.on_step(env, policy)
@@ -472,11 +473,12 @@ def test_post_drop_dwell_passes_policy_and_delays_planner(
         num_envs=1,
     )
     env = MagicMock()
-    drop_out = inj.on_step(env, _action(1, 7, 1.0))
+    proposed = _action(1, 7, 1.0)
+    drop_out = inj.on_step(env, proposed)
     assert inj._states[0].triggered
     assert inj._states[0].falling
     assert not inj._states[0].recovery_active
-    np.testing.assert_allclose(drop_out, _hold_action())
+    np.testing.assert_allclose(drop_out, _fall_command(proposed))
     mock_dest.assert_not_called()
     _complete_fall(inj, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
     assert inj._states[0].dwell_steps_completed == 0
@@ -850,7 +852,7 @@ def test_reset_then_ik_dwell_sets_policy_reset_and_delays_ik(
 @patch("lerobot.faults.recovery.midair_drop.get_arm_qpos")
 @patch("lerobot.faults.recovery.midair_drop.get_robosuite_env")
 @patch("lerobot.faults.recovery.midair_drop.is_object_grasped")
-def test_fall_holds_arm_until_landed(
+def test_fall_keeps_arm_command_until_landed(
     mock_grasped,
     mock_get_rs,
     mock_arm_q,
@@ -867,11 +869,12 @@ def test_fall_holds_arm_until_landed(
     mock_grasped.return_value = True
     mock_lin_vel.return_value = np.array([0.0, 0.0, 0.2])
     for _ in range(4):
-        out = inj.on_step(env, _action(1, 7, 5.0))
+        proposed = _action(1, 7, 5.0)
+        out = inj.on_step(env, proposed)
         assert inj._states[0].falling
         assert not inj._states[0].recovery_active
         assert inj._states[0].dwell_steps_completed == 0
-        np.testing.assert_allclose(out, _hold_action())
+        np.testing.assert_allclose(out, _fall_command(proposed))
         assert inj.loss_mask_for_env(0) == 0.0
         assert inj._states[0].drop_injection_step
 

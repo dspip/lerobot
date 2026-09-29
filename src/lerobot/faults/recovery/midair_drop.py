@@ -36,6 +36,7 @@ from lerobot.faults.sim.libero import (
     midair_drop,
     object_basket_xy_distance,
     object_pose_orientation,
+    object_world_height,
     seat_object_in_basket_if_above,
 )
 
@@ -118,12 +119,18 @@ class _EnvDropState:
     manual_recovery_after_fall: bool = False
 
 
-def _hold_drop_action(proposed_action: np.ndarray) -> np.ndarray:
-    """Arm still, gripper open — shape matches ``proposed_action``."""
-    hold = np.zeros_like(proposed_action, dtype=np.float32)
-    if hold.shape[-1] >= 7:
-        hold[..., 6] = -1.0
-    return hold
+def _fall_action(proposed_action: np.ndarray) -> np.ndarray:
+    """Keep the arm's command and force the gripper open while the object falls.
+
+    Freezing the arm made the drop visible as a commanded stop. On the soup-can
+    A/B (seeds 9000, 9100, 9200) letting the arm continue left the object
+    trajectory unchanged, still landed within 3 cm horizontally, and recovery
+    still placed it in the basket.
+    """
+    action = np.array(proposed_action, dtype=np.float32, copy=True)
+    if action.shape[-1] >= 7:
+        action[..., 6] = -1.0
+    return action
 
 
 def _episode_seed(config_seed: int | None, episode_id: int | None) -> int:
@@ -278,7 +285,7 @@ class MidAirDropFault:
 
             if state.falling:
                 state.drop_injection_step = True
-                hold = _hold_drop_action(actions[env_idx])
+                hold = _fall_action(actions[env_idx])
                 rs_env = get_robosuite_env(env, env_idx=env_idx)
                 if state.fall_steps >= 1:
                     grasped = is_object_grasped(rs_env, self.config.object_name)
@@ -509,7 +516,7 @@ class MidAirDropFault:
         state.fall_steps = 0
         state.low_vz_steps = 0
         state.externally_scheduled_drop = False
-        hold = _hold_drop_action(proposed_action)
+        hold = _fall_action(proposed_action)
         self._log_event(
             env_idx=env_idx,
             status="triggered",
@@ -702,6 +709,7 @@ class MidAirDropFault:
             object_axis=self._object_long_axis(rs_env),
             destination_pos=destination,
             gripper_open=True,
+            object_height_m=object_world_height(rs_env, self.config.object_name),
         )
         return np.asarray(destination, dtype=np.float64)
 
@@ -725,12 +733,14 @@ class MidAirDropFault:
                 closing_axis = get_gripper_closing_axis(rs_env)
 
         grasped = None if rs_env is None else bool(is_object_grasped(rs_env, self.config.object_name))
+        height_m = None if rs_env is None else object_world_height(rs_env, self.config.object_name)
         action = state.planner.next_action(
             eef_pos=eef_pos,
             object_pos=object_pos,
             closing_axis=closing_axis,
             object_axis=object_axis,
             object_grasped=grasped,
+            object_height_m=height_m,
         )
 
         # Snap gripper on phase transitions (Panda speed=0.01 never closes in time).
@@ -907,6 +917,7 @@ class MidAirDropFault:
                 basket_name=self.config.basket_name,
             )
         assert state.planner is not None
+        height_m = object_world_height(rs_env, self.config.object_name)
         state.planner.replan_from(
             eef_pos=eef_pos,
             eef_quat=eef_quat,
@@ -914,6 +925,7 @@ class MidAirDropFault:
             object_axis=self._object_long_axis(rs_env),
             destination_pos=dest,
             gripper_open=True,
+            object_height_m=height_m,
         )
         action = state.planner.next_action(
             eef_pos=eef_pos,
@@ -921,6 +933,7 @@ class MidAirDropFault:
             closing_axis=get_gripper_closing_axis(rs_env) if self.config.side_grasp_enabled else None,
             object_axis=self._object_long_axis(rs_env),
             object_grasped=False,
+            object_height_m=height_m,
         )
         if action is None:
             action = np.zeros(7, dtype=np.float32)

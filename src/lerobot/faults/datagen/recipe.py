@@ -35,8 +35,6 @@ class RecipeError(ValueError):
 
 
 _SUPPORTED_TASK = "libero_object"
-_SUPPORTED_TASK_ID = 0
-_SUPPORTED_OBJECT_NAMES = ("alphabet_soup_1",)
 
 _ROOT_KEYS = frozenset(
     {
@@ -61,6 +59,7 @@ _PLACEMENT_KEYS = frozenset(
         "min_basket_clearance_m",
         "distractor_basket_clearance_m",
         "min_pairwise_clearance_m",
+        "target_min_clearance_m",
         "yaw_range_deg",
         "max_attempts",
     }
@@ -94,7 +93,7 @@ _SMOLVLA_KEYS = frozenset(
 )
 _BAND_KEYS = frozenset({"name", "min_m", "max_m"})
 _POST_DROP_KEYS = frozenset({"dwell_steps"})
-_RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps", "episodes"})
+_RECORDING_KEYS = frozenset({"base_seed", "output_dir", "dataset_fps", "episodes", "master_fps"})
 _MATRIX_ROW_KEYS = frozenset({"controller", "post_drop_mode", "drop", "episodes", "weight"})
 
 
@@ -152,6 +151,7 @@ class PlacementRecipe:
     min_basket_clearance_m: float
     distractor_basket_clearance_m: float
     min_pairwise_clearance_m: float
+    target_min_clearance_m: float
     yaw_range_deg: tuple[float, float]
     max_attempts: int
 
@@ -222,6 +222,7 @@ class RecordingRecipe:
     output_dir: str
     dataset_fps: int
     episodes: int
+    master_fps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -282,17 +283,31 @@ class DropDatagenRecipe:
 
 
 def validate_poc_recipe_constraints(recipe: DropDatagenRecipe) -> None:
-    """Enforce the current LIBERO object POC supported by unified datagen."""
+    """Enforce LIBERO-Object task and pick-target constraints for unified datagen."""
+    from lerobot.faults.datagen.libero_object_tasks import official_task_id, supported_object_names
+
     if recipe.task != _SUPPORTED_TASK:
         raise RecipeError(f"task must be {_SUPPORTED_TASK!r} for unified drop datagen (got {recipe.task!r})")
-    if int(recipe.task_id) != _SUPPORTED_TASK_ID:
+    allowed = set(supported_object_names())
+    for name in recipe.object_names:
+        if name not in allowed:
+            raise RecipeError(
+                f"object_names contains unsupported pick target {name!r}; "
+                f"supported: {list(supported_object_names())}"
+            )
+    task_ids = {official_task_id(name) for name in recipe.object_names}
+    expected_task_id = official_task_id(recipe.object_names[0])
+    if len(task_ids) == 1:
+        (only_task_id,) = task_ids
+        if int(recipe.task_id) != only_task_id:
+            raise RecipeError(
+                f"task_id must be {only_task_id} for object_names {list(recipe.object_names)!r} "
+                f"(got {recipe.task_id})"
+            )
+    elif int(recipe.task_id) != expected_task_id:
         raise RecipeError(
-            f"task_id must be {_SUPPORTED_TASK_ID} for unified drop datagen (got {recipe.task_id})"
-        )
-    if recipe.object_names != _SUPPORTED_OBJECT_NAMES:
-        raise RecipeError(
-            "object_names must be exactly ['alphabet_soup_1'] for the current POC "
-            f"(got {list(recipe.object_names)!r})"
+            f"task_id must be {expected_task_id} (official task for object_names[0="
+            f"{recipe.object_names[0]!r}) when listing multiple scenes (got {recipe.task_id})"
         )
 
 
@@ -557,11 +572,22 @@ def _parse_placement(placement_raw: dict[str, Any], *, strict: bool = False) -> 
         max_attempts = int(_required(placement_raw, "max_attempts", section="placement"))
     if yaw_values[1] < yaw_values[0]:
         raise RecipeError("placement.yaw_range_deg must be [min, max] with max >= min")
+    if "target_min_clearance_m" in placement_raw:
+        if strict:
+            target_min_clearance_m = _require_json_number(
+                placement_raw["target_min_clearance_m"],
+                field="placement.target_min_clearance_m",
+            )
+        else:
+            target_min_clearance_m = float(placement_raw["target_min_clearance_m"])
+    else:
+        target_min_clearance_m = min_pairwise_clearance_m
     placement = PlacementRecipe(
         xy_range_m=xy_range_m,
         min_basket_clearance_m=min_basket_clearance_m,
         distractor_basket_clearance_m=distractor_basket_clearance_m,
         min_pairwise_clearance_m=min_pairwise_clearance_m,
+        target_min_clearance_m=target_min_clearance_m,
         yaw_range_deg=(yaw_values[0], yaw_values[1]),
         max_attempts=max_attempts,
     )
@@ -571,8 +597,13 @@ def _parse_placement(placement_raw: dict[str, Any], *, strict: bool = False) -> 
         placement.min_basket_clearance_m < 0
         or placement.distractor_basket_clearance_m < 0
         or placement.min_pairwise_clearance_m < 0
+        or placement.target_min_clearance_m < 0
     ):
         raise RecipeError("placement clearances must be >= 0")
+    if placement.target_min_clearance_m < placement.min_pairwise_clearance_m:
+        raise RecipeError(
+            "placement.target_min_clearance_m must be >= placement.min_pairwise_clearance_m"
+        )
     if placement.distractor_basket_clearance_m > placement.min_basket_clearance_m:
         raise RecipeError("placement.distractor_basket_clearance_m must be <= min_basket_clearance_m")
     if not strict and placement.max_attempts < 1:
@@ -828,7 +859,18 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         field="recording.dataset_fps",
         min_value=1,
     )
+    master_fps: int | None = None
+    if "master_fps" in recording_raw:
+        master_fps = _require_json_int(
+            recording_raw["master_fps"],
+            field="recording.master_fps",
+            min_value=1,
+        )
     control_hz = _require_json_int(_required(raw, "control_hz"), field="control_hz", min_value=1)
+    if master_fps is not None and master_fps != control_hz:
+        raise RecipeError(
+            f"recording.master_fps must equal control_hz ({control_hz}) when set (got {master_fps})"
+        )
     task_id = _require_json_int(_required(raw, "task_id"), field="task_id", min_value=0)
 
     matrix: list[MatrixVariant] = []
@@ -896,6 +938,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         output_dir=output_dir,
         dataset_fps=dataset_fps,
         episodes=recording_episodes,
+        master_fps=master_fps,
     )
 
     allocated = allocate_episode_counts(

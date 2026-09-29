@@ -38,6 +38,7 @@ __all__ = [
     "EpisodeRequest",
     "EpisodeResult",
     "select_episode_object",
+    "select_episode_object_round_robin",
 ]
 
 
@@ -47,6 +48,13 @@ def select_episode_object(drop_seed: int, object_names: tuple[str, ...]) -> str:
         raise ValueError("object_names must be non-empty")
     rng = np.random.default_rng(int(drop_seed))
     return object_names[int(rng.integers(0, len(object_names)))]
+
+
+def select_episode_object_round_robin(logical_episode_index: int, object_names: tuple[str, ...]) -> str:
+    """Pick the manipulated object by cycling through ``object_names`` per logical episode."""
+    if not object_names:
+        raise ValueError("object_names must be non-empty")
+    return object_names[int(logical_episode_index) % len(object_names)]
 
 
 @dataclass(frozen=True)

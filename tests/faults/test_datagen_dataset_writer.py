@@ -259,6 +259,35 @@ def test_failed_ik_recovery_discards_type5_failed_commits(tmp_path: Path) -> Non
     assert reason == "planned_smolvla_fail"
 
 
+@pytest.mark.parametrize("outcome", ["nominal_grasp_missed", "nominal_carry_stalled"])
+def test_nominal_pre_drop_failures_not_kept_for_drop_or_no_drop(tmp_path: Path, outcome: str) -> None:
+    recipe = _recipe_at(tmp_path)
+    manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
+    for manifest in manifests:
+        plan = build_paired_episode_plan(
+            recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
+        )
+        request = EpisodeRequest(
+            recipe=recipe,
+            manifest=manifest,
+            object_name="alphabet_soup_1",
+            output_dir=tmp_path / "ep",
+            paired_plan=plan,
+            shared_layout=_FAKE_LAYOUT,
+        )
+        result = EpisodeResult.from_run(
+            request,
+            success=False,
+            outcome=outcome,
+            drop_trigger=None,
+            trigger_pose=None,
+            actual_dwell_steps=0,
+        )
+        keep, reason = evaluate_datagen_keep(request, result)
+        assert keep is False
+        assert reason == outcome
+
+
 def test_failed_attempt_in_manifest_not_dataset(tmp_path: Path) -> None:
     recipe = _recipe_at(tmp_path)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]

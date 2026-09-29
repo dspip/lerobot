@@ -30,6 +30,7 @@ __all__ = [
     "LayoutProviderContext",
     "SharedLayoutProvider",
     "libero_init_state_count",
+    "libero_init_state_count_for_task",
     "libero_shared_layout_provider",
 ]
 
@@ -41,6 +42,7 @@ class LayoutProviderContext:
     recipe: DropDatagenRecipe
     plan: PairedEpisodePlan
     object_name: str
+    official_task_id: int
 
 
 SharedLayoutProvider = Callable[[LayoutProviderContext], dict[str, dict[str, list[float]]]]
@@ -51,15 +53,15 @@ def _vec_env(envs: dict[str, Any]) -> Any:
     return next(iter(suite.values()))
 
 
-def libero_init_state_count(recipe: DropDatagenRecipe) -> int:
-    """Return the number of LIBERO init states for the recipe task."""
+def libero_init_state_count_for_task(recipe: DropDatagenRecipe, *, task_id: int) -> int:
+    """Return the number of LIBERO init states for one official task id."""
     from lerobot.envs.configs import LiberoEnv
     from lerobot.envs.factory import make_env
     from lerobot.faults.sim.libero import unwrap_libero_env
 
     env_cfg = LiberoEnv(
         task=recipe.task,
-        task_ids=[recipe.task_id],
+        task_ids=[int(task_id)],
         observation_height=256,
         observation_width=256,
         episode_length=4000,
@@ -76,6 +78,11 @@ def libero_init_state_count(recipe: DropDatagenRecipe) -> int:
         vec.close()
 
 
+def libero_init_state_count(recipe: DropDatagenRecipe) -> int:
+    """Return the number of LIBERO init states for ``recipe.task_id`` (legacy helper)."""
+    return libero_init_state_count_for_task(recipe, task_id=int(recipe.task_id))
+
+
 def libero_shared_layout_provider(context: LayoutProviderContext) -> dict[str, dict[str, list[float]]]:
     """Sample one object layout for the paired episode using LIBERO."""
     from lerobot.envs.configs import LiberoEnv
@@ -86,7 +93,7 @@ def libero_shared_layout_provider(context: LayoutProviderContext) -> dict[str, d
     plan = context.plan
     env_cfg = LiberoEnv(
         task=recipe.task,
-        task_ids=[recipe.task_id],
+        task_ids=[int(context.official_task_id)],
         observation_height=256,
         observation_width=256,
         episode_length=4000,

@@ -334,7 +334,6 @@ class DropRecoveryEnvWrapper:
             return
         if getattr(libero, "_faults_no_reset_hook", False):
             return
-        fault = self.fault
 
         def step_without_success_reset(action):
             libero._ensure_env()
@@ -352,9 +351,8 @@ class DropRecoveryEnvWrapper:
                 }
             )
             observation = libero._format_raw_obs(raw_obs)
-            recovering = any(s.recovery_active for s in fault._states)
-            if terminated and not recovering:
-                libero.reset()
+            # Never reset inside step: post-step readers (fault annotation, labels,
+            # outcome checks) must see the terminal scene. The caller owns resets.
             truncated = False
             return observation, reward, terminated, truncated, info
 

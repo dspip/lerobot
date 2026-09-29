@@ -23,7 +23,7 @@ import numpy as np
 
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
-from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession
+from lerobot.faults.datagen.dataset_writer import RunDatasetWriter
 from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.datagen.frame_logging import (
     DATAGEN_POST_STEP_ANNOTATION_KEY,
@@ -35,6 +35,7 @@ from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 from tests.faults.test_datagen_dataset_writer import _minimal_processed_frame, _RecordingLogger
 from tests.faults.test_midair_drop_fault import _setup_drop_mocks
+from tests.faults.test_simple_ik_post_drop_transition import moving_eef  # noqa: F401  (autouse)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
@@ -120,6 +121,10 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
             "lerobot.faults.recovery.dataset_logger.libero_obs_to_frame",
             side_effect=lambda obs: _minimal_processed_frame(),
         ),
+        patch(
+            "lerobot.faults.datagen.frame_logging.mujoco_sim_time_s",
+            side_effect=(lambda: (lambda _rs: 0.05))(),
+        ),
     ):
         _setup_drop_mocks(
             mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest
@@ -137,14 +142,13 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         rs_env = MagicMock()
         recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
         manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
-        logger = _RecordingLogger(Path("/tmp/simple_ik_logging_test"))
-        session = DatagenEpisodeSession(
-            manifest=manifest,
-            dataset_root=Path("/tmp"),
-            repo_id="test/simple_ik",
-            logger=logger,
-            policy_fps=10,
+        writer = RunDatasetWriter(
+            recipe,
+            skip_fresh_output_check=True,
+            logger_factory=lambda root, repo_id, **_kw: _RecordingLogger(root),
         )
+        session = writer.open_episode_session(manifest)
+        logger = session.logger
 
         paired_plan = SimpleNamespace(
             drop_decision=DropDecision(True, None, "injected"),
@@ -184,11 +188,19 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert logger.frames, "expected session.log_step to record frames"
 
         logged_ctx = [_ctx_from_frame(frame) for frame in logger.frames]
-        injection_logged = [ctx for ctx in logged_ctx if ctx.drop_injection_step]
-        assert len(injection_logged) >= 1
-        assert injection_logged[0].sim_step == DROP_SIM_STEP
-        assert injection_logged[0].sim_step % RECORDING_STRIDE == 1
-        assert all(ctx.loss_mask == 0.0 for ctx in injection_logged)
+        logged_steps = [ctx.sim_step for ctx in logged_ctx]
+        assert logged_steps == sorted(logged_steps)
+        assert all(step % RECORDING_STRIDE == 0 for step in logged_steps)
+        assert any(step == 2 for step in logged_steps), "stride-2 view should log even ticks only"
+
+        release_frames = [
+            frame
+            for frame in logger.frames
+            if bool(np.asarray(frame["annotation"].get("drop_release", [False])).reshape(-1)[0])
+        ]
+        assert release_frames, "drop_release pulse on tick 1 must OR onto the next logged frame"
+        release_tick = int(np.asarray(release_frames[0]["annotation"]["tick_index"]).reshape(-1)[0])
+        assert release_tick == 2
 
         dwell_logged = [ctx for ctx in logged_ctx if ctx.post_drop_dwell_step]
         assert dwell_logged, "expected at least one logged dwell frame"
@@ -199,17 +211,14 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         assert all(ctx.loss_mask == 1.0 for ctx in recovery_logged)
 
         for ctx in logged_ctx:
-            assert should_log_sim_step(
-                ctx.sim_step,
-                recording_stride=RECORDING_STRIDE,
-                force_drop_injection=ctx.drop_injection_step,
-            )
+            assert should_log_sim_step(ctx.sim_step, recording_stride=RECORDING_STRIDE)
 
-        injection_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.drop_injection_step)
-        recovery_idx = next(i for i, ctx in enumerate(logged_ctx) if ctx.recovery_active)
-        assert injection_idx < recovery_idx
-        assert all(ctx.loss_mask == 0.0 for ctx in logged_ctx[injection_idx:recovery_idx])
-        assert logged_ctx[injection_idx - 1].loss_mask == 1.0 if injection_idx > 0 else True
+        dwell_steps = {ctx.sim_step for ctx in dwell_logged}
+        assert all(
+            logger.frames[i]["loss_mask"] == 0.0
+            for i, ctx in enumerate(logged_ctx)
+            if ctx.sim_step in dwell_steps
+        )
 
 
 def test_simple_ik_loop_calls_on_post_step() -> None:

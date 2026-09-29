@@ -110,6 +110,11 @@ def is_object_grasped(rs_env: Any, object_name: str) -> bool:
         raise RuntimeError("No robots in robosuite env.")
     gripper = rs_env.robots[0].gripper
     geoms = getattr(obj, "contact_geoms", obj)
+    # Tall bottles are pinched by the finger links above the pads; robosuite's
+    # default pad-only groups then report a stable lift as "not grasped".
+    groups = getattr(gripper, "important_geoms", {})
+    if "left_finger" in groups and "right_finger" in groups:
+        gripper = [groups["left_finger"], groups["right_finger"]]
     return bool(rs_env._check_grasp(gripper=gripper, object_geoms=geoms))
 
 
@@ -701,6 +706,28 @@ def object_body_extents(rs_env: Any, object_name: str) -> np.ndarray | None:
     return extents.copy()
 
 
+def object_world_height(rs_env: Any, object_name: str) -> float | None:
+    """World-frame vertical extent (m) from collision AABB and current orientation."""
+    try:
+        extents = object_body_extents(rs_env, object_name)
+        if extents is None:
+            return None
+        extents_arr = np.asarray(extents, dtype=np.float64).reshape(-1)
+        if extents_arr.size != 3 or not np.all(np.isfinite(extents_arr)):
+            return None
+        pose = get_object_pose(rs_env, object_name)
+        quat = np.asarray(pose["quat_wxyz"], dtype=np.float64).reshape(4)
+        if quat.size != 4 or not np.all(np.isfinite(quat)):
+            return None
+        rot = quat_wxyz_to_mat(quat)
+        height = float(np.sum(np.abs(rot[2, :]) * extents_arr))
+        if not np.isfinite(height) or height <= 0.0:
+            return None
+        return height
+    except Exception:
+        return None
+
+
 def object_long_axis_local(
     rs_env: Any,
     object_name: str,
@@ -1161,22 +1188,24 @@ def midair_drop(
     settle_steps: int = 5,
     gripper_settle_steps: int = DEFAULT_GRIPPER_SETTLE_STEPS,
 ) -> dict[str, Any]:
-    """Release-only drop: open gripper (and nudge if still grasped), no fall fast-forward.
+    """Release-only drop: open the gripper without advancing physics time.
 
-    ``lin_vel``, ``ang_vel``, and ``settle_steps`` are ignored (callers may still pass them).
-    Ballistic fall is stepped by the env at control rate via :class:`MidAirDropFault`.
+    ``lin_vel``, ``ang_vel``, ``settle_steps``, and ``gripper_settle_steps`` are ignored.
+    Snapping the fingers and calling ``sim.forward`` does not add ``sim.step`` calls, so the
+    control tick stays 0.05 s. The fall itself is stepped by the env at the control rate
+    via :class:`MidAirDropFault`. A nudge runs only if the snap leaves the object grasped,
+    and that nudge also does not step physics.
     """
-    del lin_vel, ang_vel, settle_steps
+    del lin_vel, ang_vel, settle_steps, gripper_settle_steps
 
     pre_grasped = is_object_grasped(rs_env, object_name)
     pre_pose = get_object_pose(rs_env, object_name)
     eef_pre = get_eef_pose(rs_env)
 
-    grip_settle = max(int(gripper_settle_steps), 20)
-    force_open_gripper(rs_env, gripper_settle_steps=grip_settle)
+    force_open_gripper(rs_env, gripper_settle_steps=0)
     if is_object_grasped(rs_env, object_name):
         _nudge_object_down(rs_env, object_name, dz=0.04)
-        force_open_gripper(rs_env, gripper_settle_steps=10)
+        force_open_gripper(rs_env, gripper_settle_steps=0)
 
     post_pose = get_object_pose(rs_env, object_name)
     post_grasped = is_object_grasped(rs_env, object_name)
@@ -1199,7 +1228,7 @@ def midair_drop(
         "eef_post": eef_post[0],
         "arm_q": arm_q,
         "settle_steps": 0,
-        "gripper_settle_steps": int(gripper_settle_steps),
+        "gripper_settle_steps": 0,
     }
 
 

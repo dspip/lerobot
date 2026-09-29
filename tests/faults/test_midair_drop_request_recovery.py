@@ -230,7 +230,7 @@ def test_manual_drop_waits_until_request_recovery(
         }
         mock_eef.return_value = (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
 
-        from tests.faults.test_midair_drop_fault import _complete_fall, _hold_action
+        from tests.faults.test_midair_drop_fault import _complete_fall, _fall_command
 
         inj = MidAirDropFault(_cfg(), num_envs=1)
         env = MagicMock()
@@ -240,8 +240,9 @@ def test_manual_drop_waits_until_request_recovery(
         assert not state.awaiting_manual_recovery
         assert not state.policy_reset_requested
 
-        out_a = inj.on_step(env, _action(1, 7, 11.0))
-        np.testing.assert_allclose(out_a, _hold_action())
+        proposed_a = _action(1, 7, 11.0)
+        out_a = inj.on_step(env, proposed_a)
+        np.testing.assert_allclose(out_a, _fall_command(proposed_a))
         _complete_fall(inj, env, mock_grasped=mock_grasped, mock_lin_vel=mock_lin_vel)
         assert state.awaiting_manual_recovery
 

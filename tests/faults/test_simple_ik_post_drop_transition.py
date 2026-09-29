@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from lerobot.faults.config import FaultInjectionConfig
 from lerobot.faults.datagen.controllers.simple_ik import _nominal_action, run_simple_ik_episode_loop
@@ -25,6 +26,19 @@ from lerobot.faults.datagen.drop_timing import DropDecision
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
 from tests.faults.test_midair_drop_fault import _action, _setup_drop_mocks
+
+
+@pytest.fixture(autouse=True)
+def moving_eef():
+    """Keep the loop's carry-stall guard quiet: the mocked hand advances 2 cm per read."""
+    calls = {"n": 0}
+
+    def _pose(_rs_env):
+        calls["n"] += 1
+        return np.array([0.02 * calls["n"], 0.0, 0.2]), np.array([1.0, 0.0, 0.0, 0.0])
+
+    with patch("lerobot.faults.datagen.controllers.simple_ik.get_eef_pose", side_effect=_pose):
+        yield
 
 
 def _fault_continue(dwell: int = 2) -> MidAirDropFault:
@@ -185,7 +199,7 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     mock_dest,
     mock_lin_vel,
 ) -> None:
-    from tests.faults.test_midair_drop_fault import _complete_fall, _hold_action
+    from tests.faults.test_midair_drop_fault import _complete_fall, _fall_command
 
     _setup_drop_mocks(mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest)
     fault = _fault_continue(dwell=2)
@@ -194,7 +208,7 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     out_drop = fault.trigger_scheduled_drop(env, 0, proposed[0], reason="path_uniform")
     assert fault._states[0].triggered
     assert not fault._states[0].recovery_active
-    np.testing.assert_allclose(out_drop, _hold_action()[0])
+    np.testing.assert_allclose(out_drop, _fall_command(proposed)[0])
     mock_dest.assert_not_called()
 
     fault.on_step(env, _action(1, 7, 12.0))
@@ -608,3 +622,114 @@ def test_loop_returns_skipped_recovery_outcome(
 
     assert facts.outcome == "regrasp_during_dwell"
     assert facts.actual_dwell_steps == 1
+
+
+@patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+def test_nominal_grasp_miss_fails_fast_before_drop(_mock_nominal: MagicMock) -> None:
+    fault = _fault_continue()
+    env = MagicMock()
+    rs_env = MagicMock()
+    paired_plan = SimpleNamespace(
+        drop_decision=DropDecision(False, None, "paired_no_drop"),
+        drop_u=0.05,
+    )
+    carry_path = CarryPath(
+        segments=(PathSegment("lift", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+        requested_transport_offset_m=0.0,
+        resolved_transport_offset_m=0.0,
+        fallback=False,
+    )
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.55, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=False,
+        ),
+    ):
+        facts = run_simple_ik_episode_loop(
+            env,
+            rs_env,
+            fault=fault,
+            planner=MagicMock(phase_name="lift", carry_path=carry_path, done=False),
+            recipe_drop=MagicMock(
+                min_drop_distance_from_basket_m=0.3,
+                hard_keepout_floor_m=0.22,
+            ),
+            object_name="alphabet_soup_1",
+            basket_name="basket_1",
+            q=1.0,
+            drop_rng=np.random.default_rng(0),
+            paired_plan=paired_plan,
+            max_steps=50,
+            gripper_settle_steps=0,
+        )
+
+    assert facts.outcome == "nominal_grasp_missed"
+    assert facts.success is False
+    assert facts.actual_dwell_steps == 0
+
+
+@patch("lerobot.faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+def test_nominal_carry_stall_fails_fast_before_drop(_mock_nominal: MagicMock) -> None:
+    fault = _fault_continue()
+    env = MagicMock()
+    env.step.return_value = (None, 0.0, False, False, {})
+    env.last_executed_action = None
+    paired_plan = SimpleNamespace(
+        drop_decision=DropDecision(False, None, "paired_no_drop"),
+        drop_u=0.05,
+    )
+    with (
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_object_pose",
+            return_value={"pos": np.array([0.55, 0.0, 0.2])},
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_place_destination",
+            return_value=np.array([0.0, 0.0, 0.0]),
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_grasped",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.is_object_held_midair",
+            return_value=True,
+        ),
+        patch(
+            "lerobot.faults.datagen.controllers.simple_ik.get_eef_pose",
+            return_value=(np.array([0.14, -0.12, 0.25]), np.array([1.0, 0.0, 0.0, 0.0])),
+        ),
+    ):
+        facts = run_simple_ik_episode_loop(
+            env,
+            MagicMock(),
+            fault=fault,
+            planner=MagicMock(phase_name="to_basket_via", carry_path=None, done=False),
+            recipe_drop=MagicMock(
+                min_drop_distance_from_basket_m=0.3,
+                hard_keepout_floor_m=0.22,
+            ),
+            object_name="cream_cheese_1",
+            basket_name="basket_1",
+            q=1.0,
+            drop_rng=np.random.default_rng(0),
+            paired_plan=paired_plan,
+            max_steps=200,
+            gripper_settle_steps=0,
+        )
+
+    assert facts.outcome == "nominal_carry_stalled"
+    assert facts.success is False
+    assert env.step.call_count == 40

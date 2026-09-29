@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from lerobot.faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from_fault
 from lerobot.faults.sim.libero import (
@@ -14,6 +15,8 @@ from lerobot.faults.sim.libero import (
     is_object_in_basket,
     is_object_over_basket,
     midair_drop,
+    object_world_height,
+    quat_wxyz_to_mat,
 )
 
 
@@ -119,6 +122,7 @@ def test_midair_drop_opens_then_nudges_without_impulse(
     telemetry = midair_drop(rs_env, gripper_settle_steps=7, settle_steps=5)
 
     assert mock_open.call_count == 2
+    assert all(call.kwargs.get("gripper_settle_steps") == 0 for call in mock_open.call_args_list)
     mock_nudge.assert_called_once()
     mock_impulse.assert_not_called()
     np.testing.assert_allclose(telemetry["impulse"]["lin_vel"], 0.0)
@@ -127,3 +131,31 @@ def test_midair_drop_opens_then_nudges_without_impulse(
 
 def test_gripper_settle_default_at_least_five():
     assert DEFAULT_GRIPPER_SETTLE_STEPS >= 5
+
+
+@patch("lerobot.faults.sim.libero.object_body_extents")
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_object_world_height_identity(mock_pose, mock_extents):
+    mock_extents.return_value = np.array([0.062, 0.076, 0.062], dtype=np.float64)
+    mock_pose.return_value = {"quat_wxyz": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)}
+    h = object_world_height(MagicMock(), "alphabet_soup_1")
+    assert h == pytest.approx(0.062, abs=1e-6)
+
+
+@patch("lerobot.faults.sim.libero.object_body_extents")
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_object_world_height_rotated_90_about_x(mock_pose, mock_extents):
+    extents = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    mock_extents.return_value = extents
+    angle = np.pi / 2
+    quat = np.array([np.cos(angle / 2), np.sin(angle / 2), 0.0, 0.0], dtype=np.float64)
+    mock_pose.return_value = {"quat_wxyz": quat}
+    h = object_world_height(MagicMock(), "obj")
+    rot = quat_wxyz_to_mat(quat)
+    expected = float(np.sum(np.abs(rot[2, :]) * extents))
+    assert h == pytest.approx(expected, abs=1e-6)
+    assert h == pytest.approx(2.0, abs=1e-6)
+
+
+def test_object_world_height_returns_none_on_magic_mock():
+    assert object_world_height(MagicMock(), "any") is None

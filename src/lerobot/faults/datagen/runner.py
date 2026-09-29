@@ -23,13 +23,19 @@ from pathlib import Path
 
 from lerobot.faults.datagen.controllers.base import DatagenControllerAdapter
 from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession, RunDatasetWriter
-from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult, select_episode_object
+from lerobot.faults.datagen.episode import (
+    EpisodeRequest,
+    EpisodeResult,
+    select_episode_object_round_robin,
+)
 from lerobot.faults.datagen.layout_provider import (
     LayoutProviderContext,
     SharedLayoutProvider,
     libero_init_state_count,
+    libero_init_state_count_for_task,
     libero_shared_layout_provider,
 )
+from lerobot.faults.datagen.libero_object_tasks import official_task_id
 from lerobot.faults.datagen.paired_context import build_paired_episode_plan
 from lerobot.faults.datagen.recipe import (
     DatagenController,
@@ -97,13 +103,10 @@ def run_drop_datagen_matrix(
     factories = default_adapter_factories() if adapter_factories is None else adapter_factories
     layout_fn = layout_provider or libero_shared_layout_provider
     init_count_fn = init_state_count_provider or libero_init_state_count
+    init_state_count_by_task: dict[int, int] = {}
     if logical_episode_indices is None:
         max_episodes = max(int(variant.episodes) for variant in recipe.experiment_matrix)
         logical_episode_indices = tuple(range(max_episodes))
-    try:
-        num_init_states = int(init_count_fn(recipe))
-    except Exception as exc:
-        raise DropDatagenRunnerError(f"could not resolve LIBERO init state count: {exc}") from exc
     writer = dataset_writer if dataset_writer is not None else RunDatasetWriter(recipe)
     results: list[EpisodeResult] = []
     run_ok = False
@@ -116,7 +119,20 @@ def run_drop_datagen_matrix(
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
             if not manifests:
                 raise DropDatagenRunnerError(f"No manifests for logical episode index {logical_index}")
-            object_name = select_episode_object(manifests[0].drop_seed, recipe.object_names)
+            object_name = select_episode_object_round_robin(int(logical_index), recipe.object_names)
+            episode_task_id = official_task_id(object_name)
+            if episode_task_id not in init_state_count_by_task:
+                try:
+                    if init_count_fn is libero_init_state_count:
+                        count = libero_init_state_count_for_task(recipe, task_id=episode_task_id)
+                    else:
+                        count = int(init_count_fn(recipe))
+                except Exception as exc:
+                    raise DropDatagenRunnerError(
+                        f"could not resolve LIBERO init state count for task_id={episode_task_id}: {exc}"
+                    ) from exc
+                init_state_count_by_task[episode_task_id] = count
+            num_init_states = init_state_count_by_task[episode_task_id]
             paired_plans = [
                 build_paired_episode_plan(
                     recipe,
@@ -130,6 +146,7 @@ def run_drop_datagen_matrix(
                 recipe=recipe,
                 plan=paired_plans[0],
                 object_name=object_name,
+                official_task_id=episode_task_id,
             )
             try:
                 randomized_layout = layout_fn(layout_ctx)

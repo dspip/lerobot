@@ -517,3 +517,49 @@ def test_replan_clears_post_drop_hover_hold():
     planner.plan(**_kw(_default_poses()), gripper_open=True)
     assert planner._hold_at_basket_hover is False
     assert planner._place_offset_xy is None
+
+
+def test_grasp_z_offset_size_aware():
+    planner = SimpleIKRecoveryPlanner(grasp_offset=0.025, grasp_offset_lying=0.012)
+    planner._object_lying = False
+    planner._object_height_m = 0.0762
+    assert planner.grasp_z_offset == pytest.approx(0.025)
+    planner._object_lying = True
+    planner._object_height_m = 0.0624
+    assert planner.grasp_z_offset == pytest.approx(0.012)
+    planner._object_height_m = 0.0179
+    assert planner.grasp_z_offset == pytest.approx(-0.00295, abs=1e-5)
+    planner._object_height_m = None
+    assert planner.grasp_z_offset == pytest.approx(0.012)
+
+
+def test_descend_grasp_arrival_tighter_z_when_height_known():
+    from lerobot.faults.recovery import planner as planner_mod
+
+    planner = SimpleIKRecoveryPlanner(fps=10, arrive_tol=0.02, seed=0)
+
+    waypoint = planner_mod._Waypoint(
+        np.array([0.1, 0.0, 0.021]),
+        True,
+        name="descend_grasp",
+    )
+    eef = np.array([0.1, 0.0, 0.031])
+    planner._object_height_m = 0.0179
+    dist, tol = planner._phase_distance_tol(waypoint, eef, None)
+    assert dist <= tol
+    assert not planner._position_arrived(waypoint, eef, dist, tol)
+
+    planner._object_height_m = None
+    assert planner._position_arrived(waypoint, eef, dist, tol)
+
+    planner._object_height_m = 0.0762
+    eef_soup = np.array([0.1, 0.0, 0.069])
+    waypoint_soup = planner_mod._Waypoint(
+        np.array([0.1, 0.0, 0.069]),
+        True,
+        name="descend_grasp",
+    )
+    dist_s, tol_s = planner._phase_distance_tol(waypoint_soup, eef_soup, None)
+    assert planner._position_arrived(waypoint_soup, eef_soup, dist_s, tol_s)
+    planner._object_height_m = None
+    assert planner._position_arrived(waypoint_soup, eef_soup, dist_s, tol_s)

@@ -22,6 +22,7 @@ from typing import Any
 
 from lerobot.faults.datagen.drop_trigger import smolvla_fault_drop_fields
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.libero_object_tasks import official_task_id
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, effective_post_drop_dwell_steps
 from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
 from lerobot.faults.datagen.smolvla_resources import SmolVLAPolicyResources, load_smolvla_policy_resources
@@ -86,10 +87,11 @@ class SmolVLADatagenAdapter:
         self._pipeline_runner = pipeline_runner or run_pipeline
         self._policy_resources = policy_resources
 
-    def _policy_bundle(self, device: str) -> SmolVLAPolicyResources:
+    def _policy_bundle(self, device: str, *, episode_task_id: int) -> SmolVLAPolicyResources:
         if self._policy_resources is not None and (
             self._policy_resources.policy_path != self._recipe.smolvla.policy_path
             or self._policy_resources.device != device
+            or self._policy_resources.task_id != int(episode_task_id)
         ):
             self._policy_resources = None
         if self._policy_resources is None:
@@ -97,7 +99,7 @@ class SmolVLADatagenAdapter:
                 policy_path=self._recipe.smolvla.policy_path,
                 device=device,
                 task=self._recipe.task,
-                task_id=self._recipe.task_id,
+                task_id=int(episode_task_id),
             )
         return self._policy_resources
 
@@ -106,6 +108,7 @@ class SmolVLADatagenAdapter:
         recipe = request.recipe
         manifest = request.manifest
         plan = request.paired_plan
+        episode_task_id = official_task_id(request.object_name)
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
         session = request.episode_session
         motion = plan.motion_profile
@@ -118,7 +121,7 @@ class SmolVLADatagenAdapter:
             "drop_seed": manifest.drop_seed,
             "variant_seed": manifest.controller_seed,
             "task": recipe.task,
-            "task_id": recipe.task_id,
+            "task_id": episode_task_id,
             "control_hz": recipe.control_hz,
             "post_grasp_delay_steps": recipe.smolvla.post_grasp_delay_steps,
             "post_drop_dwell_steps": dwell_steps,
@@ -136,7 +139,9 @@ class SmolVLADatagenAdapter:
             "dataset_fps": recipe.recording.dataset_fps,
         }
         if self._policy_resources is not None or self._pipeline_runner is run_pipeline:
-            base_pipeline_kwargs["policy_resources"] = self._policy_bundle(request.device)
+            base_pipeline_kwargs["policy_resources"] = self._policy_bundle(
+                request.device, episode_task_id=episode_task_id
+            )
         if session is not None:
             base_pipeline_kwargs["episode_session"] = session
             base_pipeline_kwargs["defer_dataset_commit"] = True

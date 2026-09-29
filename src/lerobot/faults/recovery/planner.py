@@ -27,6 +27,9 @@ _YAW_GATED_PHASES = ("approach_hover", "descend_grasp")
 _UPRIGHT_DOT = 0.6
 # Every phase in which the gripper is carrying the object.
 CARRY_PHASES = frozenset({"lift", "to_basket_via", "to_basket_hover"})
+# Panda pad reach below grip_site (~13 mm); min grip_site height above table (m).
+_PAD_DEPTH_M = 0.013
+_MIN_GRIP_SITE_ABOVE_TABLE_M = 0.006
 # Free-space legs that only route the arm. Stopping dead on them is what makes
 # the motion look stepwise, so they may be passed through within a blend radius.
 # Grasp, release, and pre-grasp alignment phases are deliberately excluded: they
@@ -154,6 +157,7 @@ class SimpleIKRecoveryPlanner:
         self._place_offset_xy: np.ndarray | None = None
         # Post-drop dwell: finish lift/via, then sit on hover until recovery replans.
         self._hold_at_basket_hover = False
+        self._object_height_m: float | None = None
 
     def reset(self) -> None:
         """Clear the cached plan and action cursor."""
@@ -175,6 +179,7 @@ class SimpleIKRecoveryPlanner:
         self.yaw_stall_advances = 0
         self._place_offset_xy = None
         self._hold_at_basket_hover = False
+        self._object_height_m = None
         self._rot_bias_remaining = None if self._arm_posture_bias is None else self._arm_posture_bias.copy()
 
     def plan(
@@ -186,6 +191,7 @@ class SimpleIKRecoveryPlanner:
         destination_pos: np.ndarray,
         gripper_open: bool,
         object_axis: np.ndarray | None = None,
+        object_height_m: float | None = None,
     ) -> np.ndarray:
         """Build recovery waypoints and an open-loop action preview ``(T, 7)``.
 
@@ -201,6 +207,8 @@ class SimpleIKRecoveryPlanner:
         eef_quat = np.asarray(eef_quat, dtype=np.float64).reshape(4)
         object_pos = np.asarray(object_pos, dtype=np.float64).reshape(3)
         destination_pos = np.asarray(destination_pos, dtype=np.float64).reshape(3)
+        if object_height_m is not None:
+            self._object_height_m = float(object_height_m)
 
         self._set_grasp_orientation(object_axis)
         self._object_pos = object_pos.copy()
@@ -246,6 +254,7 @@ class SimpleIKRecoveryPlanner:
         closing_axis: np.ndarray | None = None,
         object_axis: np.ndarray | None = None,
         object_grasped: bool | None = None,
+        object_height_m: float | None = None,
     ) -> np.ndarray | None:
         """Return the next planned action, or ``None`` when exhausted.
 
@@ -257,6 +266,8 @@ class SimpleIKRecoveryPlanner:
         """
         self.just_entered_close = False
         self.just_entered_open = False
+        if object_height_m is not None:
+            self._object_height_m = float(object_height_m)
 
         if object_axis is not None and self._phase_name in _YAW_PHASES:
             # The can can still roll after landing — keep re-reading its axis
@@ -309,7 +320,14 @@ class SimpleIKRecoveryPlanner:
     @property
     def grasp_z_offset(self) -> float:
         """Height above the object center the fingers should close at."""
-        return self.grasp_offset_lying if self._object_lying else self.grasp_offset
+        nominal = self.grasp_offset_lying if self._object_lying else self.grasp_offset
+        h = self._object_height_m
+        if h is None:
+            return nominal
+        half = float(h) / 2.0
+        offset = min(nominal, half - _PAD_DEPTH_M)
+        offset = max(offset, _MIN_GRIP_SITE_ABOVE_TABLE_M - half)
+        return float(offset)
 
     def _set_grasp_orientation(self, object_axis: np.ndarray | None) -> None:
         """Decide whether a side grasp is needed and which wrist yaw it wants.
@@ -536,6 +554,7 @@ class SimpleIKRecoveryPlanner:
         destination_pos: np.ndarray | None = None,
         gripper_open: bool = True,
         object_axis: np.ndarray | None = None,
+        object_height_m: float | None = None,
     ) -> np.ndarray:
         """Rebuild waypoints from the current poses (used after a failed regrasp)."""
         dest = (
@@ -550,7 +569,23 @@ class SimpleIKRecoveryPlanner:
             object_axis=object_axis,
             destination_pos=dest,
             gripper_open=gripper_open,
+            object_height_m=object_height_m,
         )
+
+    def _position_arrived(
+        self,
+        wp: _Waypoint,
+        eef_pos: np.ndarray,
+        dist: float,
+        tol: float,
+    ) -> bool:
+        if dist > tol:
+            return False
+        if wp.name != "descend_grasp" or self._object_height_m is None:
+            return True
+        # Extra vertical gate only: when h/3 >= tol this is implied by dist <= tol.
+        dz = abs(float(wp.pos[2] - eef_pos[2]))
+        return dz <= min(self.arrive_tol, self._object_height_m / 3.0)
 
     def _current_target(
         self,
@@ -657,7 +692,9 @@ class SimpleIKRecoveryPlanner:
         while not self._done:
             wp = self._current_target(object_pos, eef_pos, object_grasped=object_grasped)
             dist, tol = self._phase_distance_tol(wp, eef_pos, object_pos)
-            arrived = dist <= tol and (yaw_aligned or wp.name not in _YAW_GATED_PHASES)
+            arrived = self._position_arrived(wp, eef_pos, dist, tol) and (
+                yaw_aligned or wp.name not in _YAW_GATED_PHASES
+            )
             # Never stuck-advance off the basket hover — that causes early releases.
             # open_place may stuck-advance after the hold so recovery can finish.
             allow_stuck = wp.name not in ("to_basket_via", "to_basket_hover")
@@ -686,7 +723,9 @@ class SimpleIKRecoveryPlanner:
 
         wp = self._current_target(object_pos, eef_pos, object_grasped=object_grasped)
         dist, tol = self._phase_distance_tol(wp, eef_pos, object_pos)
-        arrived = dist <= tol and (yaw_aligned or wp.name not in _YAW_GATED_PHASES)
+        arrived = self._position_arrived(wp, eef_pos, dist, tol) and (
+            yaw_aligned or wp.name not in _YAW_GATED_PHASES
+        )
         self._wp_steps += 1
 
         action = np.zeros(7, dtype=np.float32)

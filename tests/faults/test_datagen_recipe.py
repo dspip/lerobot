@@ -262,10 +262,35 @@ def test_paired_seed_manifests_deterministic_and_vary_by_episode(tmp_path: Path)
 
 def test_object_names_rejects_non_poc_values(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
-    payload = _valid_unified_recipe(object_names=["alphabet_soup_1", "milk_1"])
+    payload = _valid_unified_recipe(object_names=["not_a_libero_object_1"])
     _write_recipe(path, payload)
     with pytest.raises(RecipeError, match="object_names"):
         load_drop_datagen_recipe(path)
+
+    path = tmp_path / "cream_ok.json"
+    payload = _valid_unified_recipe(object_names=["cream_cheese_1"], task_id=1)
+    _write_recipe(path, payload)
+    recipe = load_drop_datagen_recipe(path)
+    assert recipe.object_names == ("cream_cheese_1",)
+    assert recipe.task_id == 1
+
+    path = tmp_path / "cream_bad_task.json"
+    payload = _valid_unified_recipe(object_names=["cream_cheese_1"], task_id=0)
+    _write_recipe(path, payload)
+    with pytest.raises(RecipeError, match="task_id"):
+        load_drop_datagen_recipe(path)
+
+    from lerobot.faults.datagen.libero_object_tasks import supported_object_names
+
+    path = tmp_path / "all_objects.json"
+    payload = _valid_unified_recipe(
+        object_names=list(supported_object_names()),
+        task_id=0,
+    )
+    _write_recipe(path, payload)
+    multi = load_drop_datagen_recipe(path)
+    assert multi.task_id == 0
+    assert len(multi.object_names) == 10
 
 
 def test_allows_shorter_matrix_if_triples_unique(tmp_path: Path) -> None:

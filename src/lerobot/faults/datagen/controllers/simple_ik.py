@@ -27,7 +27,7 @@ from lerobot.envs.factory import make_env
 from lerobot.faults.datagen.drop_timing import DropDecision, keepout_m
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
 from lerobot.faults.datagen.episode_preview import EpisodePreview
-from lerobot.faults.datagen.frame_logging import log_post_step_to_session, should_log_sim_step
+from lerobot.faults.datagen.frame_logging import log_post_step_to_session
 from lerobot.faults.datagen.paired_context import PairedEpisodePlan, resolve_path_drop_trigger
 from lerobot.faults.datagen.path_drop import (
     PathTrigger,
@@ -59,6 +59,7 @@ from lerobot.faults.sim.libero import (
     is_object_held_midair,
     is_object_in_basket,
     object_pose_orientation,
+    object_world_height,
     read_control_freq,
     unwrap_libero_env,
 )
@@ -66,6 +67,11 @@ from lerobot.faults.wrappers import DropRecoveryEnvWrapper
 
 MAX_PLAN_STEPS = 800
 POST_RECOVERY_SETTLE_STEPS = 40
+_GRASP_MISS_TICKS = 10
+# Far-edge objects can drive the Panda into a straight-elbow singularity mid-carry
+# where the via point is unreachable and the hand never moves again.
+_CARRY_STALL_TICKS = 40
+_CARRY_STALL_MIN_MOVE_M = 0.01
 
 # Banner colour for SimpleIK preview frames (blue-ish)
 _PREVIEW_COLOR: tuple[int, int, int] = (30, 90, 200)
@@ -106,6 +112,7 @@ def _nominal_action(
         closing_axis=get_gripper_closing_axis(rs_env),
         object_axis=object_pose_orientation(rs_env, object_name)["axis"],
         object_grasped=bool(is_object_grasped(rs_env, object_name)),
+        object_height_m=object_world_height(rs_env, object_name),
     )
     if planner.just_entered_close:
         force_close_gripper(rs_env, gripper_settle_steps=gripper_settle_steps)
@@ -160,6 +167,9 @@ def run_simple_ik_episode_loop(
     dwell_before_recovery = 0
     last_observation: Any | None = None
     provider_reset_done = False
+    grasp_miss_ticks = 0
+    carry_anchor_pos: np.ndarray | None = None
+    carry_anchor_step = 0
 
     for step in range(max_steps):
         state = fault._states[0]
@@ -207,6 +217,36 @@ def run_simple_ik_episode_loop(
             obj = get_object_pose(rs_env, object_name)["pos"].copy()
             basket = get_place_destination(rs_env, object_name, basket_name=basket_name)
             distance = float(np.linalg.norm(obj[:2] - basket[:2]))
+
+            if not dropped and not state.recovery_active:
+                if bool(is_object_grasped(rs_env, object_name)):
+                    grasp_miss_ticks = 0
+                elif phase in CARRY_PHASES:
+                    grasp_miss_ticks += 1
+                    if grasp_miss_ticks >= _GRASP_MISS_TICKS:
+                        return SimpleIKEpisodeFacts(
+                            False,
+                            "nominal_grasp_missed",
+                            _drop_trigger_payload(decision, path_trigger),
+                            trigger_pose,
+                            0,
+                        )
+                if phase in CARRY_PHASES:
+                    eef_now = np.asarray(get_eef_pose(rs_env)[0], dtype=np.float64)
+                    if (
+                        carry_anchor_pos is None
+                        or float(np.linalg.norm(eef_now - carry_anchor_pos)) >= _CARRY_STALL_MIN_MOVE_M
+                    ):
+                        carry_anchor_pos = eef_now
+                        carry_anchor_step = step
+                    elif step - carry_anchor_step >= _CARRY_STALL_TICKS:
+                        return SimpleIKEpisodeFacts(
+                            False,
+                            "nominal_carry_stalled",
+                            _drop_trigger_payload(decision, path_trigger),
+                            trigger_pose,
+                            0,
+                        )
 
             if decision is None and phase == "lift" and planner.carry_path is not None:
                 eligible_path(
@@ -313,19 +353,10 @@ def run_simple_ik_episode_loop(
         if on_post_step is not None:
             on_post_step(step, planner.phase_name)
         is_drop_episode = paired_plan is None or paired_plan.drop_decision.drop
-        drop_injection = bool(is_drop_episode and state.drop_injection_step)
         log_phase = planner.phase_name
         if dropped and not state.recovery_active and post_drop_action_provider is not None:
             log_phase = "smolvla_post_drop"
-        if (
-            episode_session is not None
-            and observation is not None
-            and should_log_sim_step(
-                step,
-                recording_stride=recording_stride,
-                force_drop_injection=drop_injection,
-            )
-        ):
+        if episode_session is not None and observation is not None:
             executed = env.last_executed_action
             if executed is None:
                 executed = action
@@ -340,6 +371,8 @@ def run_simple_ik_episode_loop(
                 phase=log_phase,
                 is_drop_episode=is_drop_episode,
                 sim_step=step,
+                rs_env=rs_env,
+                object_name=object_name,
             )
 
         state = fault._states[0]
@@ -354,6 +387,59 @@ def run_simple_ik_episode_loop(
             done = bool(np.asarray(terminated).any() or np.asarray(truncated).any())
             if len(step_out) >= 5 and isinstance(step_out[4], dict):
                 success_now = bool(np.asarray(step_out[4].get("is_success", False)).any())
+        if done:
+            if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped:
+                return _paired_nominal_no_drop_facts(
+                    rs_env,
+                    object_name=object_name,
+                    basket_name=basket_name,
+                    reason=paired_plan.drop_decision.reason,
+                    trigger_pose=trigger_pose,
+                    success=success_now,
+                )
+            if (
+                dropped
+                and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value
+            ):
+                in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
+                return SimpleIKEpisodeFacts(
+                    bool(in_basket),
+                    "smolvla_post_drop_finished",
+                    _drop_trigger_payload(decision, path_trigger),
+                    trigger_pose,
+                    dwell_before_recovery,
+                )
+            if dropped and state.recovery_active:
+                in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
+                if state.planner is not None and state.planner.done:
+                    outcome = (
+                        "recovery_completed_in_basket" if in_basket else "recovery_finished_outside_basket"
+                    )
+                else:
+                    outcome = "recovery_terminated_early"
+                return SimpleIKEpisodeFacts(
+                    bool(in_basket),
+                    outcome,
+                    _drop_trigger_payload(decision, path_trigger),
+                    trigger_pose,
+                    dwell_before_recovery,
+                )
+            if dropped:
+                in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
+                return SimpleIKEpisodeFacts(
+                    bool(in_basket),
+                    "episode_terminated_after_drop",
+                    _drop_trigger_payload(decision, path_trigger),
+                    trigger_pose,
+                    dwell_before_recovery,
+                )
+            return SimpleIKEpisodeFacts(
+                bool(success_now),
+                "episode_terminated" if not success_now else "nominal_placement_success",
+                _drop_trigger_payload(decision, path_trigger),
+                trigger_pose,
+                dwell_before_recovery,
+            )
         if paired_plan is not None and not paired_plan.drop_decision.drop and not dropped and success_now:
             return _paired_nominal_no_drop_facts(
                 rs_env,
@@ -469,15 +555,18 @@ class SimpleIKDatagenAdapter:
         from lerobot.envs.configs import LiberoEnv
         from lerobot.faults.config import FaultInjectionConfig
 
+        from lerobot.faults.datagen.libero_object_tasks import official_task_id
+
         recipe = request.recipe
         manifest = request.manifest
         plan = request.paired_plan
+        episode_task_id = official_task_id(request.object_name)
         drop_recipe = legacy_drop_recipe(recipe)
         dwell_steps = effective_post_drop_dwell_steps(recipe, manifest.post_drop_mode)
 
         env_cfg = LiberoEnv(
             task=recipe.task,
-            task_ids=[recipe.task_id],
+            task_ids=[episode_task_id],
             observation_height=256,
             observation_width=256,
             episode_length=4000,
@@ -558,7 +647,7 @@ class SimpleIKDatagenAdapter:
                     policy_path=recipe.smolvla.policy_path,
                     device=request.device,
                     task=recipe.task,
-                    task_id=recipe.task_id,
+                    task_id=episode_task_id,
                 )
                 post_drop_provider = SmolVLAActionProvider(resources, task=task)
             facts = run_simple_ik_episode_loop(

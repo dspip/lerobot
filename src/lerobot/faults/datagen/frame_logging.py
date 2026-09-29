@@ -33,7 +33,15 @@ __all__ = [
     "log_post_step_to_session",
     "loss_mask_for_datagen_env",
     "should_log_sim_step",
+    "should_log_view_tick",
 ]
+
+from lerobot.faults.datagen.recording_views import (  # noqa: E402
+    build_datagen_frame_labels,
+    mujoco_sim_time_s,
+    offer_tick_to_views,
+    should_log_view_tick,
+)
 
 DATAGEN_POST_STEP_ANNOTATION_KEY = "datagen_post_step"
 
@@ -92,10 +100,8 @@ def should_log_sim_step(
     force_drop_injection: bool = False,
 ) -> bool:
     """Return whether this sim step should be written at the configured stride."""
-    if force_drop_injection:
-        return True
-    stride = max(int(recording_stride), 1)
-    return sim_step % stride == 0
+    del force_drop_injection
+    return should_log_view_tick(sim_step, stride=recording_stride)
 
 
 def loss_mask_for_datagen_env(env: Any, *, is_drop_episode: bool, env_idx: int = 0) -> float:
@@ -142,6 +148,17 @@ def log_fault_recovery_step(
     )
 
 
+def _object_z_for_logging(rs_env: Any, object_name: str | None) -> float | None:
+    if rs_env is None or not object_name:
+        return None
+    try:
+        from lerobot.faults.sim.libero import get_object_pose
+
+        return float(get_object_pose(rs_env, object_name)["pos"][2])
+    except Exception:
+        return None
+
+
 def log_post_step_to_session(
     session: DatagenEpisodeSession,
     *,
@@ -154,8 +171,10 @@ def log_post_step_to_session(
     sim_step: int,
     env_idx: int = 0,
     observation_to_frame: Any | None = None,
+    rs_env: Any | None = None,
+    object_name: str | None = None,
 ) -> None:
-    """Log one frame using POST-step env state (see POST_STEP_LOGGING_CONTRACT)."""
+    """Log one control tick across all recording views (POST-step contract)."""
     if observation_to_frame is None:
         from lerobot.envs.utils import preprocess_observation
         from lerobot.faults.recovery.dataset_logger import libero_obs_to_frame
@@ -166,7 +185,6 @@ def log_post_step_to_session(
     executed = executed_action
     if np.asarray(executed).ndim == 2:
         executed = np.asarray(executed)[0]
-    frame = observation_to_frame(post_step_observation)
     log_ctx = build_datagen_post_step_log_context(
         env,
         sim_step=sim_step,
@@ -175,13 +193,57 @@ def log_post_step_to_session(
         env_idx=env_idx,
     )
     mask = log_ctx.loss_mask
-    annotation = dict(env.failure_annotation(env_idx))
-    annotation[DATAGEN_POST_STEP_ANNOTATION_KEY] = asdict(log_ctx)
-    session.log_step(
-        frame,
-        executed,
-        task,
-        mask,
-        phase=phase,
-        annotation=annotation,
+    state = env.fault._states[env_idx]
+    object_z = _object_z_for_logging(rs_env, object_name)
+    raw_labels = build_datagen_frame_labels(
+        state,
+        tick=sim_step,
+        is_drop_episode=is_drop_episode,
+        prev_triggered=session.last_tick_triggered,
+        object_z=object_z,
     )
+    session.last_tick_triggered = bool(is_drop_episode and getattr(state, "triggered", False))
+    session.record_tick_metadata(
+        tick=sim_step,
+        drop_release=bool(raw_labels["drop_release"][0]),
+        drop_event=bool(raw_labels["drop_event"][0]),
+        attempt_index=int(raw_labels["attempt_index"][0]),
+        object_z=object_z,
+    )
+    base_annotation = dict(env.failure_annotation(env_idx))
+    base_annotation[DATAGEN_POST_STEP_ANNOTATION_KEY] = asdict(log_ctx)
+
+    view_states = tuple(v.view_state for v in session.recording_views)
+    if rs_env is None:
+        rs_env = getattr(env, "rs_env", None)
+    if rs_env is None:
+        try:
+            from lerobot.faults.sim.libero import get_robosuite_env
+
+            rs_env = get_robosuite_env(env, env_idx)
+        except Exception:
+            rs_env = None
+    sim_time_s = mujoco_sim_time_s(rs_env) if rs_env is not None else float(sim_step)
+
+    decisions = offer_tick_to_views(
+        view_states,
+        tick=sim_step,
+        sim_time_s=sim_time_s,
+        annotation=base_annotation,
+        raw_labels=raw_labels,
+    )
+    any_log = any(d.log for d in decisions)
+    frame = observation_to_frame(post_step_observation) if any_log else None
+
+    for binding, decision in zip(session.recording_views, decisions, strict=True):
+        if not decision.log or frame is None or decision.merged_annotation is None:
+            continue
+        session.log_step(
+            frame,
+            executed,
+            task,
+            mask,
+            phase=phase,
+            annotation=decision.merged_annotation,
+            view_name=binding.name,
+        )

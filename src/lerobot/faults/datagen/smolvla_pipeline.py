@@ -534,6 +534,8 @@ def run_pipeline(
                     phase=phase_name,
                     is_drop_episode=is_drop_episode,
                     sim_step=sim_step,
+                    rs_env=rs,
+                    object_name=object_name,
                 )
                 return
             if ds_logger is None:
@@ -765,21 +767,22 @@ def run_pipeline(
                     if landing_still_steps >= 4 and obj_z < 0.08:
                         landing_pos = pose["pos"].astype(float).tolist()
 
-            # Always log the drop injection frame (loss_mask=0); otherwise stride may skip it.
-            is_drop_frame = bool(is_drop_episode and st.drop_injection_step)
-            if step % stride == 0 or is_drop_frame:
+            from lerobot.faults.datagen.recording_views import should_log_view_tick
+
+            should_log = episode_session is not None or should_log_view_tick(step, stride=stride)
+            if should_log:
                 executed = env.last_executed_action if is_drop_episode else action_numpy
                 if executed is None:
                     executed = action_numpy
                 _log_dataset_step(step, observation, executed, phase)
 
             done = bool(np.asarray(terminated).any() or np.asarray(truncated).any())
+            if done:
+                print(f"[pipeline] env terminated at step={step}, stopping (no further env.step)", flush=True)
+                break
             if not is_drop_episode:
                 if is_object_in_basket(rs, object_name, z_max=0.14):
                     print(f"[pipeline] nominal: object in basket at step={step}, stopping", flush=True)
-                    break
-                if done:
-                    print(f"[pipeline] nominal: episode ended at step={step}", flush=True)
                     break
                 continue
 
@@ -807,7 +810,9 @@ def run_pipeline(
                     pose_s = get_object_pose(rs, object_name)
                     object_traj.append(pose_s["pos"].astype(float).tolist())
                     grasp_flags.append(bool(is_object_grasped(rs, object_name)))
-                    if sim_step % stride == 0:
+                    from lerobot.faults.datagen.recording_views import should_log_view_tick as _should_log
+
+                    if episode_session is not None or _should_log(sim_step, stride=stride):
                         _log_dataset_step(sim_step, settle_obs, hold_action, "recovery")
                         n_settle_logged += 1
 
@@ -822,12 +827,6 @@ def run_pipeline(
                 frames.extend(settle_frames)
                 phases.extend(settle_phases)
                 break
-            if done and not st.triggered:
-                print(
-                    f"[pipeline] episode ended at step={step} before drop (no grasp in window?)", flush=True
-                )
-                break
-
         basket_place_ok = False
         seat_assisted = False
         basket_dest = None

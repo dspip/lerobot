@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.faults.annotation import (
+    DATAGEN_FRAME_LABEL_FEATURES,
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
 )
@@ -35,6 +36,7 @@ LIBERO_DATASET_FEATURES: dict[str, dict[str, Any]] = {
     "action": {"dtype": "float32", "shape": (7,), "names": None},
     "loss_mask": {"dtype": "float32", "shape": (1,), "names": None},
     **FAILURE_ANNOTATION_FEATURES,
+    **DATAGEN_FRAME_LABEL_FEATURES,
 }
 
 
@@ -232,15 +234,14 @@ class FaultRecoveryDatasetLogger:
         action_arr = np.asarray(action, dtype=np.float32).reshape(7)
         mask_arr = np.array([mask_val], dtype=np.float32)
         labels = default_failure_frame()
+        label_specs = {**FAILURE_ANNOTATION_FEATURES, **DATAGEN_FRAME_LABEL_FEATURES}
         if annotation:
-            for key in FAILURE_ANNOTATION_FEATURES:
+            for key in label_specs:
                 if key in annotation:
-                    labels[key] = np.asarray(annotation[key]).reshape(
-                        FAILURE_ANNOTATION_FEATURES[key]["shape"]
-                    )
-                    if FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "int64":
+                    labels[key] = np.asarray(annotation[key]).reshape(label_specs[key]["shape"])
+                    if label_specs[key]["dtype"] == "int64":
                         labels[key] = labels[key].astype(np.int64, copy=False)
-                    elif FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "bool":
+                    elif label_specs[key]["dtype"] == "bool":
                         labels[key] = labels[key].astype(bool, copy=False)
 
         frame: dict[str, Any] = {

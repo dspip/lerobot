@@ -117,10 +117,13 @@ class RunManifest:
     episodes: list[EpisodeMetadataRow]
     run_status: RunStatus = RunStatus.COMPLETE
     error_summary: str | None = None
+    logical_range: tuple[int, int] | None = None
+    recipe_content_hash: str | None = None
+    shard_logical_ranges: tuple[tuple[int, int], ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the run manifest including all episode rows."""
-        return {
+        payload: dict[str, Any] = {
             "recipe_name": self.recipe_name,
             "base_seed": self.base_seed,
             "output_dir": self.output_dir,
@@ -128,6 +131,15 @@ class RunManifest:
             "error_summary": self.error_summary,
             "episodes": [row.to_dict() for row in self.episodes],
         }
+        if self.logical_range is not None:
+            payload["logical_range"] = [int(self.logical_range[0]), int(self.logical_range[1])]
+        if self.recipe_content_hash is not None:
+            payload["recipe_content_hash"] = self.recipe_content_hash
+        if self.shard_logical_ranges is not None:
+            payload["shard_logical_ranges"] = [
+                [int(start), int(end)] for start, end in self.shard_logical_ranges
+            ]
+        return payload
 
 
 def build_episode_metadata_row(
@@ -213,6 +225,29 @@ def _row_from_dict(data: dict[str, Any]) -> EpisodeMetadataRow:
     return EpisodeMetadataRow(**{k: data[k] for k in EPISODE_METADATA_FIELDS if k in data})
 
 
+def _parse_logical_range(raw: dict[str, Any]) -> tuple[int, int] | None:
+    value = raw.get("logical_range")
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError("logical_range must be [start, end]")
+    return int(value[0]), int(value[1])
+
+
+def _parse_shard_logical_ranges(raw: dict[str, Any]) -> tuple[tuple[int, int], ...] | None:
+    value = raw.get("shard_logical_ranges")
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("shard_logical_ranges must be a list")
+    ranges: list[tuple[int, int]] = []
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError("each shard_logical_ranges entry must be [start, end]")
+        ranges.append((int(item[0]), int(item[1])))
+    return tuple(ranges)
+
+
 def read_run_manifest(path: Path) -> RunManifest:
     """Load a run manifest from disk."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -225,6 +260,9 @@ def read_run_manifest(path: Path) -> RunManifest:
     error_summary = raw.get("error_summary")
     if error_summary is not None:
         error_summary = str(error_summary)
+    recipe_hash = raw.get("recipe_content_hash")
+    if recipe_hash is not None:
+        recipe_hash = str(recipe_hash)
     return RunManifest(
         recipe_name=str(raw["recipe_name"]),
         base_seed=int(raw["base_seed"]),
@@ -232,4 +270,7 @@ def read_run_manifest(path: Path) -> RunManifest:
         episodes=episodes,
         run_status=run_status,
         error_summary=error_summary,
+        logical_range=_parse_logical_range(raw),
+        recipe_content_hash=recipe_hash,
+        shard_logical_ranges=_parse_shard_logical_ranges(raw),
     )
