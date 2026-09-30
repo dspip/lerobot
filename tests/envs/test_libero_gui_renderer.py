@@ -21,7 +21,7 @@ retry loop swallows the exception and spins forever at 100% CPU.
 
 from __future__ import annotations
 
-from lerobot.envs.libero_overlays.gui import disable_gui_renderer
+from lerobot_env_libero_overlay.gui import disable_gui_renderer
 
 
 class _Renderer:

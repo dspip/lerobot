@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults import FaultEventLogger, FaultInjectionConfig, ObsLatencyFault, make_obs_fault_injector
+from lerobot_faults import FaultEventLogger, FaultInjectionConfig, ObsLatencyFault, make_obs_fault_injector
 
 
 def _cfg(**kwargs) -> FaultInjectionConfig:

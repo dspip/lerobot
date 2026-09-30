@@ -68,11 +68,11 @@ BLENDABLE_PHASES = frozenset({"retract", "pickup_via", "lift", "to_basket_via"})
 New / used attributes and phase names:
 
 - `planner.phase_name` — string; extra values vs `main`: `"pickup_via"`, `"to_basket_via"`.
-- `planner.carry_path` — `CarryPath | None` from `lerobot.faults.recovery.trajectory`; set when entering `lift`.
+- `planner.carry_path` — `CarryPath | None` from `lerobot_faults.recovery.trajectory`; set when entering `lift`.
 - Waypoint names in order when offsets are non-zero: `retract`, `pickup_via`, `approach_hover`, `descend_grasp`, `close_grasp`, `lift`, `to_basket_via`, `to_basket_hover`, `open_place`, `retract_done`.
 - Any `if phase == ...` or `phase in (...)` on the other branch that lists only `lift` / `to_basket_hover` must include `to_basket_via` for carry, and must allow `pickup_via` as a pre-grasp transit phase.
 
-Geometry helpers live in `lerobot.faults.recovery.trajectory`: `build_pickup_via`, `build_carry_path`, `CarryPath`, `ResolvedPickupVia`. Prefer importing those rather than inlining keep-out math.
+Geometry helpers live in `lerobot_faults.recovery.trajectory`: `build_pickup_via`, `build_carry_path`, `CarryPath`, `ResolvedPickupVia`. Prefer importing those rather than inlining keep-out math.
 
 ### Path drop contract (if the other branch touches drop timing)
 

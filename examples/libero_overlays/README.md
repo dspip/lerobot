@@ -186,7 +186,7 @@ Patch BDDL only and print the temp path:
 uv run python - <<'PY'
 from pathlib import Path
 from libero.libero import benchmark, get_libero_path
-from lerobot.envs.libero_overlays import apply_overlay
+from lerobot_env_libero_overlay import apply_overlay
 
 suite = benchmark.get_benchmark_dict()["libero_object"]()
 task = suite.get_task(5)

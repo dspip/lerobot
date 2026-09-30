@@ -43,23 +43,23 @@ def test_unified_cli_entry_point() -> None:
     from examples.faults import run_drop_datagen as cli
 
     assert callable(cli.main)
-    from lerobot.faults.datagen.recipe import load_drop_datagen_recipe
+    from lerobot_faults.datagen.recipe import load_drop_datagen_recipe
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     assert recipe.name == "can_drop_datagen"
 
 
 def test_smolvla_pipeline_library_only_not_cli_recorder() -> None:
-    from lerobot.faults.datagen import smolvla_pipeline
+    from lerobot_faults.datagen import smolvla_pipeline
 
     assert callable(smolvla_pipeline.run_pipeline)
     assert not hasattr(smolvla_pipeline, "main")
 
 
 def test_legacy_datagen_compatibility_apis_removed() -> None:
-    import lerobot.faults.datagen as datagen_pkg
-    import lerobot.faults.datagen.recipe as recipe_mod
-    import lerobot.faults.recovery.recording_recipe as recording_mod
+    import lerobot_faults.datagen as datagen_pkg
+    import lerobot_faults.datagen.recipe as recipe_mod
+    import lerobot_faults.recovery.recording_recipe as recording_mod
 
     for name in (
         "load_datagen_recipe",
@@ -75,7 +75,7 @@ def test_legacy_datagen_compatibility_apis_removed() -> None:
         assert not hasattr(recipe_mod, name), name
 
     with pytest.raises(ImportError):
-        from lerobot.faults.recovery import load_datagen_recipe  # noqa: F401
+        from lerobot_faults.recovery import load_datagen_recipe  # noqa: F401
 
     with pytest.raises(ImportError):
-        from lerobot.faults.recovery import sample_post_drop_mode  # noqa: F401
+        from lerobot_faults.recovery import sample_post_drop_mode  # noqa: F401

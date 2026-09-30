@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults.config import FaultInjectionConfig
-from lerobot.faults.recovery.recording_recipe import (
+from lerobot_faults.config import FaultInjectionConfig
+from lerobot_faults.recovery.recording_recipe import (
     DEFAULT_POST_DROP_DWELL_STEPS,
     DEFAULT_POST_GRASP_DELAY_MAX,
     DEFAULT_POST_GRASP_DELAY_MIN,

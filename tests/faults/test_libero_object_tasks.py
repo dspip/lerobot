@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from lerobot.faults.datagen.libero_object_tasks import (
+from lerobot_faults.datagen.libero_object_tasks import (
     LIBERO_OBJECT_TASKS,
     official_task_id,
     supported_object_names,

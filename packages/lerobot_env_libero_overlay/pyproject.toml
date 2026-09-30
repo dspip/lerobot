@@ -1,0 +1,24 @@
+# Copyright 2026 Gangelia. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_env_libero_overlay"
+version = "0.1.0"
+description = "LIBERO scene overlays for LeRobot, registered as --env.type=libero_overlay."
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+authors = [{ name = "Gangelia" }]
+dependencies = [
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@e0d50211ef236143ae867228662b7dfaba554f02",
+]
+
+[project.scripts]
+lerobot-eval-overlay = "lerobot_env_libero_overlay.eval_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

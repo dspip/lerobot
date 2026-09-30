@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults import BrightnessDropFault, FaultInjectionConfig
-from lerobot.faults.observation.policy_video import PolicyCameraVideoRecorder, write_frame_video
+from lerobot_faults import BrightnessDropFault, FaultInjectionConfig
+from lerobot_faults.observation.policy_video import PolicyCameraVideoRecorder, write_frame_video
 
 
 def _obs(fill: int) -> dict:

@@ -32,7 +32,7 @@ from typing import Any
 
 import cv2
 
-from lerobot.faults.recovery.delay40_diagnostics import (
+from lerobot_faults.recovery.delay40_diagnostics import (
     build_q1_q8,
     frames_from_first_grasp,
     load_pipeline_log,

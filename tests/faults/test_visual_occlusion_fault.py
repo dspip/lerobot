@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults import (
+from lerobot_faults import (
     FaultEventLogger,
     FaultInjectionConfig,
     VisualOcclusionFault,

@@ -24,9 +24,14 @@ import torch
 pytest.importorskip("datasets")
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.faults.datagen.audit import audit_drop_run
-from lerobot.faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
-from lerobot.faults.datagen.manifest import EpisodeMetadataRow, RunManifest, RunStatus, write_run_manifest_atomic
+from lerobot_faults.datagen.audit import audit_drop_run
+from lerobot_faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
+from lerobot_faults.datagen.manifest import (
+    EpisodeMetadataRow,
+    RunManifest,
+    RunStatus,
+    write_run_manifest_atomic,
+)
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 

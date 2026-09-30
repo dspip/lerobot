@@ -22,12 +22,12 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from lerobot.faults.config import FaultInjectionConfig
-from lerobot.faults.factory import make_sim_inject_fault
-from lerobot.faults.logging import FaultEventLogger
-from lerobot.faults.sim.eef_bump import EefBumpFault
-from lerobot.faults.sim.object_slip import ObjectSlipFault
-from lerobot.faults.wrappers import SimFaultEnvWrapper, maybe_wrap_env
+from lerobot_faults.config import FaultInjectionConfig
+from lerobot_faults.factory import make_sim_inject_fault
+from lerobot_faults.logging import FaultEventLogger
+from lerobot_faults.sim.eef_bump import EefBumpFault
+from lerobot_faults.sim.object_slip import ObjectSlipFault
+from lerobot_faults.wrappers import SimFaultEnvWrapper, maybe_wrap_env
 
 
 def _slip_cfg(**kwargs) -> FaultInjectionConfig:
@@ -64,11 +64,11 @@ def _bump_cfg(**kwargs) -> FaultInjectionConfig:
     return FaultInjectionConfig(**defaults)
 
 
-@patch("lerobot.faults.sim.object_slip.apply_object_pose_delta")
-@patch("lerobot.faults.sim.object_slip.get_eef_pose")
-@patch("lerobot.faults.sim.object_slip.get_object_pose")
-@patch("lerobot.faults.sim.object_slip.is_object_grasped", return_value=True)
-@patch("lerobot.faults.sim.object_slip.get_robosuite_env")
+@patch("lerobot_faults.sim.object_slip.apply_object_pose_delta")
+@patch("lerobot_faults.sim.object_slip.get_eef_pose")
+@patch("lerobot_faults.sim.object_slip.get_object_pose")
+@patch("lerobot_faults.sim.object_slip.is_object_grasped", return_value=True)
+@patch("lerobot_faults.sim.object_slip.get_robosuite_env")
 def test_object_slip_triggers_once(mock_rs, mock_grasp, mock_pose, mock_eef, mock_delta, tmp_path: Path):
     mock_pose.return_value = {"pos": np.array([0.0, 0.0, 0.2]), "quat_wxyz": np.zeros(4)}
     mock_eef.return_value = (np.array([0.0, 0.0, 0.2]), np.zeros(4))
@@ -94,8 +94,8 @@ def test_object_slip_triggers_once(mock_rs, mock_grasp, mock_pose, mock_eef, moc
     assert events[0]["event"] == "object_slip"
 
 
-@patch("lerobot.faults.sim.eef_bump.apply_eef_bump")
-@patch("lerobot.faults.sim.eef_bump.get_robosuite_env")
+@patch("lerobot_faults.sim.eef_bump.apply_eef_bump")
+@patch("lerobot_faults.sim.eef_bump.get_robosuite_env")
 def test_eef_bump_triggers_once(mock_rs, mock_bump, tmp_path: Path):
     mock_bump.return_value = {
         "force": np.array([1.0, 0.0, 0.0]),

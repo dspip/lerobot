@@ -25,7 +25,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 **Recorders**
 
 1. Eval: `lerobot_eval.py` `rollout()` when `--eval.recording=true` (pre-step images, post-step labels — same as `next.reward`).
-2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `lerobot.faults.datagen`) (**post-step** obs + labels).
+2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `lerobot_faults.datagen`) (**post-step** obs + labels).
 3. Hardware `lerobot-record`: not wired.
 
 **Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`.

@@ -59,7 +59,7 @@ Run:
 uv run pytest tests/faults/test_episode_preview.py -q
 ```
 
-Expected: collection fails because `lerobot.faults.datagen.episode_preview` does not exist.
+Expected: collection fails because `lerobot_faults.datagen.episode_preview` does not exist.
 
 - [ ] **Step 3: Implement the shared preview module**
 

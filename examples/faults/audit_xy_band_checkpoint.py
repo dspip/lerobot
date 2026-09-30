@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main(argv: list[str] | None = None) -> int:
-    from lerobot.faults.recovery.xy_band_checkpoint_audit import (
+    from lerobot_faults.recovery.xy_band_checkpoint_audit import (
         audit_xy_band_checkpoint,
         format_checkpoint_table,
     )

@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen import episode_preview as preview
+from lerobot_faults.datagen import episode_preview as preview
 
 
 class _FakeRenderEnv:

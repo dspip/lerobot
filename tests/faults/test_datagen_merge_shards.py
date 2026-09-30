@@ -26,10 +26,21 @@ import torch
 pytest.importorskip("datasets")
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.faults.datagen.dataset_card import DatasetCardStats, MatrixRowCount, ObjectMatrixCounts, SplitSizes, render_dataset_card
-from lerobot.faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH, FailureSegmentRow
-from lerobot.faults.datagen.manifest import EpisodeMetadataRow, RunManifest, RunStatus, write_run_manifest_atomic
-from lerobot.faults.datagen.merge_shards import MergeShardsError, build_splits, merge_drop_datagen_shards
+from lerobot_faults.datagen.dataset_card import (
+    DatasetCardStats,
+    MatrixRowCount,
+    ObjectMatrixCounts,
+    SplitSizes,
+    render_dataset_card,
+)
+from lerobot_faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH, FailureSegmentRow
+from lerobot_faults.datagen.manifest import (
+    EpisodeMetadataRow,
+    RunManifest,
+    RunStatus,
+    write_run_manifest_atomic,
+)
+from lerobot_faults.datagen.merge_shards import MergeShardsError, build_splits, merge_drop_datagen_shards
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 _MIN_FEATURES = {

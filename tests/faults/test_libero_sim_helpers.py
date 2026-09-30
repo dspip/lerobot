@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from lerobot.faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from_fault
-from lerobot.faults.sim.libero import (
+from lerobot_faults.recovery.loss_mask import loss_mask_for_step, loss_mask_from_fault
+from lerobot_faults.sim.libero import (
     DEFAULT_GRIPPER_SETTLE_STEPS,
     force_open_gripper,
     get_place_destination,
@@ -43,7 +43,7 @@ def test_loss_mask_from_fault_state():
     )
 
 
-@patch("lerobot.faults.sim.libero.get_object_pose")
+@patch("lerobot_faults.sim.libero.get_object_pose")
 def test_is_object_over_basket_wider_than_in_basket(mock_pose):
     rs_env = MagicMock()
     rs_env.sim.data.get_body_xpos.return_value = np.array([0.5, 0.0, 0.85], dtype=float)
@@ -68,7 +68,7 @@ def test_get_place_destination_prefers_basket():
     np.testing.assert_allclose(dest, [0.4, 0.2, 0.95])
 
 
-@patch("lerobot.faults.sim.libero.get_object_pose")
+@patch("lerobot_faults.sim.libero.get_object_pose")
 def test_get_place_destination_fallback_offset(mock_pose):
     rs_env = MagicMock()
     rs_env.get_object.side_effect = KeyError("missing")
@@ -105,13 +105,13 @@ def test_force_open_gripper_settles_before_return():
     np.testing.assert_allclose(rs_env.sim.data.ctrl, [1.0, -1.0], atol=1e-6)
 
 
-@patch("lerobot.faults.sim.libero._nudge_object_down")
-@patch("lerobot.faults.sim.libero.apply_object_impulse")
-@patch("lerobot.faults.sim.libero.force_open_gripper")
-@patch("lerobot.faults.sim.libero.get_arm_qpos", return_value=np.zeros(7))
-@patch("lerobot.faults.sim.libero.get_eef_pose", return_value=(np.zeros(3), np.ones(4)))
-@patch("lerobot.faults.sim.libero.get_object_pose")
-@patch("lerobot.faults.sim.libero.is_object_grasped")
+@patch("lerobot_faults.sim.libero._nudge_object_down")
+@patch("lerobot_faults.sim.libero.apply_object_impulse")
+@patch("lerobot_faults.sim.libero.force_open_gripper")
+@patch("lerobot_faults.sim.libero.get_arm_qpos", return_value=np.zeros(7))
+@patch("lerobot_faults.sim.libero.get_eef_pose", return_value=(np.zeros(3), np.ones(4)))
+@patch("lerobot_faults.sim.libero.get_object_pose")
+@patch("lerobot_faults.sim.libero.is_object_grasped")
 def test_midair_drop_opens_then_nudges_without_impulse(
     mock_grasp, mock_pose, mock_eef, mock_arm, mock_open, mock_impulse, mock_nudge
 ):
@@ -162,8 +162,8 @@ def test_is_object_grasped_legacy_pad_gripper_object():
     rs_env._check_grasp.assert_called_once_with(gripper=gripper, object_geoms=["obj_geom"])
 
 
-@patch("lerobot.faults.sim.libero.object_body_extents")
-@patch("lerobot.faults.sim.libero.get_object_pose")
+@patch("lerobot_faults.sim.libero.object_body_extents")
+@patch("lerobot_faults.sim.libero.get_object_pose")
 def test_object_world_height_identity(mock_pose, mock_extents):
     mock_extents.return_value = np.array([0.062, 0.076, 0.062], dtype=np.float64)
     mock_pose.return_value = {"quat_wxyz": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)}
@@ -171,8 +171,8 @@ def test_object_world_height_identity(mock_pose, mock_extents):
     assert h == pytest.approx(0.062, abs=1e-6)
 
 
-@patch("lerobot.faults.sim.libero.object_body_extents")
-@patch("lerobot.faults.sim.libero.get_object_pose")
+@patch("lerobot_faults.sim.libero.object_body_extents")
+@patch("lerobot_faults.sim.libero.get_object_pose")
 def test_object_world_height_rotated_90_about_x(mock_pose, mock_extents):
     extents = np.array([1.0, 2.0, 3.0], dtype=np.float64)
     mock_extents.return_value = extents

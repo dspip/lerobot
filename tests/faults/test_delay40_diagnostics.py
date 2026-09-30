@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from lerobot.faults.recovery.delay40_diagnostics import reconstruct_frames
+from lerobot_faults.recovery.delay40_diagnostics import reconstruct_frames
 
 
 def _fake_log(*, dist_at_step: dict[int, float]) -> dict:

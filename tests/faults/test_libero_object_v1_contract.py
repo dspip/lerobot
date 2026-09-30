@@ -25,21 +25,21 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen.dataset_writer import RunDatasetWriter, StaleRunOutputError
-from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult, select_episode_object_round_robin
-from lerobot.faults.datagen.failure_segments import FailureSegmentsWriter
-from lerobot.faults.datagen.layout_provider import LayoutProviderContext
-from lerobot.faults.datagen.libero_object_tasks import official_task_id
-from lerobot.faults.datagen.recipe import (
+from lerobot_faults.datagen.dataset_writer import RunDatasetWriter, StaleRunOutputError
+from lerobot_faults.datagen.episode import EpisodeRequest, EpisodeResult, select_episode_object_round_robin
+from lerobot_faults.datagen.failure_segments import FailureSegmentsWriter
+from lerobot_faults.datagen.layout_provider import LayoutProviderContext
+from lerobot_faults.datagen.libero_object_tasks import official_task_id
+from lerobot_faults.datagen.recipe import (
     DatagenController,
     RecipeError,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot.faults.datagen.recording_views import drop_window_bounds, tick_in_drop_window
-from lerobot.faults.datagen.runner import run_drop_datagen_matrix
-from lerobot.faults.datagen.scene import hide_scene_objects, sample_object_layout
-from lerobot.faults.recovery.midair_drop import MidAirDropFault
+from lerobot_faults.datagen.recording_views import drop_window_bounds, tick_in_drop_window
+from lerobot_faults.datagen.runner import run_drop_datagen_matrix
+from lerobot_faults.datagen.scene import hide_scene_objects, sample_object_layout
+from lerobot_faults.recovery.midair_drop import MidAirDropFault
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECIPES = REPO_ROOT / "examples" / "faults" / "recipes"
@@ -158,10 +158,10 @@ def test_sample_layout_omits_held_out_objects() -> None:
         return objects
 
     with (
-        patch("lerobot.faults.datagen.scene.movable_object_names", movable),
-        patch("lerobot.faults.datagen.scene.get_object_pose", pose),
-        patch("lerobot.faults.datagen.scene.get_place_destination", destination),
-        patch("lerobot.faults.datagen.scene.sample_layout", sample),
+        patch("lerobot_faults.datagen.scene.movable_object_names", movable),
+        patch("lerobot_faults.datagen.scene.get_object_pose", pose),
+        patch("lerobot_faults.datagen.scene.get_place_destination", destination),
+        patch("lerobot_faults.datagen.scene.sample_layout", sample),
     ):
         layout = sample_object_layout(object(), recipe, "alphabet_soup_1", np.random.default_rng(0))
     assert captured["names"] == ["alphabet_soup_1"]
@@ -194,7 +194,7 @@ def test_hide_scene_objects_clears_collision_and_skips_missing() -> None:
             raise KeyError(name)
 
     env = _Env()
-    with patch("lerobot.faults.datagen.scene.set_object_pose") as moved:
+    with patch("lerobot_faults.datagen.scene.set_object_pose") as moved:
         hide_scene_objects(env, ("tomato_sauce_1", "not_in_scene"))
     assert env.sim.model.geom_rgba[0, 3] == 0.0
     assert int(env.sim.model.geom_contype[0]) == 0

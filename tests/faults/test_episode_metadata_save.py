@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.faults.episode_metadata import save_episode_adding_metadata
+from lerobot_faults.episode_metadata import save_episode_adding_metadata
 
 
 class _Meta:

@@ -17,8 +17,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen.path_drop import eligible_path, sample_path_drop
-from lerobot.faults.recovery.trajectory import CarryPath, PathSegment
+from lerobot_faults.datagen.path_drop import eligible_path, sample_path_drop
+from lerobot_faults.recovery.trajectory import CarryPath, PathSegment
 
 
 def _carry(*segments: tuple[str, tuple[float, ...], tuple[float, ...]]) -> CarryPath:
@@ -140,7 +140,7 @@ def test_trigger_uses_projection_progress_on_active_segment():
 def test_trigger_fires_when_execution_advances_to_a_later_segment():
     path = eligible_path(_straight(), basket_xy=np.zeros(2), keepout_m=0.20)
     lift_piece = next(piece for piece in path.pieces if piece.segment_name == "lift")
-    from lerobot.faults.datagen.path_drop import PathTrigger
+    from lerobot_faults.datagen.path_drop import PathTrigger
 
     trigger = PathTrigger("lift", lift_piece.segment_order, 0.99)
 
@@ -154,7 +154,7 @@ def test_trigger_fires_when_execution_advances_to_a_later_segment():
 def test_trigger_waits_at_reached_point_until_object_is_held_midair():
     path = eligible_path(_straight(), basket_xy=np.zeros(2), keepout_m=0.20)
     lift_piece = next(piece for piece in path.pieces if piece.segment_name == "lift")
-    from lerobot.faults.datagen.path_drop import PathTrigger
+    from lerobot_faults.datagen.path_drop import PathTrigger
 
     trigger = PathTrigger("lift", lift_piece.segment_order, 0.1)
     reached = np.array([0.5, 0.0, 0.20])
@@ -179,7 +179,7 @@ def test_trigger_does_not_fire_on_an_earlier_segment():
         ("to_basket_via", (0.5, 0.0, 0.25), (0.3, 0.1, 0.25)),
         ("to_basket_hover", (0.3, 0.1, 0.25), (0.0, 0.0, 0.25)),
     )
-    from lerobot.faults.datagen.path_drop import PathTrigger
+    from lerobot_faults.datagen.path_drop import PathTrigger
 
     trigger = PathTrigger("to_basket_hover", 2, 0.1)
 

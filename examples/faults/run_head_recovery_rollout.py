@@ -45,16 +45,16 @@ from train_phase1 import load_policy  # noqa: E402
 
 from lerobot.envs.configs import LiberoEnv  # noqa: E402
 from lerobot.envs.factory import make_env  # noqa: E402
-from lerobot.faults.config import FaultInjectionConfig  # noqa: E402
-from lerobot.faults.logging import FaultEventLogger  # noqa: E402
-from lerobot.faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
-from lerobot.faults.sim.libero import (  # noqa: E402
+from lerobot.policies.factory import make_pre_post_processors  # noqa: E402
+from lerobot_faults.config import FaultInjectionConfig  # noqa: E402
+from lerobot_faults.logging import FaultEventLogger  # noqa: E402
+from lerobot_faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
+from lerobot_faults.sim.libero import (  # noqa: E402
     get_object_linear_velocity,
     get_robosuite_env,
     is_object_grasped,
     midair_drop,
 )
-from lerobot.policies.factory import make_pre_post_processors  # noqa: E402
 
 DEFAULT_CHECKPOINT = (
     REPO

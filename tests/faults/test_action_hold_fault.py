@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults import (
+from lerobot_faults import (
     ActionHoldFault,
     FaultEventLogger,
     FaultInjectionConfig,
@@ -274,7 +274,7 @@ def test_make_fault_injector_none_when_disabled():
 def test_eval_pipeline_default_fault_disabled():
     from lerobot.configs.eval import EvalPipelineConfig
     from lerobot.envs.configs import LiberoEnv
-    from lerobot.faults.eval_cli import FaultEvalConfig, FaultEvalPipelineConfig
+    from lerobot_faults.eval_cli import FaultEvalConfig, FaultEvalPipelineConfig
 
     stock = EvalPipelineConfig(env=LiberoEnv(task="libero_object", task_ids=[0]))
     assert not hasattr(stock, "fault")

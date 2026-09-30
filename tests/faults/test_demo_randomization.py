@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen.demo_randomization import RandomizationConfig, sample_episode_params
+from lerobot_faults.datagen.demo_randomization import RandomizationConfig, sample_episode_params
 
 
 def test_sample_episode_params_seeded() -> None:

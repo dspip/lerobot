@@ -21,7 +21,7 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector import SyncVectorEnv
 
-from lerobot.faults import FaultEnvWrapper, FaultInjectionConfig, maybe_wrap_env, maybe_wrap_env_tree
+from lerobot_faults import FaultEnvWrapper, FaultInjectionConfig, maybe_wrap_env, maybe_wrap_env_tree
 
 
 class _DummyEnv(gym.Env):

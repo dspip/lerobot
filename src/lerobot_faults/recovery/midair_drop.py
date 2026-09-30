@@ -1,0 +1,1048 @@
+# Copyright 2026 Gangelia. All rights reserved.
+"""Mid-air object drop fault with recovery planner handoff."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import gymnasium as gym
+    from gymnasium.vector import VectorEnv
+
+import numpy as np
+
+from lerobot_faults.config import FaultInjectionConfig
+from lerobot_faults.logging import FaultEventLogger
+from lerobot_faults.recovery.basket_drop_target import basket_distance_target_reached
+from lerobot_faults.recovery.fps import resolve_target_fps
+from lerobot_faults.recovery.loss_mask import loss_mask_from_fault
+from lerobot_faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
+from lerobot_faults.sim.libero import (
+    _body_xpos,
+    force_close_gripper,
+    force_open_gripper,
+    get_arm_qpos,
+    get_eef_pose,
+    get_gripper_closing_axis,
+    get_object_linear_velocity,
+    get_object_pose,
+    get_place_destination,
+    get_robosuite_env,
+    hold_gripper_closed,
+    is_object_grasped,
+    is_object_held_midair,
+    is_object_in_basket,
+    midair_drop,
+    object_basket_xy_distance,
+    object_pose_orientation,
+    object_world_height,
+    seat_object_in_basket_if_above,
+)
+
+_FALL_TIMEOUT_STEPS = 15
+_LANDING_VZ_THRESHOLD = 0.05
+_LANDING_VZ_CONSECUTIVE = 2
+
+# Never inject a drop closer than this XY distance to the basket (meters).
+# ``min_drop_distance_from_basket_m`` is a skip radius: if the object is still
+# inside that XY distance when the post-grasp delay elapses, the drop is skipped
+# (no early drop at the boundary). Inside ``HARD_BASKET_KEEPOUT_M`` we always
+# skip so the can is not parked against the rim.
+HARD_BASKET_KEEPOUT_M = 0.22
+
+
+def _body_xpos_safe(rs_env: Any, name: str) -> np.ndarray | None:
+    try:
+        return _body_xpos(rs_env, name)
+    except Exception:
+        return None
+
+
+@dataclass
+class _RecoveryMotionOverride:
+    speed_multiplier: float
+    pickup_offset_xy_m: tuple[float, float]
+    transport_offset_m: float
+    posture_bias_rad: tuple[float, float, float]
+
+
+@dataclass
+class _EnvDropState:
+    episode_step: int = 0
+    triggered: bool = False
+    recovery_active: bool = False
+    drop_injection_step: bool = False
+    mark_drop_injection_on_next_step: bool = False
+    planner: SimpleIKRecoveryPlanner | None = None
+    last_recovery_action: np.ndarray | None = None
+    episode_id: int | None = None
+    finished: bool = False
+    grasp_retries: int = 0
+    place_retries: int = 0
+    lost_grasp_steps: int = 0
+    destination_pos: np.ndarray | None = None
+    place_succeeded: bool = False
+    seat_assisted: bool = False
+    pending_seat: bool = False
+    proof_object_pos: np.ndarray | None = None
+    proof_basket_pos: np.ndarray | None = None
+    # First step when grasp+height gates were satisfied (for post_grasp_delay).
+    eligible_since: int | None = None
+    # Drawn once when all trigger gates pass (honors config.probability).
+    will_activate: bool | None = None
+    episode_seed: int | None = None
+    speed_multiplier: float | None = None
+    waypoint_noise_m: float | None = None
+    recovery_action_noise_std: float | None = None
+    arm_posture_noise_rad: np.ndarray | None = None
+    recovery_motion_override: _RecoveryMotionOverride | None = None
+    last_impulse_lin: np.ndarray | None = None
+    last_impulse_ang: np.ndarray | None = None
+    # Planar object→basket distance at the moment of the drop.
+    drop_basket_xy_dist: float | None = None
+    drop_trigger_reason: str | None = None
+    prev_basket_xy_dist: float | None = None
+    dwell_steps_completed: int = 0
+    policy_reset_requested: bool = False
+    suppress_grasp_skip: bool = False
+    externally_scheduled_drop: bool = False
+    pending_first_recovery_action: np.ndarray | None = None
+    recovery_skipped: bool = False
+    recovery_skip_reason: str | None = None
+    # Set by trigger_manual_drop; hold policy actions until request_recovery.
+    awaiting_manual_recovery: bool = False
+    falling: bool = False
+    fall_steps: int = 0
+    low_vz_steps: int = 0
+    fall_aborted: bool = False
+    manual_recovery_after_fall: bool = False
+
+
+def _fall_action(proposed_action: np.ndarray) -> np.ndarray:
+    """Keep the arm command and force the gripper open so the drop is not a commanded stop."""
+    action = np.array(proposed_action, dtype=np.float32, copy=True)
+    if action.shape[-1] >= 7:
+        action[..., 6] = -1.0
+    return action
+
+
+def _episode_seed(config_seed: int | None, episode_id: int | None) -> int:
+    base = 0 if config_seed is None else int(config_seed)
+    ep = 0 if episode_id is None else int(episode_id)
+    return base + ep * 10007
+
+
+class MidAirDropFault:
+    """Trigger a physical mid-air drop once, then execute recovery planner actions."""
+
+    def __init__(
+        self,
+        config: FaultInjectionConfig,
+        num_envs: int,
+        event_logger: FaultEventLogger | None = None,
+    ) -> None:
+        """Configure per-env drop state from ``FaultInjectionConfig``."""
+        if config.type != "midair_drop":
+            raise ValueError(f"MidAirDropFault requires type='midair_drop', got {config.type!r}.")
+        config.validate(num_envs=num_envs)
+        self.config = config
+        self.num_envs = num_envs
+        self.event_logger = event_logger
+        self._selected = set(range(num_envs)) if config.env_ids is None else set(config.env_ids)
+        seed = 0 if config.seed is None else int(config.seed)
+        self._rng = np.random.default_rng(seed)
+        self._states = [_EnvDropState() for _ in range(num_envs)]
+        self._terminal_states: list[_EnvDropState | None] = [None for _ in range(num_envs)]
+
+    @property
+    def enabled(self) -> bool:
+        """Whether fault injection is active for this wrapper."""
+        return bool(self.config.enabled)
+
+    def set_recovery_motion_profile(
+        self,
+        env_idx: int,
+        *,
+        speed_multiplier: float,
+        pickup_offset_xy_m: tuple[float, float],
+        transport_offset_m: float,
+        posture_bias_rad: tuple[float, float, float],
+    ) -> None:
+        """Set exact episode-level recovery motion values for one environment."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        if speed_multiplier <= 0:
+            raise ValueError("speed_multiplier must be positive")
+        pickup = tuple(float(v) for v in np.asarray(pickup_offset_xy_m).reshape(2))
+        posture = tuple(float(v) for v in np.asarray(posture_bias_rad).reshape(3))
+        self._states[env_idx].recovery_motion_override = _RecoveryMotionOverride(
+            speed_multiplier=float(speed_multiplier),
+            pickup_offset_xy_m=pickup,
+            transport_offset_m=float(transport_offset_m),
+            posture_bias_rad=posture,
+        )
+
+    def reset(
+        self,
+        env_ids: list[int] | None = None,
+        episode_ids: list[int] | dict[int, int] | None = None,
+    ) -> None:
+        """Clear episode-specific state for the given environments (or all)."""
+        indices = range(self.num_envs) if env_ids is None else env_ids
+        for i in indices:
+            if i < 0 or i >= self.num_envs:
+                raise ValueError(f"env_id {i} out of range for num_envs={self.num_envs}.")
+            ep_id = None
+            if isinstance(episode_ids, dict):
+                ep_id = episode_ids.get(i)
+            elif isinstance(episode_ids, list):
+                index_list = list(indices)
+                if len(episode_ids) == len(index_list):
+                    ep_id = episode_ids[index_list.index(i)]
+                elif i < len(episode_ids):
+                    ep_id = episode_ids[i]
+            self._states[i] = _EnvDropState(episode_id=ep_id)
+            self._terminal_states[i] = None
+
+    def notify_dones(self, dones: np.ndarray) -> None:
+        """Clear recovery state for finished environments."""
+        dones = np.asarray(dones, dtype=bool)
+        if dones.shape != (self.num_envs,):
+            raise ValueError(f"dones must have shape ({self.num_envs},), got {dones.shape}.")
+        for i, done in enumerate(dones):
+            if done:
+                self._terminal_states[i] = self._states[i]
+                ep_id = self._states[i].episode_id
+                self._states[i] = _EnvDropState(episode_id=ep_id, finished=True)
+
+    def post_step_state(self, env_idx: int) -> _EnvDropState:
+        """Return fault state as seen by post-step logging on the step that just completed."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        terminal = self._terminal_states[env_idx]
+        if state.finished and terminal is not None:
+            return terminal
+        return state
+
+    def apply(
+        self,
+        actions: np.ndarray,
+        episode_ids: list[int] | None = None,
+    ) -> np.ndarray:
+        """Return actions to execute; recovery replays planner buffer without env access."""
+        if not self.config.enabled:
+            return actions
+
+        actions = np.asarray(actions)
+        if actions.ndim != 2 or actions.shape[0] != self.num_envs:
+            raise ValueError(
+                f"Expected actions with shape ({self.num_envs}, action_dim), got {actions.shape}."
+            )
+
+        executed = actions.copy()
+        for env_idx in range(self.num_envs):
+            if episode_ids is not None:
+                self._states[env_idx].episode_id = episode_ids[env_idx]
+            if env_idx not in self._selected or self._states[env_idx].finished:
+                continue
+            if self._states[env_idx].recovery_active:
+                executed[env_idx] = self._next_recovery_action(env_idx)
+        return executed
+
+    def on_step(
+        self,
+        env: gym.Env | VectorEnv,
+        actions: np.ndarray,
+        episode_ids: list[int] | None = None,
+    ) -> np.ndarray:
+        """Step hook with sim access for grasp checks, drop trigger, and recovery."""
+        if not self.config.enabled:
+            return actions
+
+        actions = np.asarray(actions)
+        if actions.ndim != 2 or actions.shape[0] != self.num_envs:
+            raise ValueError(
+                f"Expected actions with shape ({self.num_envs}, action_dim), got {actions.shape}."
+            )
+
+        executed = actions.copy()
+        for env_idx in range(self.num_envs):
+            if episode_ids is not None:
+                self._states[env_idx].episode_id = episode_ids[env_idx]
+
+            state = self._states[env_idx]
+            if state.mark_drop_injection_on_next_step:
+                state.drop_injection_step = True
+                state.mark_drop_injection_on_next_step = False
+            else:
+                state.drop_injection_step = False
+            if env_idx not in self._selected or state.finished:
+                continue
+
+            if state.recovery_active:
+                if state.pending_first_recovery_action is not None:
+                    executed[env_idx] = state.pending_first_recovery_action
+                    state.pending_first_recovery_action = None
+                else:
+                    executed[env_idx] = self._next_recovery_action(env_idx, env=env)
+                state.episode_step += 1
+                continue
+
+            if state.falling:
+                state.drop_injection_step = True
+                hold = _fall_action(actions[env_idx])
+                rs_env = get_robosuite_env(env, env_idx=env_idx)
+                if state.fall_steps >= 1:
+                    grasped = is_object_grasped(rs_env, self.config.object_name)
+                    vz = float(get_object_linear_velocity(rs_env, self.config.object_name)[2])
+                    if not grasped and abs(vz) < _LANDING_VZ_THRESHOLD:
+                        state.low_vz_steps += 1
+                    else:
+                        state.low_vz_steps = 0
+
+                if state.low_vz_steps >= _LANDING_VZ_CONSECUTIVE:
+                    state.falling = False
+                    self._begin_post_fall_phase(state)
+                    executed[env_idx] = hold
+                    state.episode_step += 1
+                    continue
+
+                if state.fall_steps >= _FALL_TIMEOUT_STEPS:
+                    state.falling = False
+                    state.fall_aborted = True
+                    state.finished = True
+                    self._log_event(
+                        env_idx=env_idx,
+                        status="fall_aborted",
+                        telemetry=None,
+                        arm_q=get_arm_qpos(rs_env),
+                        proposed_action=actions[env_idx],
+                        executed_recovery_action=None,
+                        destination_pos=None,
+                    )
+                    executed[env_idx] = hold
+                    state.episode_step += 1
+                    continue
+
+                state.fall_steps += 1
+                executed[env_idx] = hold
+                state.episode_step += 1
+                continue
+
+            if state.triggered and not state.recovery_active:
+                if state.awaiting_manual_recovery:
+                    executed[env_idx] = actions[env_idx]
+                    state.episode_step += 1
+                    continue
+                if state.externally_scheduled_drop:
+                    state.externally_scheduled_drop = False
+                    executed[env_idx] = actions[env_idx]
+                    state.episode_step += 1
+                    continue
+                rs_env = get_robosuite_env(env, env_idx=env_idx)
+                grasped = is_object_grasped(rs_env, self.config.object_name)
+                in_basket = is_object_in_basket(
+                    rs_env,
+                    self.config.object_name,
+                    basket_name=self.config.basket_name,
+                )
+                if state.suppress_grasp_skip and not grasped:
+                    state.suppress_grasp_skip = False
+                dwell_target = int(self.config.post_drop_dwell_steps)
+                if in_basket or (grasped and not state.suppress_grasp_skip):
+                    if not state.recovery_active:
+                        state.recovery_skipped = True
+                        state.recovery_skip_reason = (
+                            "object_in_basket" if in_basket else "regrasp_during_dwell"
+                        )
+                    executed[env_idx] = actions[env_idx]
+                elif state.dwell_steps_completed >= dwell_target:
+                    if (grasped and not state.suppress_grasp_skip) or in_basket:
+                        executed[env_idx] = actions[env_idx]
+                        state.episode_step += 1
+                        continue
+                    proposed = actions[env_idx].copy()
+                    destination = self._start_recovery_planner(env, env_idx, state)
+                    recovery_action = self._next_recovery_action(env_idx, env=env)
+                    self._log_event(
+                        env_idx=env_idx,
+                        status="recovery_started",
+                        telemetry=None,
+                        arm_q=get_arm_qpos(rs_env),
+                        proposed_action=proposed,
+                        executed_recovery_action=recovery_action,
+                        destination_pos=destination,
+                    )
+                    executed[env_idx] = recovery_action
+                else:
+                    state.dwell_steps_completed += 1
+                    executed[env_idx] = actions[env_idx]
+                state.episode_step += 1
+                continue
+
+            if self._should_trigger(env, env_idx, state):
+                proposed = actions[env_idx].copy()
+                executed[env_idx] = self._trigger_drop(env, env_idx, state, proposed_action=proposed)
+                # This on_step's env.step is the first hold, so the next on_step
+                # may sample velocity. Scheduled drops stay at 0 until their step.
+                state.fall_steps = 1
+                state.drop_injection_step = True
+                state.episode_step += 1
+                continue
+
+            executed[env_idx] = actions[env_idx]
+            state.episode_step += 1
+
+        return executed
+
+    def _should_trigger(self, env: gym.Env | VectorEnv, env_idx: int, state: _EnvDropState) -> bool:
+        if state.triggered:
+            return False
+        if not (self.config.t_min <= state.episode_step <= self.config.t_max):
+            return False
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        if self.config.require_grasp and not is_object_grasped(rs_env, self.config.object_name):
+            state.eligible_since = None
+            return False
+        object_pose = get_object_pose(rs_env, self.config.object_name)
+        min_z = float(self.config.min_object_z)
+        if min_z > 0.0 and float(object_pose["pos"][2]) < min_z:
+            state.eligible_since = None
+            return False
+        if self.config.require_grasp:
+            # Reject false grasps (touching soup while holding another object).
+            eef_pos, _ = get_eef_pose(rs_env)
+            if float(np.linalg.norm(eef_pos - object_pose["pos"])) > 0.08:
+                state.eligible_since = None
+                return False
+        if state.eligible_since is None:
+            state.eligible_since = state.episode_step
+
+        basket_dist = object_basket_xy_distance(
+            rs_env, self.config.object_name, basket_name=self.config.basket_name
+        )
+        min_dist = float(self.config.min_drop_distance_from_basket_m)
+        if min_dist > 0.0 and basket_dist is not None:
+            hard = min(min_dist, HARD_BASKET_KEEPOUT_M)
+            # Inside the hard pocket: too late, skip (do not dump on the rim).
+            if basket_dist < hard:
+                return False
+            # Too close for recovery workspace — skip even if delay elapsed.
+            if basket_dist < min_dist:
+                return False
+
+        band_lo = self.config.drop_xy_band_min
+        band_hi = self.config.drop_xy_band_max
+        use_xy_band = band_lo is not None and band_hi is not None
+        target_m = getattr(self.config, "drop_xy_target_m", None)
+        if use_xy_band and target_m is not None:
+            if basket_dist is None:
+                return False
+            prev = state.prev_basket_xy_dist
+            if prev is None:
+                state.prev_basket_xy_dist = float(basket_dist)
+                return False
+            held = bool(
+                is_object_held_midair(
+                    rs_env,
+                    self.config.object_name,
+                    min_object_z=float(self.config.min_object_z),
+                    max_eef_distance=0.08,
+                )
+            )
+            reached = basket_distance_target_reached(
+                prev_m=float(prev),
+                curr_m=float(basket_dist),
+                target_m=float(target_m),
+                band_min_m=float(band_lo),
+                band_max_m=float(band_hi),
+                held_midair=held,
+            )
+            state.prev_basket_xy_dist = float(basket_dist)
+            if not reached:
+                return False
+        elif use_xy_band:
+            if basket_dist is None:
+                return False
+            if not (float(band_lo) <= float(basket_dist) <= float(band_hi)):
+                return False
+        else:
+            delay = int(self.config.post_grasp_delay_steps)
+            delay_ok = state.episode_step >= state.eligible_since + delay
+            if not delay_ok:
+                return False
+        if state.will_activate is None:
+            state.will_activate = bool(self._rng.random() < self.config.probability)
+        if not state.will_activate:
+            return False
+        # Record where/why only for the step that actually drops, so the logs
+        # never describe a drop that did not happen.
+        state.drop_basket_xy_dist = basket_dist
+        if use_xy_band and target_m is not None:
+            state.drop_trigger_reason = "xy_target"
+        else:
+            state.drop_trigger_reason = "xy_band" if use_xy_band else "delay_elapsed"
+        return True
+
+    def trigger_scheduled_drop(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        proposed_action: np.ndarray,
+        *,
+        reason: str = "scheduled",
+    ) -> np.ndarray:
+        """Apply a scheduled drop using configured dwell/reset/recovery semantics."""
+        if not self.config.enabled:
+            return np.asarray(proposed_action, dtype=np.float32)
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished or state.triggered:
+            return np.asarray(proposed_action, dtype=np.float32)
+        state.drop_trigger_reason = str(reason)
+        state.will_activate = True
+        executed = self._trigger_drop(env, env_idx, state, proposed_action=np.asarray(proposed_action))
+        state.externally_scheduled_drop = False
+        state.mark_drop_injection_on_next_step = True
+        return executed
+
+    def _trigger_drop(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        state: _EnvDropState,
+        *,
+        proposed_action: np.ndarray,
+    ) -> np.ndarray:
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        state.falling = True
+        state.fall_steps = 0
+        state.low_vz_steps = 0
+        state.externally_scheduled_drop = False
+        hold = _fall_action(proposed_action)
+        self._log_event(
+            env_idx=env_idx,
+            status="triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+            proposed_action=proposed_action,
+            executed_recovery_action=None,
+            destination_pos=None,
+        )
+        return hold
+
+    def _begin_post_fall_phase(self, state: _EnvDropState) -> None:
+        """After landing is confirmed, set up dwell / manual recovery / IK on next step."""
+        state.dwell_steps_completed = 0
+        dwell_steps = int(self.config.post_drop_dwell_steps)
+        if state.manual_recovery_after_fall:
+            state.manual_recovery_after_fall = False
+            state.awaiting_manual_recovery = True
+        elif dwell_steps > 0:
+            state.suppress_grasp_skip = True
+            if self.config.post_drop_mode == "reset_then_ik":
+                state.policy_reset_requested = True
+        elif self.config.post_drop_mode == "immediate_smolvla":
+            state.awaiting_manual_recovery = True
+
+    def trigger_manual_drop(self, env: gym.Env | VectorEnv, env_idx: int, *, reason: str = "manual") -> bool:
+        """Drop the configured object immediately without starting recovery.
+
+        This is the interactive counterpart to the automatic trigger. It shares
+        the configured impulse, settling, state bookkeeping, and event schema;
+        callers can later start recovery with :meth:`request_recovery`.
+        """
+        if not self.config.enabled:
+            return False
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished or state.triggered:
+            return False
+        state.drop_trigger_reason = reason
+        telemetry, rs_env = self._drop_object(env, env_idx, state)
+        state.triggered = True
+        state.falling = True
+        state.fall_steps = 0
+        state.low_vz_steps = 0
+        state.manual_recovery_after_fall = True
+        self._log_event(
+            env_idx=env_idx,
+            status="manual_triggered",
+            telemetry=telemetry,
+            arm_q=get_arm_qpos(rs_env),
+        )
+        return True
+
+    def _drop_object(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> tuple[dict[str, Any], Any]:
+        """Open the gripper in sim; fall continues over subsequent control steps."""
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        state.last_impulse_lin = np.zeros(3, dtype=np.float64)
+        state.last_impulse_ang = np.zeros(3, dtype=np.float64)
+        telemetry = midair_drop(
+            rs_env,
+            self.config.object_name,
+            settle_steps=self.config.settle_steps,
+            gripper_settle_steps=self.config.gripper_settle_steps,
+        )
+        return telemetry, rs_env
+
+    def request_recovery(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        *,
+        reason: str = "head",
+        consume_first_action: bool = True,
+    ) -> np.ndarray | None:
+        """Start IK recovery from current poses without a physics drop impulse.
+
+        If recovery is already active, returns the next recovery action without
+        rebuilding the planner. Set ``consume_first_action=False`` when a
+        :class:`DropRecoveryEnvWrapper` will execute the first action on its
+        next ``step``. If the fault is disabled, returns ``None``.
+        """
+        if not self.config.enabled:
+            return None
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise ValueError(f"env_idx {env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if env_idx not in self._selected or state.finished:
+            return None
+        if state.recovery_active:
+            return self._next_recovery_action(env_idx, env=env)
+
+        state.drop_trigger_reason = reason
+        state.awaiting_manual_recovery = False
+        destination = self._start_recovery_planner(env, env_idx, state)
+        recovery_action = self._next_recovery_action(env_idx, env=env) if consume_first_action else None
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        self._log_event(
+            env_idx=env_idx,
+            status="recovery_requested",
+            telemetry=None,
+            arm_q=get_arm_qpos(rs_env),
+            executed_recovery_action=recovery_action,
+            destination_pos=destination,
+        )
+        return recovery_action
+
+    def _start_recovery_planner(
+        self,
+        env: gym.Env | VectorEnv,
+        env_idx: int,
+        state: _EnvDropState,
+    ) -> np.ndarray:
+        """Build ``SimpleIKRecoveryPlanner`` from current EEF and object poses."""
+        rs_env = get_robosuite_env(env, env_idx=env_idx)
+        state.awaiting_manual_recovery = False
+        state.recovery_active = True
+
+        episode_seed = _episode_seed(self.config.seed, state.episode_id)
+        ep_rng = np.random.default_rng(episode_seed)
+        override = state.recovery_motion_override
+        if override is None:
+            speed_multiplier = float(
+                ep_rng.uniform(self.config.speed_multiplier_min, self.config.speed_multiplier_max)
+            )
+            arm_noise_rad = float(np.deg2rad(self.config.arm_posture_noise_deg))
+            arm_posture_noise = ep_rng.uniform(-arm_noise_rad, arm_noise_rad, size=3)
+            pickup_radius = float(self.config.pickup_via_offset_m) * float(np.sqrt(ep_rng.random()))
+            pickup_angle = float(ep_rng.uniform(-np.pi, np.pi))
+            pickup_offset_xy_m = (
+                pickup_radius * float(np.cos(pickup_angle)),
+                pickup_radius * float(np.sin(pickup_angle)),
+            )
+            transport_offset_m = float(
+                ep_rng.uniform(
+                    -self.config.transport_via_offset_m,
+                    self.config.transport_via_offset_m,
+                )
+            )
+        else:
+            speed_multiplier = override.speed_multiplier
+            arm_posture_noise = np.asarray(override.posture_bias_rad, dtype=np.float64)
+            pickup_offset_xy_m = override.pickup_offset_xy_m
+            transport_offset_m = override.transport_offset_m
+
+        state.episode_seed = episode_seed
+        state.speed_multiplier = speed_multiplier
+        state.waypoint_noise_m = float(self.config.waypoint_noise_m)
+        state.recovery_action_noise_std = float(self.config.recovery_action_noise_std)
+        state.arm_posture_noise_rad = arm_posture_noise.copy()
+
+        state.planner = SimpleIKRecoveryPlanner(
+            fps=resolve_target_fps(self.config.recovery_fps),
+            speed_multiplier=speed_multiplier,
+            waypoint_noise_m=self.config.waypoint_noise_m,
+            arm_posture_noise_rad=arm_posture_noise,
+            pickup_via_offset_xy_m=pickup_offset_xy_m,
+            transport_via_offset_m=transport_offset_m,
+            waypoint_blend_radius_m=self.config.waypoint_blend_radius_m,
+            basket_keepout_m=max(
+                float(self.config.min_drop_distance_from_basket_m),
+                HARD_BASKET_KEEPOUT_M,
+            ),
+            side_grasp_enabled=self.config.side_grasp_enabled,
+            seed=episode_seed,
+        )
+        eef_pos, eef_quat = get_eef_pose(rs_env)
+        object_pose = get_object_pose(rs_env, self.config.object_name)
+        if self.config.recovery_destination is not None:
+            destination = np.array(self.config.recovery_destination, dtype=float)
+        else:
+            destination = get_place_destination(
+                rs_env,
+                self.config.object_name,
+                basket_name=self.config.basket_name,
+            )
+        state.destination_pos = np.asarray(destination, dtype=np.float64).copy()
+        state.grasp_retries = 0
+        state.place_retries = 0
+        state.lost_grasp_steps = 0
+        state.planner.plan(
+            eef_pos=eef_pos,
+            eef_quat=eef_quat,
+            object_pos=object_pose["pos"],
+            object_axis=self._object_long_axis(rs_env),
+            destination_pos=destination,
+            gripper_open=True,
+            object_height_m=object_world_height(rs_env, self.config.object_name),
+        )
+        return np.asarray(destination, dtype=np.float64)
+
+    def _next_recovery_action(self, env_idx: int, *, env: gym.Env | VectorEnv | None = None) -> np.ndarray:
+        state = self._states[env_idx]
+        if state.planner is None:
+            raise RuntimeError(f"MidAirDropFault env {env_idx}: recovery_active without planner.")
+
+        eef_pos = None
+        object_pos = None
+        object_axis = None
+        closing_axis = None
+        rs_env = None
+        if env is not None:
+            rs_env = get_robosuite_env(env, env_idx=env_idx)
+            eef_pos, _ = get_eef_pose(rs_env)
+            object_pose = get_object_pose(rs_env, self.config.object_name)
+            object_pos = object_pose["pos"]
+            if self.config.side_grasp_enabled:
+                object_axis = self._object_long_axis(rs_env)
+                closing_axis = get_gripper_closing_axis(rs_env)
+
+        grasped = None if rs_env is None else bool(is_object_grasped(rs_env, self.config.object_name))
+        height_m = None if rs_env is None else object_world_height(rs_env, self.config.object_name)
+        action = state.planner.next_action(
+            eef_pos=eef_pos,
+            object_pos=object_pos,
+            closing_axis=closing_axis,
+            object_axis=object_axis,
+            object_grasped=grasped,
+            object_height_m=height_m,
+        )
+
+        # Snap gripper on phase transitions (Panda speed=0.01 never closes in time).
+        if rs_env is not None:
+            if state.planner.just_entered_close:
+                force_close_gripper(rs_env, gripper_settle_steps=self.config.gripper_settle_steps)
+            if state.planner.just_entered_open:
+                force_open_gripper(rs_env, gripper_settle_steps=self.config.gripper_settle_steps)
+                # Seat after the upcoming env.step physics (see after_physics_step).
+                state.pending_seat = True
+
+            phase = state.planner.phase_name
+            # Refresh basket aim once when entering place phases (not every step — chasing
+            # a basket we're brushing would never converge).
+            if phase in ("to_basket_hover", "open_place") and state.planner._wp_steps <= 1:
+                live_dest = get_place_destination(
+                    rs_env,
+                    self.config.object_name,
+                    basket_name=self.config.basket_name,
+                )
+                state.destination_pos = np.asarray(live_dest, dtype=np.float64).copy()
+                state.planner.retarget_basket(live_dest)
+
+            carrying = phase in CARRY_PHASES
+            grasped_now = is_object_grasped(rs_env, self.config.object_name)
+            obj_z_now = float(object_pos[2]) if object_pos is not None else 0.0
+
+            if carrying and grasped_now:
+                # Keep pads clamped — OSC steps otherwise let the speed-ramp loosen.
+                hold_gripper_closed(rs_env)
+                state.lost_grasp_steps = 0
+                if action is not None:
+                    action = action.copy()
+                    action[6] = 1.0
+                    # Slower lateral carry so the can doesn't slip out.
+                    action[:3] = np.clip(action[:3] * 0.65, -1.0, 1.0)
+            elif carrying and not grasped_now:
+                # _check_grasp flickers during OSC; only replan after sustained loss
+                # with the object back near the table.
+                state.lost_grasp_steps += 1
+                hold_gripper_closed(rs_env)
+                if action is not None:
+                    action = action.copy()
+                    action[6] = 1.0
+                truly_lost = state.lost_grasp_steps >= 8 and obj_z_now < 0.08
+                if truly_lost and state.grasp_retries < 4:
+                    state.grasp_retries += 1
+                    state.lost_grasp_steps = 0
+                    action = self._replan_pick(rs_env, state)
+
+            # After release, if the can missed the basket, pick and place again.
+            if (
+                phase == "retract_done"
+                and state.planner._wp_steps <= 1
+                and state.place_retries < 2
+                and not is_object_in_basket(
+                    rs_env, self.config.object_name, basket_name=self.config.basket_name
+                )
+            ):
+                state.place_retries += 1
+                action = self._replan_pick(rs_env, state)
+
+        if action is None:
+            # Planner finished. Hold position with the gripper open instead of
+            # replaying the last command: that command was a motion delta, so
+            # repeating it keeps driving the arm and can shove the can it just
+            # released out of the basket while the release physics settles.
+            # Returned unjittered — exploration noise past the end of the plan
+            # only disturbs the placed can.
+            hold = np.zeros(7, dtype=np.float32)
+            hold[6] = -1.0
+            state.last_recovery_action = hold.copy()
+            return hold
+
+        action = self._apply_recovery_action_noise(action, state)
+        state.last_recovery_action = action.copy()
+        return action
+
+    def _apply_recovery_action_noise(
+        self,
+        action: np.ndarray,
+        state: _EnvDropState,
+    ) -> np.ndarray:
+        noise_std = float(self.config.recovery_action_noise_std)
+        if noise_std <= 0:
+            return action
+        seed = state.episode_seed
+        if seed is None:
+            seed = _episode_seed(self.config.seed, state.episode_id)
+        noise_rng = np.random.default_rng(seed + state.episode_step * 1009)
+        noisy = action.copy()
+        noisy[:6] += noise_rng.normal(0.0, noise_std, size=6).astype(np.float32)
+        noisy[:6] = np.clip(noisy[:6], -1.0, 1.0)
+        return noisy
+
+    def after_physics_step(self, env: gym.Env | VectorEnv) -> None:
+        """Seat into basket after Gym physics, then freeze recovery.
+
+        Must run *after* ``env.step`` so the control cycle cannot eject a just-seated can.
+        """
+        for env_idx, state in enumerate(self._states):
+            if not state.pending_seat or state.planner is None:
+                continue
+            state.pending_seat = False
+            rs_env = get_robosuite_env(env, env_idx=env_idx)
+            # Physics-only check first (before any assistive seat).
+            in_basket = bool(
+                is_object_in_basket(
+                    rs_env,
+                    self.config.object_name,
+                    basket_name=self.config.basket_name,
+                    xy_tol=0.07,
+                    z_max=0.14,
+                )
+            )
+            seated = False
+            if not in_basket and self.config.seat_assist_enabled:
+                # Assist only when already above the rim (no cross-table teleport).
+                seated = seat_object_in_basket_if_above(
+                    rs_env,
+                    self.config.object_name,
+                    basket_name=self.config.basket_name,
+                )
+                if seated:
+                    state.seat_assisted = True
+                    for _ in range(40):
+                        rs_env.sim.step()
+            in_basket = bool(
+                is_object_in_basket(
+                    rs_env,
+                    self.config.object_name,
+                    basket_name=self.config.basket_name,
+                    xy_tol=0.07,
+                    z_max=0.14,
+                )
+            )
+            state.place_succeeded = in_basket
+            state.proof_object_pos = get_object_pose(rs_env, self.config.object_name)["pos"].astype(float)
+            state.proof_basket_pos = _body_xpos_safe(rs_env, self.config.basket_name)
+            # Freeze planner after the open/place attempt so the episode can end.
+            state.planner._done = True
+            state.planner._phase_name = "done"
+            state.planner._wp_idx = len(state.planner._waypoints)
+
+    def _object_long_axis(self, rs_env: Any) -> np.ndarray | None:
+        """World-frame long axis of the carried object, or ``None``.
+
+        Measured from the object's collision geometry, so it is correct for
+        assets whose mesh is not elongated along local +Z.
+        """
+        if not self.config.side_grasp_enabled:
+            return None
+        try:
+            return object_pose_orientation(rs_env, self.config.object_name)["axis"]
+        except Exception:
+            return None
+
+    def _replan_pick(self, rs_env: Any, state: _EnvDropState) -> np.ndarray:
+        """Open gripper and rebuild a pick→place plan from the current poses."""
+        force_open_gripper(rs_env, gripper_settle_steps=self.config.gripper_settle_steps)
+        eef_pos, eef_quat = get_eef_pose(rs_env)
+        object_pose = get_object_pose(rs_env, self.config.object_name)
+        dest = state.destination_pos
+        if dest is None:
+            dest = get_place_destination(
+                rs_env,
+                self.config.object_name,
+                basket_name=self.config.basket_name,
+            )
+        assert state.planner is not None
+        height_m = object_world_height(rs_env, self.config.object_name)
+        state.planner.replan_from(
+            eef_pos=eef_pos,
+            eef_quat=eef_quat,
+            object_pos=object_pose["pos"],
+            object_axis=self._object_long_axis(rs_env),
+            destination_pos=dest,
+            gripper_open=True,
+            object_height_m=height_m,
+        )
+        action = state.planner.next_action(
+            eef_pos=eef_pos,
+            object_pos=object_pose["pos"],
+            closing_axis=get_gripper_closing_axis(rs_env) if self.config.side_grasp_enabled else None,
+            object_axis=self._object_long_axis(rs_env),
+            object_grasped=False,
+            object_height_m=height_m,
+        )
+        if action is None:
+            action = np.zeros(7, dtype=np.float32)
+        return action
+
+    def post_drop_recovery_skipped(self, env_idx: int = 0) -> tuple[bool, str | None]:
+        """Return whether dwell ended with IK suppressed (regrasp / in-basket)."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        return state.recovery_skipped, state.recovery_skip_reason
+
+    def consume_policy_reset(self, env_idx: int = 0) -> bool:
+        """Return True once when the recorder should call ``policy.reset()``."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        if state.policy_reset_requested:
+            state.policy_reset_requested = False
+            return True
+        return False
+
+    def loss_mask_for_env(self, env_idx: int) -> float:
+        """Return ``loss_mask`` for the step that just completed."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self.post_step_state(env_idx)
+        # SmolVLA-after-drop episodes stay masked for the whole post-release
+        # tail, including dwell and any later motion. IK modes unmask when
+        # recovery_active starts.
+        if state.triggered and self.config.post_drop_mode == "immediate_smolvla":
+            return 0.0
+        post_drop_dwell = state.triggered and not state.recovery_active and not state.drop_injection_step
+        return loss_mask_from_fault(
+            triggered=state.triggered,
+            drop_injection_step=state.drop_injection_step,
+            recovery_active=state.recovery_active,
+            post_drop_dwell_step=post_drop_dwell,
+        )
+
+    def _log_event(
+        self,
+        *,
+        env_idx: int,
+        status: str,
+        telemetry: dict[str, Any] | None,
+        arm_q: np.ndarray | None,
+        proposed_action: np.ndarray | None = None,
+        executed_recovery_action: np.ndarray | None = None,
+        destination_pos: np.ndarray | None = None,
+    ) -> None:
+        if self.event_logger is None:
+            return
+        state = self._states[env_idx]
+        event: dict[str, Any] = {
+            "event": "midair_drop",
+            "status": status,
+            "fault_type": self.config.type,
+            "evaluation_episode_id": state.episode_id,
+            "vector_env_id": env_idx,
+            "episode_step": state.episode_step,
+            "t_min": self.config.t_min,
+            "t_max": self.config.t_max,
+            "object_name": self.config.object_name,
+            "require_grasp": self.config.require_grasp,
+            "seed": self.config.seed,
+            "recovery_active": state.recovery_active,
+        }
+        if proposed_action is not None:
+            event["proposed_action"] = proposed_action.astype(float).tolist()
+        if executed_recovery_action is not None:
+            event["executed_recovery_action"] = executed_recovery_action.astype(float).tolist()
+        if destination_pos is not None:
+            event["recovery_destination"] = destination_pos.astype(float).tolist()
+        if state.speed_multiplier is not None:
+            event["speed_multiplier"] = state.speed_multiplier
+        if state.waypoint_noise_m is not None:
+            event["waypoint_noise_m"] = state.waypoint_noise_m
+        if state.recovery_action_noise_std is not None:
+            event["recovery_action_noise_std"] = state.recovery_action_noise_std
+        if state.arm_posture_noise_rad is not None:
+            event["arm_posture_noise_rad"] = state.arm_posture_noise_rad.astype(float).tolist()
+        if state.episode_seed is not None:
+            event["episode_seed"] = state.episode_seed
+        if state.last_impulse_lin is not None:
+            event["impulse_lin"] = state.last_impulse_lin.astype(float).tolist()
+        if state.last_impulse_ang is not None:
+            event["impulse_ang"] = state.last_impulse_ang.astype(float).tolist()
+        event["post_grasp_delay_steps"] = int(self.config.post_grasp_delay_steps)
+        event["min_drop_distance_from_basket_m"] = float(self.config.min_drop_distance_from_basket_m)
+        if state.drop_basket_xy_dist is not None:
+            event["drop_basket_xy_dist"] = float(state.drop_basket_xy_dist)
+        if state.drop_trigger_reason is not None:
+            event["drop_trigger_reason"] = state.drop_trigger_reason
+        event["post_drop_dwell_steps"] = int(self.config.post_drop_dwell_steps)
+        event["post_drop_mode"] = str(self.config.post_drop_mode)
+        if self.config.drop_xy_band_min is not None:
+            event["drop_xy_band_min"] = float(self.config.drop_xy_band_min)
+        if self.config.drop_xy_band_max is not None:
+            event["drop_xy_band_max"] = float(self.config.drop_xy_band_max)
+        if telemetry is not None:
+            event["object_pose"] = telemetry.get("object_pose_after", telemetry.get("object_pose_before"))
+            event["arm_q"] = telemetry.get("arm_q", arm_q.tolist() if arm_q is not None else None)
+            if state.last_impulse_lin is not None and state.last_impulse_ang is not None:
+                event["impulse"] = {
+                    "lin_vel": state.last_impulse_lin.astype(float).tolist(),
+                    "ang_vel": state.last_impulse_ang.astype(float).tolist(),
+                }
+            else:
+                event["impulse"] = telemetry.get("impulse")
+        self.event_logger.log(event)

@@ -13,7 +13,7 @@ Needed: **one** LeRobot dataset fit for VLA finetuning / drop detection, with fi
 ## Non-goals
 
 - New frame-level columns (`controller`, `post_drop_mode`, `run_class`, `episode_success` on parquet frames).
-- Changing `is_failure` / `failure_onset` / `failure_type` / `injection_active` / `phase` semantics (already implemented in `lerobot.faults.annotation`).
+- Changing `is_failure` / `failure_onset` / `failure_type` / `injection_active` / `phase` semantics (already implemented in `lerobot_faults.annotation`).
 - GraspGen / cuRobo.
 - Per-step action noise.
 - Resume into a non-empty output dir.

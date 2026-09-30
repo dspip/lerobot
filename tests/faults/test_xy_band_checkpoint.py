@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lerobot.faults.recovery.xy_band_checkpoint import (
+from lerobot_faults.recovery.xy_band_checkpoint import (
     BOUNDARY_DIAG_SEED_MAX,
     BOUNDARY_DIAG_SEED_MIN,
     PILOT_DROP_SEEDS,
@@ -27,10 +27,10 @@ from lerobot.faults.recovery.xy_band_checkpoint import (
     is_blocked_checkpoint_seed,
     is_near_duplicate_drop,
     landing_on_table_not_basket,
-    used_checkpoint_seeds,
     rejection_reason,
     should_keep_checkpoint_drop,
     should_keep_checkpoint_nominal,
+    used_checkpoint_seeds,
 )
 
 
@@ -164,7 +164,7 @@ def test_copy_pilot_into_checkpoint(tmp_path: Path) -> None:
 def test_unwrap_libero_env_accepts_vector_env_with_envs() -> None:
     from types import SimpleNamespace
 
-    from lerobot.faults.sim.libero import unwrap_libero_env
+    from lerobot_faults.sim.libero import unwrap_libero_env
 
     inner = SimpleNamespace(_env=object(), _task_bddl_file="dummy.bddl")
     vec = SimpleNamespace(envs=[inner])

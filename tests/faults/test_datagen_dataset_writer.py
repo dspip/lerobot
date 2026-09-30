@@ -21,11 +21,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from lerobot.faults.annotation import default_failure_frame
-from lerobot.faults.config import FaultInjectionConfig
-from lerobot.faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
-from lerobot.faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
-from lerobot.faults.datagen.dataset_writer import (
+from lerobot_faults.annotation import default_failure_frame
+from lerobot_faults.config import FaultInjectionConfig
+from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+from lerobot_faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
+from lerobot_faults.datagen.dataset_writer import (
     DatagenEpisodeSession,
     RunDatasetFinalizeError,
     RunDatasetWriter,
@@ -34,27 +34,27 @@ from lerobot.faults.datagen.dataset_writer import (
     variant_dataset_directory,
     variant_repo_id,
 )
-from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.frame_logging import (
+from lerobot_faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot_faults.datagen.frame_logging import (
     POST_STEP_LOGGING_CONTRACT,
     log_post_step_to_session,
     loss_mask_for_datagen_env,
 )
-from lerobot.faults.datagen.manifest import (
+from lerobot_faults.datagen.manifest import (
     EPISODE_METADATA_FIELDS,
     RunManifest,
     build_episode_metadata_row,
     read_run_manifest,
     write_run_manifest_atomic,
 )
-from lerobot.faults.datagen.paired_context import build_paired_episode_plan
-from lerobot.faults.datagen.recipe import (
+from lerobot_faults.datagen.paired_context import build_paired_episode_plan
+from lerobot_faults.datagen.recipe import (
     DatagenController,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot.faults.datagen.runner import run_drop_datagen_matrix
-from lerobot.faults.factory import make_midair_drop_fault
+from lerobot_faults.datagen.runner import run_drop_datagen_matrix
+from lerobot_faults.factory import make_midair_drop_fault
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
@@ -381,7 +381,7 @@ def test_post_step_logging_contract_documented() -> None:
 
 def test_log_post_step_attempt_index_after_terminal_done() -> None:
     """Terminal notify_dones must not wipe post-drop dwell labels on the last frame."""
-    from lerobot.faults.datagen.recording_views import build_datagen_frame_labels
+    from lerobot_faults.datagen.recording_views import build_datagen_frame_labels
 
     logger = _RecordingLogger(Path("/tmp/unused"))
     session = DatagenEpisodeSession(
@@ -537,43 +537,43 @@ def test_simple_ik_adapter_receives_episode_session(tmp_path: Path, monkeypatch:
 
     def _fake_loop(*args: Any, **kwargs: Any) -> Any:
         seen.append(kwargs.get("episode_session"))
-        from lerobot.faults.datagen.controllers import simple_ik as mod
+        from lerobot_faults.datagen.controllers import simple_ik as mod
 
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.run_simple_ik_episode_loop",
+        "lerobot_faults.datagen.controllers.simple_ik.run_simple_ik_episode_loop",
         _fake_loop,
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.make_env",
+        "lerobot_faults.datagen.controllers.simple_ik.make_env",
         lambda *a, **k: {"libero_object": {0: MagicMock()}},
     )
     mock_env = MagicMock()
     mock_env.fault = MagicMock()
     mock_env.fault.set_recovery_motion_profile = MagicMock()
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.DropRecoveryEnvWrapper",
+        "lerobot_faults.datagen.controllers.simple_ik.DropRecoveryEnvWrapper",
         lambda *a, **k: mock_env,
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.unwrap_libero_env",
+        "lerobot_faults.datagen.controllers.simple_ik.unwrap_libero_env",
         lambda v: MagicMock(_init_states=[0], init_state_id=0),
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.get_robosuite_env",
+        "lerobot_faults.datagen.controllers.simple_ik.get_robosuite_env",
         lambda e, i=0: MagicMock(),
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.apply_serializable_layout",
+        "lerobot_faults.datagen.controllers.simple_ik.apply_serializable_layout",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik.read_control_freq",
+        "lerobot_faults.datagen.controllers.simple_ik.read_control_freq",
         lambda rs: 20,
     )
     monkeypatch.setattr(
-        "lerobot.faults.datagen.controllers.simple_ik._new_planner",
+        "lerobot_faults.datagen.controllers.simple_ik._new_planner",
         lambda *a, **k: MagicMock(phase_name="lift", carry_path=None, done=False),
     )
 
@@ -609,7 +609,7 @@ def test_runner_integrates_dataset_writer(tmp_path: Path) -> None:
             )
             return EpisodeResult.from_run(request, success=True, outcome="ok")
 
-    from lerobot.faults.datagen.layout_provider import LayoutProviderContext
+    from lerobot_faults.datagen.layout_provider import LayoutProviderContext
 
     def _layout(_ctx: LayoutProviderContext) -> dict:
         return _FAKE_LAYOUT

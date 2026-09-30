@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from lerobot.faults.datagen.merge_shards import MergeShardsError, merge_drop_datagen_shards
+from lerobot_faults.datagen.merge_shards import MergeShardsError, merge_drop_datagen_shards
 
 
 def _build_parser() -> argparse.ArgumentParser:

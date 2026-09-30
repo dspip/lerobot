@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to write boundary diag into xy_band_pilot output.", flush=True)
         return 2
 
-    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
+    from lerobot_faults.datagen.smolvla_pipeline import run_pipeline
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     episodes_root = args.output_dir / "episodes"

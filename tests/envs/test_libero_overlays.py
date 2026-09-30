@@ -18,10 +18,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from lerobot.envs.libero_overlays import apply_overlay, load_overlay_config
-from lerobot.envs.libero_overlays.bddl import patch_bddl
-from lerobot.envs.libero_overlays.config import AddObjectSpec, LiberoOverlayConfig
+from lerobot_env_libero_overlay import apply_overlay, load_overlay_config
+from lerobot_env_libero_overlay.bddl import patch_bddl
+from lerobot_env_libero_overlay.config import AddObjectSpec, LiberoOverlayConfig
 
 SAMPLE_BDDL = """\
 (define (problem LIBERO_Floor_Manipulation)
@@ -102,14 +101,14 @@ def test_add_injects_object_region_and_init(tmp_path: Path):
     assert "(On red_cube_1 floor_red_cube_init_region)" in patched
     # Original objects remain.
     assert "tomato_sauce_1 - tomato_sauce" in patched
-    from lerobot.envs.libero_overlays.bddl import assert_balanced_parens
+    from lerobot_env_libero_overlay.bddl import assert_balanced_parens
 
     assert_balanced_parens(patched)
 
 
 def test_add_on_real_libero_bddl_keeps_region_structure():
     """Regression: nested (:ranges ...) must not truncate the :regions block."""
-    from lerobot.envs.libero_overlays.bddl import assert_balanced_parens, patch_bddl
+    from lerobot_env_libero_overlay.bddl import assert_balanced_parens, patch_bddl
 
     try:
         from libero.libero import get_libero_path
@@ -226,7 +225,7 @@ def test_example_objects_package_imports():
     """`objects_module: ./objects` must load as a package (relative imports)."""
     pytest.importorskip("libero")
     pytest.importorskip("robosuite")
-    from lerobot.envs.libero_overlays.objects import import_objects_module
+    from lerobot_env_libero_overlay.objects import import_objects_module
 
     root = Path(__file__).resolve().parents[2] / "examples" / "libero_overlays"
     imported = import_objects_module("./objects", relative_to=root)
@@ -234,8 +233,9 @@ def test_example_objects_package_imports():
 
 
 def test_libero_env_config_default_has_no_overlay():
+    from lerobot_env_libero_overlay.env_config import LiberoOverlayEnvConfig
+
     from lerobot.envs.configs import LiberoEnv
-    from lerobot.envs.libero_overlays.env_config import LiberoOverlayEnvConfig
 
     cfg = LiberoEnv(task="libero_object", task_ids=[5])
     assert not hasattr(cfg, "overlay")

@@ -18,13 +18,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lerobot.datasets.success_filter import (
+from lerobot.utils.constants import SUCCESS
+from lerobot_faults.eval_cli import FaultEvalConfig
+from lerobot_faults.success_filter import (
     filter_successful_episodes,
     finish_eval_recorded_episode,
     list_successful_episode_indices,
 )
-from lerobot.faults.eval_cli import FaultEvalConfig
-from lerobot.utils.constants import SUCCESS
 
 
 def test_eval_config_success_only_requires_recording():

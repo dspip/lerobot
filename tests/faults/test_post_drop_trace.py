@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from lerobot.faults.recovery.post_drop_trace import summarize_post_drop_trace
+from lerobot_faults.recovery.post_drop_trace import summarize_post_drop_trace
 
 
 def _frame(

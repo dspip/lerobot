@@ -51,7 +51,7 @@ def _info_flag(info: Any, key: str) -> bool | None:
 
 def _pre_drop_block(rs: Any, state: Any, config: Any) -> str:
     """Why ``_should_trigger`` would refuse on this step. Mirrors that function."""
-    from lerobot.faults.sim.libero import (
+    from lerobot_faults.sim.libero import (
         get_eef_pose,
         get_object_pose,
         is_object_grasped,
@@ -72,7 +72,7 @@ def _pre_drop_block(rs: Any, state: Any, config: Any) -> str:
     basket_dist = object_basket_xy_distance(rs, config.object_name, basket_name=config.basket_name)
     min_dist = float(config.min_drop_distance_from_basket_m)
     if min_dist > 0.0 and basket_dist is not None:
-        from lerobot.faults.recovery.midair_drop import HARD_BASKET_KEEPOUT_M
+        from lerobot_faults.recovery.midair_drop import HARD_BASKET_KEEPOUT_M
 
         if basket_dist < min(min_dist, float(HARD_BASKET_KEEPOUT_M)):
             return "hard_keepout"
@@ -94,7 +94,7 @@ def _pre_drop_block(rs: Any, state: Any, config: Any) -> str:
 
 def _disable_libero_autoreset(env: Any) -> None:
     """Keep the LIBERO scene after success/horizon when recovery is inactive."""
-    from lerobot.faults.sim.libero import unwrap_libero_env
+    from lerobot_faults.sim.libero import unwrap_libero_env
 
     target = env
     if hasattr(target, "envs"):
@@ -124,7 +124,7 @@ def _disable_libero_autoreset(env: Any) -> None:
 
 
 def _install_diagnostic_trigger_drop(fault: Any) -> None:
-    from lerobot.faults.sim.libero import get_arm_qpos
+    from lerobot_faults.sim.libero import get_arm_qpos
 
     def diagnostic_trigger_drop(
         self: Any,
@@ -159,7 +159,7 @@ def _wrist_object_visible(rs: Any, object_name: str, *, width: int = 256, height
     try:
         import mujoco
 
-        from lerobot.faults.sim.libero import get_object_pose
+        from lerobot_faults.sim.libero import get_object_pose
 
         sim = rs.sim
         model = getattr(sim.model, "_model", sim.model)
@@ -192,7 +192,7 @@ def _build_frame(
     t_since_drop: int,
     executed_action: np.ndarray,
 ) -> dict[str, Any]:
-    from lerobot.faults.sim.libero import (
+    from lerobot_faults.sim.libero import (
         get_eef_pose,
         get_object_pose,
         is_object_grasped,
@@ -268,8 +268,8 @@ def run_seed(
     task: str,
     reset_policy_on_drop: bool = False,
 ) -> dict[str, Any]:
-    from lerobot.faults.sim.libero import get_object_pose, get_robosuite_env
     from lerobot.utils.random_utils import set_seed
+    from lerobot_faults.sim.libero import get_object_pose, get_robosuite_env
 
     set_seed(seed)
     observation, _info = env.reset(seed=seed)
@@ -414,21 +414,21 @@ def main(argv: list[str] | None = None) -> int:
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.envs.configs import LiberoEnv
     from lerobot.envs.factory import make_env, make_env_pre_post_processors
-    from lerobot.faults.config import FaultInjectionConfig
-    from lerobot.faults.recovery.fps import (
+    from lerobot.policies.factory import make_policy, make_pre_post_processors
+    from lerobot_faults.config import FaultInjectionConfig
+    from lerobot_faults.recovery.fps import (
         DEFAULT_LIBERO_CONTROL_FREQ,
         SMOLVLA_LIBERO_TARGET_FPS,
         configure_libero_control_freq,
     )
-    from lerobot.faults.recovery.libero_hook import install_libero_control_freq_hook
-    from lerobot.faults.recovery.post_drop_trace import aggregate_seed_summaries, summarize_post_drop_trace
-    from lerobot.faults.recovery.recording_recipe import (
+    from lerobot_faults.recovery.libero_hook import install_libero_control_freq_hook
+    from lerobot_faults.recovery.post_drop_trace import aggregate_seed_summaries, summarize_post_drop_trace
+    from lerobot_faults.recovery.recording_recipe import (
         sample_post_grasp_delay_steps,
         training_midair_drop_kwargs,
     )
-    from lerobot.faults.sim.libero import unwrap_libero_env
-    from lerobot.faults.wrappers import DropRecoveryEnvWrapper
-    from lerobot.policies.factory import make_policy, make_pre_post_processors
+    from lerobot_faults.sim.libero import unwrap_libero_env
+    from lerobot_faults.wrappers import DropRecoveryEnvWrapper
 
     policy_path = "lerobot/smolvla_libero"
     control_freq_target = DEFAULT_LIBERO_CONTROL_FREQ

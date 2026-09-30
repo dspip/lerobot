@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from lerobot.faults.datagen.motion_profile import sample_episode_motion_profile
-from lerobot.faults.datagen.recipe import SimpleIKRecipe
+from lerobot_faults.datagen.motion_profile import sample_episode_motion_profile
+from lerobot_faults.datagen.recipe import SimpleIKRecipe
 
 
 def _recipe(*, enabled: bool = True) -> SimpleIKRecipe:

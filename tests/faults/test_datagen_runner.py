@@ -20,16 +20,16 @@ from typing import Any
 import numpy as np
 import pytest
 
-from lerobot.faults.datagen.dataset_writer import DatagenEpisodeSession, RunDatasetWriter
-from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot.faults.datagen.layout_provider import LayoutProviderContext
-from lerobot.faults.datagen.recipe import (
+from lerobot_faults.datagen.dataset_writer import DatagenEpisodeSession, RunDatasetWriter
+from lerobot_faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot_faults.datagen.layout_provider import LayoutProviderContext
+from lerobot_faults.datagen.recipe import (
     DatagenController,
     PostDropMode,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot.faults.datagen.runner import (
+from lerobot_faults.datagen.runner import (
     DropDatagenRunnerError,
     run_drop_datagen_matrix,
     variant_output_directory,
@@ -339,7 +339,7 @@ def test_keyboard_interrupt_discards_partial_episode_keeps_prior_commits(tmp_pat
     assert len(writer.episode_rows) == 2
     manifest_path = Path(recipe.recording.output_dir) / "run_manifest.json"
     assert manifest_path.is_file()
-    from lerobot.faults.datagen.manifest import read_run_manifest
+    from lerobot_faults.datagen.manifest import read_run_manifest
 
     loaded = read_run_manifest(manifest_path)
     assert loaded.run_status.value == "aborted"
@@ -419,7 +419,7 @@ def test_record_episode_outcome_commit_failure_leaves_no_manifest_row(tmp_path: 
     assert len(writer.episode_rows) == 2
     manifest_path = Path(recipe.recording.output_dir) / "run_manifest.json"
     assert manifest_path.is_file()
-    from lerobot.faults.datagen.manifest import read_run_manifest
+    from lerobot_faults.datagen.manifest import read_run_manifest
 
     loaded = read_run_manifest(manifest_path)
     assert loaded.run_status.value == "aborted"

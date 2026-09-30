@@ -96,7 +96,7 @@ from pathlib import Path
 
 import pytest
 
-from lerobot.faults.datagen.recipe import RecipeError, load_recipe
+from lerobot_faults.datagen.recipe import RecipeError, load_recipe
 
 
 def test_load_recipe_reads_q_and_object(tmp_path: Path):
@@ -173,7 +173,7 @@ Expected: PASS
 - Test: `tests/faults/test_datagen_drop_timing.py`
 
 **Interfaces:**
-- Consumes: `HARD_BASKET_KEEPOUT_M` from `lerobot.faults.recovery.midair_drop`
+- Consumes: `HARD_BASKET_KEEPOUT_M` from `lerobot_faults.recovery.midair_drop`
 - Produces:
   - `canonicalize_phase(name: str) -> str` (`to_container` → `to_basket_hover`; other names unchanged)
   - `keepout_m(min_drop_distance_from_basket_m: float) -> float` = `max(min_drop, HARD_BASKET_KEEPOUT_M)`
@@ -187,7 +187,7 @@ Expected: PASS
 ```python
 import numpy as np
 
-from lerobot.faults.datagen.drop_timing import (
+from lerobot_faults.datagen.drop_timing import (
     DropDecision,
     TraceFrame,
     eligible_indices,
@@ -299,8 +299,8 @@ Rules: for each object independently sample `dx,dy ~ Unif[-xy_range, xy_range]` 
 ```python
 import numpy as np
 
-from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
-from lerobot.faults.datagen.recipe import PlacementRecipe
+from lerobot_faults.datagen.layout import ObjectPose2d, sample_layout
+from lerobot_faults.datagen.recipe import PlacementRecipe
 
 
 def _place(**kwargs):
@@ -394,7 +394,7 @@ Minimum `kind` strings used later: `recipe`, `layout_ok`, `layout_failed`, `plan
 ```python
 from pathlib import Path
 
-from lerobot.faults.datagen.events import DatagenEventLog
+from lerobot_faults.datagen.events import DatagenEventLog
 
 
 def test_emit_writes_jsonl_and_listeners(tmp_path: Path, capsys):
@@ -453,7 +453,7 @@ def should_autoscroll(yview_hi: float) -> bool:
 Test:
 
 ```python
-from lerobot.faults.datagen.events import should_autoscroll
+from lerobot_faults.datagen.events import should_autoscroll
 
 def test_should_autoscroll():
     assert should_autoscroll(1.0) is True
@@ -532,7 +532,7 @@ Apply pose: `dx, dy = new_xy - reset_xy`; `offset_object_xy_on_table(rs, name, d
 - [ ] **Step 1: Smoke-test without LIBERO** — add `tests/faults/test_datagen_runner_helpers.py`:
 
 ```python
-from lerobot.faults.datagen.drop_timing import TraceFrame, eligible_indices, sample_drop
+from lerobot_faults.datagen.drop_timing import TraceFrame, eligible_indices, sample_drop
 import numpy as np
 
 def test_two_pass_uses_pass_a_trace_not_live_resample():
