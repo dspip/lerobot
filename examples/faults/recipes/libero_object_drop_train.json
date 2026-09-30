@@ -81,7 +81,6 @@
     "base_seed": 20000,
     "output_dir": "outputs/datasets/libero_object_drop_v1/train",
     "dataset_fps": 10,
-    "master_fps": 20,
     "episodes": 800
   },
   "experiment_matrix": [

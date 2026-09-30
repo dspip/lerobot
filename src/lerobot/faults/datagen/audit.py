@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from lerobot.faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
-from lerobot.faults.datagen.manifest import RunStatus, read_run_manifest
+from lerobot.faults.datagen.manifest import RunStatus
 
 __all__ = ["AuditReport", "audit_drop_run"]
 
@@ -105,6 +105,60 @@ def _load_manifest(run_dir: Path) -> dict[str, Any]:
     return raw
 
 
+def _audit_tick_spacing(
+    report: AuditReport,
+    df: pd.DataFrame,
+    *,
+    kind: str = "lo_tick_spacing",
+) -> None:
+    for ep in sorted(df.episode_index.unique()):
+        frames = df[df.episode_index == ep]
+        tl = _scalar(frames.tick_index)
+        if tl.size == 0:
+            continue
+        if tl[0] != 0:
+            report.record(kind, f"ep {ep} head {tl[:5]}")
+            continue
+        if tl.size == 1:
+            continue
+        diffs = np.unique(np.diff(tl))
+        if len(diffs) != 1 or int(diffs[0]) not in (1, 2):
+            report.record(kind, f"ep {ep} head {tl[:5]}")
+
+
+def _audit_drop_labels(report: AuditReport, df: pd.DataFrame) -> dict[int, dict[str, Any]]:
+    by_ep: dict[int, dict[str, Any]] = {}
+    for ep in sorted(df.episode_index.unique()):
+        h = df[df.episode_index == ep]
+        hs = np.stack(h["observation.state"].values)
+        rel = np.flatnonzero(_scalar(h.drop_release).astype(bool)) if "drop_release" in h else np.array([])
+        ev = _scalar(h.drop_event).astype(bool) if "drop_event" in h else np.array([], dtype=bool)
+        att = _scalar(h.attempt_index) if "attempt_index" in h else np.array([])
+        fail = _scalar(h.is_failure).astype(bool) if "is_failure" in h else np.array([], dtype=bool)
+        if len(rel) == 0:
+            if ev.any() or (len(att) and att.any()):
+                report.record("nodrop_has_drop_labels", f"ep {ep}")
+            if fail.any():
+                report.record("nodrop_is_failure", f"ep {ep}")
+            by_ep[int(ep)] = {"drop": False, "state": hs}
+            continue
+        if len(rel) != 1:
+            report.record("multiple_releases", f"ep {ep} releases {rel}")
+        r = int(rel[0])
+        evi = np.flatnonzero(ev)
+        if evi.size == 0 or evi[0] != r or not (np.diff(evi) == 1).all():
+            report.record("drop_event_not_contiguous_from_release", f"ep {ep} rel {r}")
+            by_ep[int(ep)] = {"drop": True, "state": hs, "release": r}
+            continue
+        land_end = int(evi[-1])
+        if att[: land_end + 1].any() or not (att[land_end + 1 :] == 1).all():
+            report.record("attempt_index", f"ep {ep} land_end {land_end}")
+        if fail[:r].any():
+            report.record("is_failure_before_release", f"ep {ep}")
+        by_ep[int(ep)] = {"drop": True, "state": hs, "release": r, "fall_ticks": len(evi)}
+    return by_ep
+
+
 def _audit_cross_view(
     report: AuditReport,
     lo: pd.DataFrame,
@@ -114,7 +168,6 @@ def _audit_cross_view(
     hi_dt: float = 0.05,
     lo_dt: float = 0.1,
 ) -> dict[int, dict[str, Any]]:
-    by_ep: dict[int, dict[str, Any]] = {}
     for ep in sorted(hi.episode_index.unique()):
         h = hi[hi.episode_index == ep]
         l = lo[lo.episode_index == ep]
@@ -156,32 +209,7 @@ def _audit_cross_view(
             if not np.array_equal(expect, lp):
                 report.record(f"pulse_mismatch_{col}", f"ep {ep}")
 
-        rel = np.flatnonzero(_scalar(h.drop_release).astype(bool)) if "drop_release" in h else np.array([])
-        ev = _scalar(h.drop_event).astype(bool) if "drop_event" in h else np.array([], dtype=bool)
-        att = _scalar(h.attempt_index) if "attempt_index" in h else np.array([])
-        fail = _scalar(h.is_failure).astype(bool) if "is_failure" in h else np.array([], dtype=bool)
-        if len(rel) == 0:
-            if ev.any() or (len(att) and att.any()):
-                report.record("nodrop_has_drop_labels", f"ep {ep}")
-            if fail.any():
-                report.record("nodrop_is_failure", f"ep {ep}")
-            by_ep[int(ep)] = {"drop": False, "state": hs}
-            continue
-        if len(rel) != 1:
-            report.record("multiple_releases", f"ep {ep} releases {rel}")
-        r = int(rel[0])
-        evi = np.flatnonzero(ev)
-        if evi.size == 0 or evi[0] != r or not (np.diff(evi) == 1).all():
-            report.record("drop_event_not_contiguous_from_release", f"ep {ep} rel {r}")
-            by_ep[int(ep)] = {"drop": True, "state": hs, "release": r}
-            continue
-        land_end = int(evi[-1])
-        if att[: land_end + 1].any() or not (att[land_end + 1 :] == 1).all():
-            report.record("attempt_index", f"ep {ep} land_end {land_end}")
-        if fail[:r].any():
-            report.record("is_failure_before_release", f"ep {ep}")
-        by_ep[int(ep)] = {"drop": True, "state": hs, "release": r, "fall_ticks": len(evi)}
-    return by_ep
+    return _audit_drop_labels(report, hi)
 
 
 def _audit_pairs(
@@ -229,15 +257,23 @@ def _audit_failure_segments(report: AuditReport, run_dir: Path, view: str, lo: p
         seg_ep = seg[seg.episode_index == ep_i]
         if frames.empty:
             continue
-        tick = _scalar(frames.tick_index) if "tick_index" in frames else None
-        if tick is not None and "drop_release" in frames:
+        if "drop_release" in frames:
             rel_frames = np.flatnonzero(_scalar(frames.drop_release).astype(bool))
             seg_rel = seg_ep[seg_ep.get("has_drop", False) == True]  # noqa: E712
+            if len(rel_frames) >= 1 and seg_rel.empty:
+                report.record("segment_missing_drop_row", f"ep {ep_i}")
             if len(rel_frames) == 1 and not seg_rel.empty:
                 rf = int(rel_frames[0])
                 sf = seg_rel.iloc[0].get("release_frame")
                 if sf is not None and pd.notna(sf) and int(sf) != rf:
                     report.record("segment_release_frame", f"ep {ep_i} frame {rf} vs seg {sf}")
+        if "attempt_index" in frames:
+            att = _scalar(frames.attempt_index)
+            if att.size and att.max() >= 1:
+                has_att = "attempt_index" in seg_ep.columns and not seg_ep.empty
+                seg_att = _scalar(seg_ep.attempt_index) if has_att else np.array([])
+                if not (seg_att.size and seg_att.max() >= 1):
+                    report.record("segment_missing_attempt1", f"ep {ep_i}")
 
 
 def _audit_splits(report: AuditReport, run_dir: Path, view: str) -> None:
@@ -317,6 +353,9 @@ def audit_drop_run(
         _audit_pairs(report, by_ep, manifest_raw)
     else:
         report.summary["cross_view_skipped"] = True
+        _audit_tick_spacing(report, lo, kind="lo_tick_spacing")
+        by_ep = _audit_drop_labels(report, lo)
+        _audit_pairs(report, by_ep, manifest_raw)
 
     _audit_failure_segments(report, run_dir, VIEW_DATASET, lo)
     _audit_splits(report, run_dir, VIEW_DATASET)

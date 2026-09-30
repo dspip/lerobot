@@ -75,7 +75,6 @@
     "base_seed": 30000,
     "output_dir": "outputs/datasets/libero_object_drop_v1/heldout_objects",
     "dataset_fps": 10,
-    "master_fps": 20,
     "episodes": 100
   },
   "experiment_matrix": [

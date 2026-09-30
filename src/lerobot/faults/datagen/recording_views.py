@@ -30,6 +30,7 @@ __all__ = [
     "mujoco_sim_time_s",
     "DROP_WINDOW_PAD_FRAMES",
     "drop_window_bounds",
+    "release_and_landing_ticks",
     "offer_tick_to_views",
     "should_log_view_tick",
     "tick_in_drop_window",
@@ -117,18 +118,8 @@ def tick_index_at_or_after_frame(tick: int, *, stride: int) -> int:
     return (tick // step) + 1
 
 
-def drop_window_bounds(
-    snapshots: list[Any],
-    *,
-    pad_frames: int = DROP_WINDOW_PAD_FRAMES,
-    dataset_stride: int,
-) -> tuple[int, int] | None:
-    """Control-tick inclusive bounds for the short drop label.
-
-    The pad is ``pad_frames`` of the 10 fps view (``dataset_stride`` control ticks
-    per stored frame). The window is the fall plus that pad before the release
-    and after the last falling tick. ``None`` when the episode never released.
-    """
+def release_and_landing_ticks(snapshots: list[Any]) -> tuple[int | None, int | None, int | None]:
+    """Return ``(release_tick, landing_tick, last_event_tick)`` from per-tick labels."""
     release_tick: int | None = None
     landing_tick: int | None = None
     last_event_tick: int | None = None
@@ -142,6 +133,22 @@ def drop_window_bounds(
         if prev_drop_event and not bool(snap.drop_event) and landing_tick is None:
             landing_tick = tick
         prev_drop_event = bool(snap.drop_event)
+    return release_tick, landing_tick, last_event_tick
+
+
+def drop_window_bounds(
+    snapshots: list[Any],
+    *,
+    pad_frames: int = DROP_WINDOW_PAD_FRAMES,
+    dataset_stride: int,
+) -> tuple[int, int] | None:
+    """Control-tick inclusive bounds for the short drop label.
+
+    The pad is ``pad_frames`` of the 10 fps view (``dataset_stride`` control ticks
+    per stored frame). The window is the fall plus that pad before the release
+    and after the last falling tick. ``None`` when the episode never released.
+    """
+    release_tick, landing_tick, last_event_tick = release_and_landing_ticks(snapshots)
     if release_tick is None:
         return None
     pad_ticks = int(pad_frames) * max(int(dataset_stride), 1)

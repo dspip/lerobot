@@ -12,6 +12,7 @@ from lerobot.faults.sim.libero import (
     DEFAULT_GRIPPER_SETTLE_STEPS,
     force_open_gripper,
     get_place_destination,
+    is_object_grasped,
     is_object_in_basket,
     is_object_over_basket,
     midair_drop,
@@ -131,6 +132,34 @@ def test_midair_drop_opens_then_nudges_without_impulse(
 
 def test_gripper_settle_default_at_least_five():
     assert DEFAULT_GRIPPER_SETTLE_STEPS >= 5
+
+
+def test_is_object_grasped_uses_finger_geom_groups():
+    rs_env = MagicMock()
+    obj = MagicMock()
+    obj.contact_geoms = ["obj_geom"]
+    rs_env.get_object.return_value = obj
+    rs_env._check_grasp.return_value = True
+    gripper = MagicMock()
+    gripper.important_geoms = {"left_finger": ["lf"], "right_finger": ["rf"]}
+    rs_env.robots = [MagicMock(gripper=gripper)]
+
+    assert is_object_grasped(rs_env, "alphabet_soup_1") is True
+    rs_env._check_grasp.assert_called_once_with(gripper=[["lf"], ["rf"]], object_geoms=["obj_geom"])
+
+
+def test_is_object_grasped_legacy_pad_gripper_object():
+    rs_env = MagicMock()
+    obj = MagicMock()
+    obj.contact_geoms = ["obj_geom"]
+    rs_env.get_object.return_value = obj
+    rs_env._check_grasp.return_value = False
+    gripper = MagicMock()
+    gripper.important_geoms = {}
+    rs_env.robots = [MagicMock(gripper=gripper)]
+
+    assert is_object_grasped(rs_env, "alphabet_soup_1") is False
+    rs_env._check_grasp.assert_called_once_with(gripper=gripper, object_geoms=["obj_geom"])
 
 
 @patch("lerobot.faults.sim.libero.object_body_extents")

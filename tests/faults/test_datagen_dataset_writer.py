@@ -425,7 +425,7 @@ def test_log_post_step_attempt_index_after_terminal_done() -> None:
         sim_step=42,
         observation_to_frame=lambda obs: _minimal_processed_frame(),
     )
-    snap = session.recording_views[0].segments._episode_snapshots[-1]
+    snap = session.recording_views[0].segments.episode_snapshots[-1]
     assert snap.attempt_index == 1
     assert snap.tick == 42
 

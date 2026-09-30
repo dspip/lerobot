@@ -95,7 +95,7 @@ def _apply_overrides(
     base_seed: int | None,
     output: Path | None,
     episodes: int | None,
-    fps: int | None,
+    fps: int | None = None,
 ) -> DropDatagenRecipe:
     recording = recipe.recording
     if base_seed is not None:

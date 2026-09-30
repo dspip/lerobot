@@ -248,7 +248,7 @@ class DatagenEpisodeSession:
         # run stores every tick at 20 fps.
         stride = recording_stride(int(self.control_hz), 10)
         bounds = drop_window_bounds(
-            views[0].segments._episode_snapshots,
+            views[0].segments.episode_snapshots,
             pad_frames=DROP_WINDOW_PAD_FRAMES,
             dataset_stride=stride,
         )

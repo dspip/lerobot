@@ -20,14 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lerobot.faults.datagen.recording_views import tick_index_at_or_after_frame
+from lerobot.faults.datagen.recording_views import release_and_landing_ticks, tick_index_at_or_after_frame
 
 __all__ = [
     "AttemptTickSnapshot",
     "FailureSegmentRow",
     "FailureSegmentsWriter",
     "attempt_rows_from_tick_snapshots",
-    "frame_index_for_tick",
     "merge_failure_segment_rows",
 ]
 
@@ -67,12 +66,6 @@ class FailureSegmentRow:
     layout_seed: int
 
 
-def frame_index_for_tick(tick: int, *, stride: int, frames_before: int) -> int:
-    """Map a control tick to this view's frame index when that tick is logged."""
-    del frames_before
-    return tick_index_at_or_after_frame(tick, stride=stride)
-
-
 def attempt_rows_from_tick_snapshots(
     snapshots: list[AttemptTickSnapshot],
     *,
@@ -93,18 +86,12 @@ def attempt_rows_from_tick_snapshots(
         return []
 
     ticks = [s.tick for s in snapshots]
-    release_tick: int | None = None
-    landing_tick: int | None = None
+    release_tick, landing_tick, _last_event_tick = release_and_landing_ticks(snapshots)
     object_z_at_release: float | None = None
     for snap in snapshots:
-        if snap.drop_release and release_tick is None:
-            release_tick = snap.tick
+        if snap.drop_release and release_tick is not None and snap.tick == release_tick:
             object_z_at_release = snap.object_z
-    prev_drop_event = False
-    for snap in snapshots:
-        if prev_drop_event and not snap.drop_event and landing_tick is None:
-            landing_tick = snap.tick
-        prev_drop_event = snap.drop_event
+            break
 
     has_drop = release_tick is not None
     if not is_drop_episode or not has_drop:
@@ -216,6 +203,10 @@ class FailureSegmentsWriter:
 
     def reset_episode_snapshots(self) -> None:
         self._episode_snapshots = []
+
+    @property
+    def episode_snapshots(self) -> tuple[AttemptTickSnapshot, ...]:
+        return tuple(self._episode_snapshots)
 
     def record_tick(
         self,

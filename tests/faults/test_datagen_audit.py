@@ -25,6 +25,7 @@ pytest.importorskip("datasets")
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.faults.datagen.audit import audit_drop_run
+from lerobot.faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
 from lerobot.faults.datagen.manifest import EpisodeMetadataRow, RunManifest, RunStatus, write_run_manifest_atomic
 from tests.fixtures.constants import DUMMY_REPO_ID
 
@@ -102,6 +103,66 @@ def _write_minimal_run(
 
     _fill_dataset(root / "dataset", "lo", lo_frames, fps=10)
     _fill_dataset(root / "dataset_20hz", "hi", hi_frames, fps=20)
+    write_run_manifest_atomic(
+        root / "run_manifest.json",
+        RunManifest(
+            recipe_name="can_drop_datagen",
+            base_seed=1,
+            output_dir=str(root),
+            episodes=manifest_rows,
+            run_status=RunStatus.COMPLETE,
+        ),
+    )
+
+
+def _write_single_view_run(
+    root: Path,
+    *,
+    frames: list[dict],
+    manifest_rows: list[EpisodeMetadataRow],
+    failure_segments: pd.DataFrame | None = None,
+) -> None:
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (8,), "names": None},
+        "action": {"dtype": "float32", "shape": (7,), "names": None},
+        "tick_index": {"dtype": "int64", "shape": (1,), "names": None},
+        "drop_release": {"dtype": "bool", "shape": (1,), "names": None},
+        "drop_event": {"dtype": "bool", "shape": (1,), "names": None},
+        "attempt_index": {"dtype": "int64", "shape": (1,), "names": None},
+        "is_failure": {"dtype": "bool", "shape": (1,), "names": None},
+        "injection_active": {"dtype": "bool", "shape": (1,), "names": None},
+        "phase": {"dtype": "string", "shape": (1,), "names": None},
+        "loss_mask": {"dtype": "float32", "shape": (1,), "names": None},
+    }
+    ds = LeRobotDataset.create(
+        f"{DUMMY_REPO_ID}_single",
+        fps=10,
+        features=features,
+        root=root / "dataset",
+        use_videos=False,
+    )
+    for fr in frames:
+        ds.add_frame(
+            {
+                "observation.state": torch.as_tensor(fr["observation.state"], dtype=torch.float32),
+                "action": torch.zeros(7),
+                "tick_index": torch.tensor([fr["tick"]], dtype=torch.int64),
+                "drop_release": torch.tensor([fr.get("drop_release", False)]),
+                "drop_event": torch.tensor([fr.get("drop_event", False)]),
+                "attempt_index": torch.tensor([fr.get("attempt_index", 0)], dtype=torch.int64),
+                "is_failure": torch.tensor([fr.get("is_failure", False)]),
+                "injection_active": torch.tensor([False]),
+                "phase": "carry",
+                "loss_mask": torch.tensor([1.0]),
+                "task": "pick",
+            }
+        )
+    ds.save_episode()
+    ds.finalize()
+    if failure_segments is not None:
+        seg_path = root / "dataset" / FAILURE_SEGMENTS_REL_PATH
+        seg_path.parent.mkdir(parents=True, exist_ok=True)
+        failure_segments.to_parquet(seg_path, index=False)
     write_run_manifest_atomic(
         root / "run_manifest.json",
         RunManifest(
@@ -231,3 +292,137 @@ def test_audit_detects_pair_divergence(tmp_path: Path) -> None:
     )
     report = audit_drop_run(root)
     assert "pair_diverges_before_release" in report.error_counts
+
+
+def test_single_view_audit_detects_multiple_releases(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    frames = [
+        {"tick": 0, "observation.state": np.zeros(8), "drop_release": True, "drop_event": True, "attempt_index": 0},
+        {"tick": 2, "observation.state": np.zeros(8), "drop_release": True, "drop_event": True, "attempt_index": 0},
+    ]
+    _write_single_view_run(root, frames=frames, manifest_rows=[_manifest_row(0, 0, drop=True)])
+    report = audit_drop_run(root)
+    assert "multiple_releases" in report.error_counts
+
+
+def test_single_view_audit_detects_bad_attempt_index(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    frames = [
+        {"tick": 0, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 0},
+        {"tick": 2, "observation.state": np.zeros(8), "drop_release": True, "drop_event": True, "attempt_index": 0},
+        {"tick": 4, "observation.state": np.zeros(8), "drop_release": False, "drop_event": True, "attempt_index": 0},
+        {"tick": 6, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 0},
+    ]
+    _write_single_view_run(root, frames=frames, manifest_rows=[_manifest_row(0, 0, drop=True)])
+    report = audit_drop_run(root)
+    assert "attempt_index" in report.error_counts
+
+
+def test_single_view_valid_drop_audit_ok(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    frames = [
+        {"tick": 0, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 0},
+        {"tick": 2, "observation.state": np.zeros(8), "drop_release": True, "drop_event": True, "attempt_index": 0},
+        {"tick": 4, "observation.state": np.zeros(8), "drop_release": False, "drop_event": True, "attempt_index": 0},
+        {"tick": 6, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 1},
+    ]
+    seg = pd.DataFrame(
+        [
+            {
+                "episode_index": 0,
+                "logical_episode_index": 0,
+                "object_name": "alphabet_soup_1",
+                "task_id": 0,
+                "controller": "simple_ik",
+                "post_drop_mode": "immediate_ik",
+                "is_drop_episode": True,
+                "attempt_index": 0,
+                "attempt_start_frame": 0,
+                "attempt_end_frame": 2,
+                "has_drop": True,
+                "release_tick": 2,
+                "landing_tick": 6,
+                "release_frame": 1,
+                "landing_frame": 3,
+                "release_time_s": 0.1,
+                "landing_time_s": 0.3,
+                "object_z_at_release": None,
+                "episode_seed": 1,
+                "layout_seed": 2,
+            },
+            {
+                "episode_index": 0,
+                "logical_episode_index": 0,
+                "object_name": "alphabet_soup_1",
+                "task_id": 0,
+                "controller": "simple_ik",
+                "post_drop_mode": "immediate_ik",
+                "is_drop_episode": True,
+                "attempt_index": 1,
+                "attempt_start_frame": 3,
+                "attempt_end_frame": 3,
+                "has_drop": False,
+                "release_tick": None,
+                "landing_tick": None,
+                "release_frame": None,
+                "landing_frame": None,
+                "release_time_s": None,
+                "landing_time_s": None,
+                "object_z_at_release": None,
+                "episode_seed": 1,
+                "layout_seed": 2,
+            },
+        ]
+    )
+    _write_single_view_run(
+        root,
+        frames=frames,
+        manifest_rows=[_manifest_row(0, 0, drop=True)],
+        failure_segments=seg,
+    )
+    report = audit_drop_run(root)
+    assert report.ok
+
+
+def test_single_view_audit_detects_missing_attempt1_sidecar(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    frames = [
+        {"tick": 0, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 0},
+        {"tick": 2, "observation.state": np.zeros(8), "drop_release": True, "drop_event": True, "attempt_index": 0},
+        {"tick": 4, "observation.state": np.zeros(8), "drop_release": False, "drop_event": True, "attempt_index": 0},
+        {"tick": 6, "observation.state": np.zeros(8), "drop_release": False, "drop_event": False, "attempt_index": 1},
+    ]
+    seg = pd.DataFrame(
+        [
+            {
+                "episode_index": 0,
+                "logical_episode_index": 0,
+                "object_name": "alphabet_soup_1",
+                "task_id": 0,
+                "controller": "simple_ik",
+                "post_drop_mode": "immediate_ik",
+                "is_drop_episode": True,
+                "attempt_index": 0,
+                "attempt_start_frame": 0,
+                "attempt_end_frame": 2,
+                "has_drop": True,
+                "release_tick": 2,
+                "landing_tick": 6,
+                "release_frame": 1,
+                "landing_frame": 3,
+                "release_time_s": 0.1,
+                "landing_time_s": 0.3,
+                "object_z_at_release": None,
+                "episode_seed": 1,
+                "layout_seed": 2,
+            }
+        ]
+    )
+    _write_single_view_run(
+        root,
+        frames=frames,
+        manifest_rows=[_manifest_row(0, 0, drop=True)],
+        failure_segments=seg,
+    )
+    report = audit_drop_run(root)
+    assert "segment_missing_attempt1" in report.error_counts

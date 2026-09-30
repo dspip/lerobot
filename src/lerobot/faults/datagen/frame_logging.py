@@ -97,10 +97,8 @@ def should_log_sim_step(
     sim_step: int,
     *,
     recording_stride: int,
-    force_drop_injection: bool = False,
 ) -> bool:
     """Return whether this sim step should be written at the configured stride."""
-    del force_drop_injection
     return should_log_view_tick(sim_step, stride=recording_stride)
 
 

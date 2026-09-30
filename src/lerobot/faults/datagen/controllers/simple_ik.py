@@ -145,7 +145,6 @@ def run_simple_ik_episode_loop(
     max_steps: int = MAX_PLAN_STEPS,
     gripper_settle_steps: int = 0,
     episode_session: Any | None = None,
-    recording_stride: int = 1,
     task: str | None = None,
     eligible_phases: tuple[str, ...] | None = None,
     on_post_step: Callable[[int, str], None] | None = None,
@@ -621,14 +620,11 @@ class SimpleIKDatagenAdapter:
                 plan.motion_profile,
                 request.object_name,
             )
-            from lerobot.faults.recovery.fps import recording_stride
-
             control_freq = read_control_freq(rs_env)
             if int(round(control_freq)) != int(recipe.control_hz):
                 raise ValueError(
                     f"sim control_hz={control_freq} does not match recipe.control_hz={recipe.control_hz}"
                 )
-            stride = recording_stride(control_freq, recipe.recording.dataset_fps)
             path_drop = recipe.simple_ik.path_drop
             assert path_drop is not None
             task = read_libero_task_description(vec)
@@ -662,7 +658,6 @@ class SimpleIKDatagenAdapter:
                 paired_plan=plan,
                 gripper_settle_steps=config.gripper_settle_steps,
                 episode_session=request.episode_session,
-                recording_stride=stride,
                 task=task,
                 eligible_phases=path_drop.eligible_phases,
                 on_post_step=lambda step, phase: preview.capture(

@@ -120,13 +120,7 @@ class _EnvDropState:
 
 
 def _fall_action(proposed_action: np.ndarray) -> np.ndarray:
-    """Keep the arm's command and force the gripper open while the object falls.
-
-    Freezing the arm made the drop visible as a commanded stop. On the soup-can
-    A/B (seeds 9000, 9100, 9200) letting the arm continue left the object
-    trajectory unchanged, still landed within 3 cm horizontally, and recovery
-    still placed it in the basket.
-    """
+    """Keep the arm command and force the gripper open so the drop is not a commanded stop."""
     action = np.array(proposed_action, dtype=np.float32, copy=True)
     if action.shape[-1] >= 7:
         action[..., 6] = -1.0
@@ -893,12 +887,6 @@ class MidAirDropFault:
             state.place_succeeded = in_basket
             state.proof_object_pos = get_object_pose(rs_env, self.config.object_name)["pos"].astype(float)
             state.proof_basket_pos = _body_xpos_safe(rs_env, self.config.basket_name)
-            print(
-                f"[drop_fault] place after physics: seated={seated} "
-                f"seat_assisted={state.seat_assisted} in_basket={state.place_succeeded} "
-                f"obj={state.proof_object_pos.tolist()}",
-                flush=True,
-            )
             # Freeze planner after the open/place attempt so the episode can end.
             state.planner._done = True
             state.planner._phase_name = "done"
