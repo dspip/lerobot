@@ -29,6 +29,8 @@ TRANSPORT_PHASE = "to_basket_hover"
 
 @dataclass(frozen=True)
 class EligibleArcPiece:
+    """One keep-out-clipped interval on a carry path segment."""
+
     segment_name: str
     segment_order: int
     t0: float
@@ -38,16 +40,21 @@ class EligibleArcPiece:
 
 @dataclass(frozen=True)
 class EligiblePath:
+    """Carry polyline restricted to arc lengths eligible for uniform drop sampling."""
+
     carry_path: CarryPath
     pieces: tuple[EligibleArcPiece, ...]
 
     @property
     def total(self) -> float:
+        """Total eligible arc length in meters."""
         return float(sum(piece.length_m for piece in self.pieces))
 
 
 @dataclass(frozen=True)
 class PathTrigger:
+    """Drop fires when execution reaches this point on the carry path."""
+
     segment_name: str
     segment_order: int
     target_t: float
@@ -106,7 +113,7 @@ def _outside_intervals(
     boundaries = sorted(set(boundaries))
 
     intervals: list[tuple[float, float]] = []
-    for lo, hi in zip(boundaries, boundaries[1:]):
+    for lo, hi in zip(boundaries, boundaries[1:], strict=False):
         midpoint = 0.5 * (lo + hi)
         xy = p0 + midpoint * direction
         if float(np.dot(xy, xy)) >= keepout_m**2 - 1e-12:
@@ -119,12 +126,16 @@ def eligible_path(
     *,
     basket_xy: np.ndarray,
     keepout_m: float,
+    eligible_phases: tuple[str, ...] | None = None,
 ) -> EligiblePath:
     """Clip every carry segment against the circular basket keep-out."""
     basket = np.asarray(basket_xy, dtype=np.float64).reshape(2)
     keepout = float(keepout_m)
+    allowed = frozenset(eligible_phases) if eligible_phases is not None else None
     pieces: list[EligibleArcPiece] = []
     for order, segment in enumerate(carry_path.segments):
+        if allowed is not None and segment.name not in allowed:
+            continue
         for t0, t1 in _outside_intervals(segment, basket, keepout):
             length = segment.length * (t1 - t0)
             if length > 1e-12:
@@ -138,6 +149,30 @@ def eligible_path(
                     )
                 )
     return EligiblePath(carry_path=carry_path, pieces=tuple(pieces))
+
+
+def path_trigger_at_drop_u(drop_u: float, path: EligiblePath) -> PathTrigger:
+    """Map a unit-interval draw onto uniform arc length over ``path``."""
+    u = float(drop_u)
+    if not 0.0 <= u <= 1.0:
+        raise ValueError(f"drop_u must be in [0, 1], got {u}")
+    if path.total <= 0.0:
+        raise ValueError("path.total must be positive")
+    target = u * path.total
+    travelled = 0.0
+    selected = path.pieces[-1]
+    for piece in path.pieces:
+        if target <= travelled + piece.length_m:
+            selected = piece
+            break
+        travelled += piece.length_m
+    fraction = (target - travelled) / selected.length_m
+    target_t = selected.t0 + fraction * (selected.t1 - selected.t0)
+    return PathTrigger(
+        segment_name=selected.segment_name,
+        segment_order=selected.segment_order,
+        target_t=float(np.clip(target_t, selected.t0, selected.t1)),
+    )
 
 
 def sample_path_drop(
@@ -154,21 +189,8 @@ def sample_path_drop(
     if float(rng.random()) >= q:
         return DropDecision(drop=False, step=None, reason="skipped_q"), None
 
-    target = float(rng.uniform(0.0, path.total))
-    travelled = 0.0
-    selected = path.pieces[-1]
-    for piece in path.pieces:
-        if target <= travelled + piece.length_m:
-            selected = piece
-            break
-        travelled += piece.length_m
-    fraction = (target - travelled) / selected.length_m
-    target_t = selected.t0 + fraction * (selected.t1 - selected.t0)
+    drop_u = float(rng.uniform(0.0, 1.0))
     return (
         DropDecision(drop=True, step=None, reason="injected"),
-        PathTrigger(
-            segment_name=selected.segment_name,
-            segment_order=selected.segment_order,
-            target_t=float(np.clip(target_t, selected.t0, selected.t1)),
-        ),
+        path_trigger_at_drop_u(drop_u, path),
     )

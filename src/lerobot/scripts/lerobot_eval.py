@@ -75,6 +75,7 @@ from tqdm import trange
 from lerobot.configs import FeatureType, parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.success_filter import finish_eval_recorded_episode
 from lerobot.envs import (
     check_env_attributes_and_types,
     close_envs,
@@ -92,7 +93,7 @@ from lerobot.faults.annotation import (
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
-from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
@@ -112,15 +113,37 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _env_features_to_dataset_features(env_features: dict) -> dict:
+def _dataset_feature_key(env_key: str, features_map: dict[str, str] | None) -> str:
+    """Map an env feature key to a LeRobot dataset key (no ``/``)."""
+    mapped = (features_map or {}).get(env_key, env_key)
+    return mapped.replace("/", ".")
+
+
+def _index_nested_obs(raw_obs: dict, path: list[str], env_idx: int) -> Any:
+    """Walk a slash-path through a (possibly batched) gym observation."""
+    cur: Any = raw_obs
+    for part in path:
+        if not isinstance(cur, dict) or part not in cur:
+            raise KeyError(f"Missing observation path {'/'.join(path)} at {part!r}")
+        cur = cur[part]
+    if isinstance(cur, np.ndarray) and cur.ndim >= 1:
+        return cur[env_idx]
+    return cur
+
+
+def _env_features_to_dataset_features(
+    env_features: dict,
+    features_map: dict[str, str] | None = None,
+) -> dict:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
     features = {}
     for key, ft in env_features.items():
+        ds_key = _dataset_feature_key(key, features_map)
         shape = tuple(ft.shape)
         if ft.type is FeatureType.VISUAL:
-            features[key] = {"dtype": "video", "shape": shape, "names": ["height", "width", "channel"]}
+            features[ds_key] = {"dtype": "video", "shape": shape, "names": ["height", "width", "channel"]}
         else:
-            features[key] = {"dtype": "float32", "shape": shape, "names": None}
+            features[ds_key] = {"dtype": "float32", "shape": shape, "names": None}
     features["next.reward"] = {"dtype": "float32", "shape": (1,), "names": None}
     features["next.success"] = {"dtype": "bool", "shape": (1,), "names": None}
     features["next.done"] = {"dtype": "bool", "shape": (1,), "names": None}
@@ -138,35 +161,41 @@ def _build_raw_frame(
     task: str,
     env_features: dict,
     info: dict | None = None,
+    features_map: dict[str, str] | None = None,
 ) -> dict:
     """Build a dataset frame from raw env observations for one env index.
 
-    Keys in the frame match the keys in env_features so they align with the
-    dataset schema created by _env_features_to_dataset_features().
+    Frame keys are the mapped LeRobot names (``features_map``), not raw ``a/b`` env keys.
     """
     frame: dict[str, Any] = {}
-    for key in env_features:
+    for key, ft in env_features.items():
         if key == ACTION:
             continue
-        if key.startswith("next."):
+        ds_key = _dataset_feature_key(key, features_map)
+        if ds_key.startswith("next.") or ds_key in FAILURE_ANNOTATION_FEATURES:
             continue
-        if key in FAILURE_ANNOTATION_FEATURES:
+        if ft.type is FeatureType.VISUAL and "pixels" in raw_obs:
+            pixels = raw_obs["pixels"]
+            if isinstance(pixels, dict):
+                cam_name = ds_key.rsplit(".", 1)[-1]
+                raw_cam = key.split("/", 1)[-1]
+                img = pixels.get(cam_name, pixels.get(raw_cam))
+                if img is None:
+                    raise KeyError(f"No camera image for {ds_key} (tried {cam_name!r}, {raw_cam!r})")
+                frame[ds_key] = img[env_idx]
+            elif ds_key in (OBS_IMAGE, "pixels"):
+                frame[ds_key] = pixels[env_idx]
             continue
-        if "pixels" in raw_obs and isinstance(raw_obs["pixels"], dict):
-            for cam_name, img in raw_obs["pixels"].items():
-                candidate = f"{OBS_IMAGES}.{cam_name}"
-                if candidate == key:
-                    frame[key] = img[env_idx]
-            if key in frame:
+        try:
+            val = _index_nested_obs(raw_obs, key.split("/"), env_idx)
+        except KeyError:
+            if key in raw_obs and isinstance(raw_obs[key], np.ndarray):
+                val = raw_obs[key][env_idx]
+            else:
                 continue
-        if "pixels" in raw_obs and not isinstance(raw_obs["pixels"], dict) and key in ("pixels", OBS_IMAGE):
-            frame[key] = raw_obs["pixels"][env_idx]
-            continue
-        if key in raw_obs and isinstance(raw_obs[key], np.ndarray):
-            val = raw_obs[key][env_idx]
-            if val.dtype == np.float64:
-                val = val.astype(np.float32)
-            frame[key] = val
+        if isinstance(val, np.ndarray) and val.dtype == np.float64:
+            val = val.astype(np.float32)
+        frame[ds_key] = val
     frame[ACTION] = action
     frame["next.reward"] = np.atleast_1d(np.float32(reward))
     frame["next.success"] = np.atleast_1d(np.bool_(success))
@@ -174,6 +203,34 @@ def _build_raw_frame(
     frame.update(failure_frame_from_info(info, env_idx) if info is not None else default_failure_frame())
     frame["task"] = task
     return frame
+
+
+def create_eval_recording_datasets(
+    recording_dir: Path,
+    env: gym.vector.VectorEnv,
+    env_features: dict,
+    recording_repo_id: str | None = None,
+    features_map: dict[str, str] | None = None,
+) -> list[LeRobotDataset]:
+    """Create one write-mode dataset per vec-env slot. Call once per eval, not per batch."""
+    features = _env_features_to_dataset_features(env_features, features_map)
+    fps = env.unwrapped.metadata.get("render_fps", 30)
+    multi_env = env.num_envs > 1
+    base_repo_id = recording_repo_id or "eval_recording"
+    datasets: list[LeRobotDataset] = []
+    for i in range(env.num_envs):
+        root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
+        repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
+        datasets.append(
+            LeRobotDataset.create(
+                repo_id=repo_id,
+                fps=fps,
+                features=features,
+                root=root,
+                use_videos=True,
+            )
+        )
+    return datasets
 
 
 def rollout(
@@ -190,6 +247,9 @@ def rollout(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_datasets: list[LeRobotDataset] | None = None,
+    recording_success_only: bool = False,
+    features_map: dict[str, str] | None = None,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
@@ -241,32 +301,21 @@ def rollout(
     if render_callback is not None:
         render_callback(env)
 
-    recording_datasets: list[LeRobotDataset] | None = None
+    own_recording = False
     raw_observation = None
     task_desc = ""
-    if recording_dir is not None and env_features is not None:
-        features = _env_features_to_dataset_features(env_features)
-        fps = env.unwrapped.metadata.get("render_fps", 30)
-        recording_datasets = []
-        multi_env = env.num_envs > 1
-        base_repo_id = recording_repo_id or "eval_recording"
-        for i in range(env.num_envs):
-            root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
-            repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
-            recording_datasets.append(
-                LeRobotDataset.create(
-                    repo_id=repo_id,
-                    fps=fps,
-                    features=features,
-                    root=root,
-                    use_videos=True,
-                )
-            )
+    if recording_datasets is None and recording_dir is not None and env_features is not None:
+        recording_datasets = create_eval_recording_datasets(
+            recording_dir, env, env_features, recording_repo_id, features_map
+        )
+        own_recording = True
+    if recording_datasets is not None:
         raw_observation = deepcopy(observation)
         try:
             task_desc = list(env.call("task_description"))[0]
         except (AttributeError, NotImplementedError):
             task_desc = ""
+    episode_succeeded = np.zeros(env.num_envs, dtype=bool)
 
     all_observations = []
     all_actions = []
@@ -372,6 +421,7 @@ def rollout(
                 for env_idx in range(env.num_envs):
                     if prev_done[env_idx]:
                         continue
+                    episode_succeeded[env_idx] = bool(episode_succeeded[env_idx] or successes[env_idx])
                     frame = _build_raw_frame(
                         raw_observation,
                         env_idx,
@@ -380,12 +430,17 @@ def rollout(
                         successes[env_idx],
                         bool(terminated[env_idx] | truncated[env_idx]),
                         task_desc,
-                        recording_datasets[env_idx].features,
+                        env_features,
                         info=info,
+                        features_map=features_map,
                     )
                     recording_datasets[env_idx].add_frame(frame)
                     if terminated[env_idx] or truncated[env_idx]:
-                        recording_datasets[env_idx].save_episode()
+                        finish_eval_recorded_episode(
+                            recording_datasets[env_idx],
+                            succeeded=bool(episode_succeeded[env_idx]),
+                            success_only=recording_success_only,
+                        )
                 raw_observation = deepcopy(observation)
 
             # Keep track of which environments are done so far.
@@ -395,6 +450,14 @@ def rollout(
             done = terminated | truncated | done
             if step + 1 == max_steps:
                 done = np.ones_like(done, dtype=bool)
+                if recording_datasets is not None:
+                    for env_idx in range(env.num_envs):
+                        if recording_datasets[env_idx].has_pending_frames():
+                            finish_eval_recorded_episode(
+                                recording_datasets[env_idx],
+                                succeeded=bool(episode_succeeded[env_idx]),
+                                success_only=recording_success_only,
+                            )
 
             all_actions.append(torch.from_numpy(action_numpy))
             all_rewards.append(torch.from_numpy(reward))
@@ -408,10 +471,10 @@ def rollout(
             progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
             progbar.update()
     finally:
-        if recording_datasets is not None:
+        if own_recording and recording_datasets is not None:
             for ds in recording_datasets:
                 ds.finalize()
-                if recording_repo_id is not None:
+                if recording_repo_id is not None and "/" in recording_repo_id:
                     if ds.num_episodes > 0:
                         ds.push_to_hub(private=recording_private)
                     else:
@@ -457,6 +520,8 @@ def eval_policy(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_success_only: bool = False,
+    features_map: dict[str, str] | None = None,
     save_predicted_video: bool = False,
 ) -> dict:
     """
@@ -544,6 +609,12 @@ def eval_policy(
     if return_episode_data:
         episode_data: dict | None = None
 
+    recording_datasets: list[LeRobotDataset] | None = None
+    if recording_dir is not None and env_features is not None:
+        recording_datasets = create_eval_recording_datasets(
+            recording_dir, env, env_features, recording_repo_id, features_map
+        )
+
     # we dont want progress bar when we use slurm, since it clutters the logs
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
@@ -571,10 +642,13 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
-            recording_dir=recording_dir,
+            recording_dir=None if recording_datasets is not None else recording_dir,
             env_features=env_features,
             recording_repo_id=recording_repo_id,
             recording_private=recording_private,
+            recording_datasets=recording_datasets,
+            recording_success_only=recording_success_only,
+            features_map=features_map,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
         )
 
@@ -673,6 +747,17 @@ def eval_policy(
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
+
+    if recording_datasets is not None:
+        for ds in recording_datasets:
+            ds.finalize()
+            # recording_repo_id is a local dataset name. Push only when the caller
+            # also asked for a Hub repo (user/name). A bare local id must not upload.
+            if recording_repo_id is not None and "/" in recording_repo_id:
+                if ds.num_episodes > 0:
+                    ds.push_to_hub(private=recording_private)
+                else:
+                    logging.warning("No episodes recorded for %s — skipping push to hub.", ds.repo_id)
 
     # Wait till all video rendering threads are done.
     for thread in threads:
@@ -848,8 +933,10 @@ def eval_main(cfg: EvalPipelineConfig):
             max_parallel_tasks=cfg.env.max_parallel_tasks,
             recording_dir=recording_dir,
             env_features=cfg.env.features if cfg.eval.recording else None,
+            features_map=cfg.env.features_map if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
+            recording_success_only=cfg.eval.recording_success_only,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -906,6 +993,8 @@ def eval_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_success_only: bool = False,
+    features_map: dict[str, str] | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -927,6 +1016,8 @@ def eval_one(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        recording_success_only=recording_success_only,
+        features_map=features_map,
     )
 
     per_episode = task_result["per_episode"]
@@ -958,6 +1049,8 @@ def run_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_success_only: bool = False,
+    features_map: dict[str, str] | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -992,6 +1085,8 @@ def run_one(
         env_features=env_features,
         recording_repo_id=task_repo_id,
         recording_private=recording_private,
+        recording_success_only=recording_success_only,
+        features_map=features_map,
     )
 
     if max_episodes_rendered > 0:
@@ -1024,6 +1119,8 @@ def eval_policy_all(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_success_only: bool = False,
+    features_map: dict[str, str] | None = None,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
@@ -1087,6 +1184,8 @@ def eval_policy_all(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        recording_success_only=recording_success_only,
+        features_map=features_map,
     )
 
     # Set the shared policy's mode before launching any workers. Restoring it

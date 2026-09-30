@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -31,16 +30,6 @@ BOUNDARY_TARGETS: list[tuple[str, float, float, float, float]] = [
     ("d027", 0.27, 0.27, 0.27, 0.29),
     ("d024", 0.24, 0.24, 0.24, 0.26),
 ]
-
-
-def _load_run_pipeline():
-    path = REPO_ROOT / "examples" / "faults" / "run_full_drop_recovery_pipeline.py"
-    spec = importlib.util.spec_from_file_location("run_full_drop_recovery_pipeline", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load pipeline module from {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.run_pipeline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to write boundary diag into xy_band_pilot output.", flush=True)
         return 2
 
-    run_pipeline = _load_run_pipeline()
+    from lerobot.faults.datagen.smolvla_pipeline import run_pipeline
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     episodes_root = args.output_dir / "episodes"
     episodes_root.mkdir(parents=True, exist_ok=True)
@@ -75,8 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         for attempt in range(int(args.attempts_per_target)):
             ep_dir = episodes_root / f"{label}_seed_{seed}"
             print(
-                f"[boundary] target={target_dist} band=[{band_lo},{band_hi}] "
-                f"min_drop={min_drop} seed={seed}",
+                f"[boundary] target={target_dist} band=[{band_lo},{band_hi}] min_drop={min_drop} seed={seed}",
                 flush=True,
             )
             try:
@@ -120,9 +109,7 @@ def main(argv: list[str] | None = None) -> int:
                     "triggered_at": summary.get("triggered_at"),
                     "drop_basket_xy_dist": summary.get("drop_basket_xy_dist"),
                     "pre_drop_xy": (
-                        summary.get("pre_drop_pose")[:2]
-                        if summary.get("pre_drop_pose")
-                        else None
+                        summary.get("pre_drop_pose")[:2] if summary.get("pre_drop_pose") else None
                     ),
                     "landing_pos": summary.get("final_object_pos"),
                     "in_basket": checks.get("object_in_basket"),

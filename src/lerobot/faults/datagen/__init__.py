@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Can-only SimpleIK episode-generation helpers."""
+"""Unified drop-datagen helpers (recipe, runner, controllers)."""
 
 from lerobot.faults.datagen.drop_timing import (
     DropDecision,
@@ -20,30 +20,63 @@ from lerobot.faults.datagen.drop_timing import (
     eligible_indices,
     sample_drop,
 )
-from lerobot.faults.datagen.events import DatagenEventLog, LogEvent
 from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
 from lerobot.faults.datagen.recipe import (
-    DatagenRecipe,
+    DatagenController,
+    DropDatagenRecipe,
     DropRecipe,
+    DropXYBand,
+    EpisodeSeedManifest,
+    ExpandedMatrixRun,
+    MatrixVariant,
     PlacementRecipe,
+    PostDropMode,
+    PostDropRecipe,
     RecipeError,
+    RecordingRecipe,
+    SimpleIKPathDropRecipe,
     SimpleIKRecipe,
-    load_recipe,
+    SmolVLARecipe,
+    allocate_episode_counts,
+    apply_recording_episode_total,
+    effective_post_drop_dwell_steps,
+    expand_experiment_matrix,
+    legacy_drop_recipe,
+    load_drop_datagen_recipe,
+    paired_episode_seed_manifests,
+    validate_controller_mode_pair,
+    validate_experiment_matrix_entries,
 )
 
 __all__ = [
-    "DatagenEventLog",
-    "DatagenRecipe",
+    "DatagenController",
+    "DropDatagenRecipe",
     "DropDecision",
     "DropRecipe",
-    "LogEvent",
+    "DropXYBand",
+    "EpisodeSeedManifest",
+    "ExpandedMatrixRun",
+    "MatrixVariant",
     "ObjectPose2d",
     "PlacementRecipe",
+    "PostDropMode",
+    "PostDropRecipe",
     "RecipeError",
+    "RecordingRecipe",
+    "SimpleIKPathDropRecipe",
     "SimpleIKRecipe",
+    "SmolVLARecipe",
     "TraceFrame",
+    "allocate_episode_counts",
+    "apply_recording_episode_total",
+    "effective_post_drop_dwell_steps",
     "eligible_indices",
-    "load_recipe",
+    "expand_experiment_matrix",
+    "legacy_drop_recipe",
+    "load_drop_datagen_recipe",
+    "paired_episode_seed_manifests",
     "sample_drop",
     "sample_layout",
+    "validate_controller_mode_pair",
+    "validate_experiment_matrix_entries",
 ]

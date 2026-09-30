@@ -48,7 +48,12 @@ from lerobot.envs.factory import make_env  # noqa: E402
 from lerobot.faults.config import FaultInjectionConfig  # noqa: E402
 from lerobot.faults.logging import FaultEventLogger  # noqa: E402
 from lerobot.faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
-from lerobot.faults.sim.libero import get_robosuite_env, is_object_grasped, midair_drop  # noqa: E402
+from lerobot.faults.sim.libero import (  # noqa: E402
+    get_object_linear_velocity,
+    get_robosuite_env,
+    is_object_grasped,
+    midair_drop,
+)
 from lerobot.policies.factory import make_pre_post_processors  # noqa: E402
 
 DEFAULT_CHECKPOINT = (
@@ -140,8 +145,16 @@ def _replay_then_release(vec, frames, log):
     rs_env = get_robosuite_env(vec, 0)
     grasped = bool(is_object_grasped(rs_env, "alphabet_soup_1"))
     if grasped:
-        midair_drop(rs_env, "alphabet_soup_1", lin_vel=[0.0, 0.08, -0.45], ang_vel=[0.0, -0.06, 0.01])
-        obs, _reward, _terminated, _truncated, _info = vec.step(np.array([[0, 0, 0, 0, 0, 0, -1]], dtype=np.float32))
+        midair_drop(rs_env, "alphabet_soup_1")
+        hold = np.array([[0, 0, 0, 0, 0, 0, -1]], dtype=np.float32)
+        still = 0
+        for _ in range(15):
+            obs, _reward, _terminated, _truncated, _info = vec.step(hold)
+            grasped_now = bool(is_object_grasped(rs_env, "alphabet_soup_1"))
+            vz = float(get_object_linear_velocity(rs_env, "alphabet_soup_1")[2])
+            still = still + 1 if (not grasped_now and abs(vz) < 0.05) else 0
+            if still >= 2:
+                break
         _state, images = _policy_observation(obs)
         frames.append(_overlay(images["image"], "setup release  recovery still off"))
         log.append({"phase": "release", "p_drop": None, "recovery": False})

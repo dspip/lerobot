@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from lerobot.faults.datagen.layout import ObjectPose2d, sample_layout
 from lerobot.faults.datagen.recipe import PlacementRecipe
@@ -28,8 +29,11 @@ def _placement(**kwargs) -> PlacementRecipe:
         "min_pairwise_clearance_m": 0.08,
         "yaw_range_deg": (-180.0, 180.0),
         "max_attempts": 200,
+        "target_min_clearance_m": 0.08,
     }
     values.update(kwargs)
+    if "target_min_clearance_m" not in kwargs:
+        values["target_min_clearance_m"] = values["min_pairwise_clearance_m"]
     return PlacementRecipe(**values)
 
 
@@ -186,3 +190,61 @@ def test_stock_libero_object_scene_is_feasible():
             failures += 1
 
     assert failures == 0
+
+
+def test_target_min_clearance_rejects_distractor_at_ten_cm():
+    objects = [
+        ObjectPose2d("target", np.array([0.40, 0.0]), 0.0),
+        ObjectPose2d("dist", np.array([0.50, 0.0]), 0.0),
+    ]
+    strict = _placement(target_min_clearance_m=0.14, xy_range_m=0.0)
+    assert (
+        sample_layout(
+            objects=objects,
+            basket_xy=np.array([-1.0, -1.0]),
+            table_xy_lim=0.7,
+            rng=np.random.default_rng(0),
+            placement=strict,
+            target_name="target",
+        )
+        is None
+    )
+    legacy = _placement(min_pairwise_clearance_m=0.08, target_min_clearance_m=0.08, xy_range_m=0.0)
+    result = sample_layout(
+        objects=objects,
+        basket_xy=np.array([-1.0, -1.0]),
+        table_xy_lim=0.7,
+        rng=np.random.default_rng(0),
+        placement=legacy,
+        target_name="target",
+    )
+    assert result is not None
+    assert float(np.linalg.norm(result[0].xy - result[1].xy)) == pytest.approx(0.10, abs=1e-6)
+
+
+def test_default_target_min_clearance_matches_pairwise_for_seed():
+    objects = [ObjectPose2d("can", np.array([0.4, 0.0]), 0.0)]
+    explicit = _placement(min_pairwise_clearance_m=0.08, target_min_clearance_m=0.08)
+    implicit = _placement(min_pairwise_clearance_m=0.08)
+    for seed in (0, 17, 42):
+        rng_a = np.random.default_rng(seed)
+        rng_b = np.random.default_rng(seed)
+        a = sample_layout(
+            objects=objects,
+            basket_xy=np.array([0.0, 0.0]),
+            table_xy_lim=0.7,
+            rng=rng_a,
+            placement=explicit,
+            target_name="can",
+        )
+        b = sample_layout(
+            objects=objects,
+            basket_xy=np.array([0.0, 0.0]),
+            table_xy_lim=0.7,
+            rng=rng_b,
+            placement=implicit,
+            target_name="can",
+        )
+        assert a is not None and b is not None
+        np.testing.assert_allclose(a[0].xy, b[0].xy)
+        assert a[0].yaw_rad == b[0].yaw_rad

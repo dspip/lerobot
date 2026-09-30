@@ -25,7 +25,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 **Recorders**
 
 1. Eval: `lerobot_eval.py` `rollout()` when `--eval.recording=true` (pre-step images, post-step labels — same as `next.reward`).
-2. Drop-recovery: `FaultRecoveryDatasetLogger` used by `examples/faults/run_full_drop_recovery_pipeline.py` (**post-step** obs + labels).
+2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `lerobot.faults.datagen`) (**post-step** obs + labels).
 3. Hardware `lerobot-record`: not wired.
 
 **Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`.
@@ -41,7 +41,7 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 | A. Frame-level Parquet labels | **Done** | Five columns from live GT; `loss_mask=0` only on injection frame |
 | B. Training-grade **data recipe** | **Done (this change)** | Carry delay, no seat teleport, settle in Parquet |
 | C. Re-verify **one** CUDA episode with the new recipe | **Done (user verified)** | `carry_steps=24`, `seat_assisted=false`, `n_settle_logged=5` on recipe run |
-| D. Small mixed set (tens of episodes) | **In progress** | `examples/faults/run_failure_mix.py` — drop + nominal into one dataset |
+| D. Small mixed set (tens of episodes) | **In progress** | `examples/faults/run_drop_datagen.py` + `can_drop_datagen.json` experiment matrix |
 | E. Smoke fine-tune | After D | Short SmolVLA run using `loss_mask`; eval with faults off then on |
 | F. Scale | After E | Only if unaided recoveries look right on video **and** parquet |
 | G. Jetson / extra sensors | After F | New schema; not a missing column in current verify |
@@ -70,7 +70,7 @@ Branch: `feature/failure-annotation-parquet`
 | File | Role |
 | ---- | ---- |
 | `src/lerobot/faults/recovery/recording_recipe.py` | Sample delay `[20,60]`, `seat_assist_enabled=False` |
-| `examples/faults/run_full_drop_recovery_pipeline.py` | Uses recipe; logs settle; fails if seat assist or no carry |
+| `examples/faults/run_drop_datagen.py` | Public CLI; matrix of controller × post-drop mode variants |
 | `tests/faults/test_recording_recipe.py` | No-sim tests |
 
 Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and `seat_assist_enabled=True` so injector unit tests stay valid. **Training datasets must go through the pipeline recipe (or equivalent kwargs).**
@@ -83,11 +83,10 @@ Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and 
 - Real LIBERO + SmolVLA + midair_drop (CUDA): 105 frames, 14 `is_failure`, 1 injection frame, cameras match drop.
 - **Recipe problems (why we do not train on it):** drop on first grasp (`post_grasp_delay_steps=0`), `seat_assisted=true`, settle overlay frames not in Parquet.
 
-### Recipe (2026-09-16)
+### Recipe (2026-09-16, historical verify)
 
-- Pipeline defaults: delay sampled in `[20, 60]` env steps (1–3 s at 20 Hz), `--allow-seat-assist` opt-in, settle steps recorded at the same stride.
-- Success now requires `dropped_after_carry` and `seat_assist_ok`.
-- CUDA re-run is **required** before any mix/scale (planner may fail more often without seat assist — that is honest).
+- Old single-episode pipeline used CLI flags such as `--post-grasp-delay-steps` and `--allow-seat-assist`. **Do not use those** — they belonged to removed recorders.
+- Unified recording uses `examples/faults/recipes/can_drop_datagen.json` only; SmolVLA drop timing and XY bands live under `smolvla.*` in that file.
 
 ## 6. Risks / known mismatches
 
@@ -96,41 +95,40 @@ Library `FaultInjectionConfig` still defaults to `post_grasp_delay_steps=0` and 
 - Image `stats.json` count may be 100 on a ~105-frame episode (LeRobot subsample).
 - `evaluation_episode_id` in JSONL can be null.
 - Basket keep-out: early-drop radius `min_drop_distance_from_basket_m=0.30` on the training recipe (drop when the carry reaches it). Hard pocket 22 cm — never inject inside that. `<= 0` disables.
-- Dataset root must be fresh unless `append=True`.
+- Unified datagen writes under `recording.output_dir` with one dataset tree per matrix variant; use a fresh recipe output dir for a clean run (see `RunDatasetWriter` / runner tests).
 
 ## 7. Commands
+
+**Public recorder (only):**
+
+```bash
+export MUJOCO_GL=egl
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/can_drop_datagen.json \
+  --device cuda
+```
+
+**CLI overrides** (optional): `--base-seed`, `--output`, `--episodes`, `--device`, `--headless` / `--no-headless`. There is no `--policy-path`, `--post-grasp-delay-steps`, or `--allow-seat-assist` on this entry point.
+
+**Configure in `can_drop_datagen.json` instead:**
+
+| Key | Role |
+| ----- | ---- |
+| `experiment_matrix[]` | `{controller, post_drop_mode, episodes}` variants to record |
+| `recording.base_seed`, `recording.output_dir`, `recording.dataset_fps` | Seeds, root output, logged FPS |
+| `smolvla.policy_path` | Hugging Face policy id for SmolVLA rows |
+| `smolvla.post_grasp_delay_steps` | Carry delay before drop (0 = XY-band recipe) |
+| `smolvla.drop_xy_bands` | Mid-air drop bands for SmolVLA |
+| `post_drop.dwell_steps` | Env steps to wait after drop before IK |
+| `simple_ik.path_drop` | SimpleIK drop gates (phases, keepout) |
+
+**CI-safe logger demo (no LIBERO):** `uv run python examples/faults/run_drop_recovery_demo.py --dry-run`
 
 ```bash
 # Unit tests (no GPU)
 uv run pytest tests/faults/test_failure_annotation.py tests/faults/test_recording_recipe.py tests/faults/test_mix_recording.py -q
 
-# Mixed drop + nominal dataset (GPU + LIBERO). Fresh dir, or --append to add episodes.
-export MUJOCO_GL=egl
-uv run python examples/faults/run_failure_mix.py \
-  --output-dir outputs/failure_mix_small \
-  --policy-path lerobot/smolvla_libero \
-  --device cuda \
-  --n-drop 8 \
-  --n-nominal 8 \
-  --seed-start 2000 \
-  --repo-id local/failure_mix_small
-
-# Verify Parquet under the shared dataset root
+# Verify Parquet under a variant dataset root (path depends on matrix entry)
 uv run python examples/faults/verify_failure_parquet.py \
-  --root outputs/failure_mix_small/dataset
-# Nominal-only mix (no drops): add --allow-nominal
-
-# Training-grade one-episode verify (GPU + LIBERO). Use a NEW output dir.
-export MUJOCO_GL=egl
-uv run python examples/faults/run_full_drop_recovery_pipeline.py \
-  --output-dir outputs/failure_annotation_recipe \
-  --policy-path lerobot/smolvla_libero \
-  --device cuda \
-  --seed 1000
-
-# Schema + nonzero failure columns
-uv run python examples/faults/verify_failure_parquet.py \
-  --root outputs/failure_annotation_recipe/dataset
+  --root outputs/can_drop_datagen/smolvla/continue_then_ik/dataset
 ```
-
-Fixed delay (no sample): `--post-grasp-delay-steps 40`. Old demo teleport: `--allow-seat-assist` (do not train on that).

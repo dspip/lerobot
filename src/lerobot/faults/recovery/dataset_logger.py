@@ -9,11 +9,12 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
 from lerobot.faults.annotation import (
+    DATAGEN_FRAME_LABEL_FEATURES,
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
 )
+from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
 
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -35,6 +36,7 @@ LIBERO_DATASET_FEATURES: dict[str, dict[str, Any]] = {
     "action": {"dtype": "float32", "shape": (7,), "names": None},
     "loss_mask": {"dtype": "float32", "shape": (1,), "names": None},
     **FAILURE_ANNOTATION_FEATURES,
+    **DATAGEN_FRAME_LABEL_FEATURES,
 }
 
 
@@ -53,9 +55,7 @@ def libero_obs_to_frame(obs: dict[str, Any]) -> dict[str, np.ndarray]:
         from lerobot.envs.utils import preprocess_observation
         from lerobot.processor.env_processor import LiberoProcessorStep
     except ImportError as exc:
-        raise ImportError(
-            "libero_obs_to_frame requires lerobot for raw LIBERO observations."
-        ) from exc
+        raise ImportError("libero_obs_to_frame requires lerobot for raw LIBERO observations.") from exc
 
     # Already preprocessed (camera* keys) or still raw gym obs.
     if "observation.images.camera1" in obs or "observation.robot_state" in obs:
@@ -70,8 +70,7 @@ def _processed_obs_to_frame(processed: dict[str, Any]) -> dict[str, np.ndarray]:
     out: dict[str, np.ndarray] = {}
     if "observation.state" not in processed:
         raise KeyError(
-            "Missing observation.state after LIBERO processing. "
-            f"Keys present: {sorted(processed)}"
+            f"Missing observation.state after LIBERO processing. Keys present: {sorted(processed)}"
         )
     out["observation.state"] = _to_f32_vector(processed["observation.state"], 8)
 
@@ -136,12 +135,15 @@ class FaultRecoveryDatasetLogger:
 
     ``loss_mask`` semantics (per frame, float32 scalar in shape ``(1,)``):
 
-    - ``1.0`` — nominal VLA policy steps and all recovery planner steps
-    - ``0.0`` — only the mid-air drop injection step (a single frame when drop
-      and recovery start on the same env step; recovery frames remain ``1.0``)
+    - ``1.0`` — nominal carry, including the frames just before a drop, and
+      IK recovery after it starts
+    - ``0.0`` — the fall and the post-drop dwell, until IK recovery starts.
+      ``immediate_smolvla`` stays ``0.0`` from the release through the end
+      of the episode
 
-    Downstream fine-tuning can mask loss on the injection frame while still
-    learning from nominal and recovery segments.
+    ``drop_window`` is a separate short label (pad around the fall). It is not
+    this mask. Downstream fine-tuning should multiply the loss by ``loss_mask``
+    so the dwell is not imitated.
     """
 
     def __init__(
@@ -154,6 +156,7 @@ class FaultRecoveryDatasetLogger:
         robot_type: str = "panda",
         append: bool = False,
     ) -> None:
+        """Open or resume a LeRobot dataset at ``root`` for fault-recovery logging."""
         if LeRobotDataset is None:
             raise ImportError(
                 "FaultRecoveryDatasetLogger requires lerobot. Install LeRobot in your environment."
@@ -234,13 +237,14 @@ class FaultRecoveryDatasetLogger:
         action_arr = np.asarray(action, dtype=np.float32).reshape(7)
         mask_arr = np.array([mask_val], dtype=np.float32)
         labels = default_failure_frame()
+        label_specs = {**FAILURE_ANNOTATION_FEATURES, **DATAGEN_FRAME_LABEL_FEATURES}
         if annotation:
-            for key in FAILURE_ANNOTATION_FEATURES:
+            for key in label_specs:
                 if key in annotation:
-                    labels[key] = np.asarray(annotation[key]).reshape(FAILURE_ANNOTATION_FEATURES[key]["shape"])
-                    if FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "int64":
+                    labels[key] = np.asarray(annotation[key]).reshape(label_specs[key]["shape"])
+                    if label_specs[key]["dtype"] == "int64":
                         labels[key] = labels[key].astype(np.int64, copy=False)
-                    elif FAILURE_ANNOTATION_FEATURES[key]["dtype"] == "bool":
+                    elif label_specs[key]["dtype"] == "bool":
                         labels[key] = labels[key].astype(bool, copy=False)
 
         frame: dict[str, Any] = {
@@ -256,14 +260,41 @@ class FaultRecoveryDatasetLogger:
         key = 1.0 if mask_val >= 0.5 else 0.0
         self._loss_mask_counts[key] = self._loss_mask_counts.get(key, 0) + 1
 
-    def end_episode(self) -> None:
-        """Flush the current episode buffer to disk."""
+    def set_open_episode_bool_column(self, key: str, values: list[bool]) -> None:
+        """Overwrite one boolean column on the episode buffer before it is saved."""
+        writer = getattr(self.dataset, "writer", None)
+        buffer = None if writer is None else getattr(writer, "episode_buffer", None)
+        if buffer is None:
+            raise RuntimeError(f"cannot set {key}: episode buffer is not open")
+        size = int(buffer.get("size", 0))
+        if size != len(values):
+            raise RuntimeError(f"cannot set {key}: expected {size} frames, got {len(values)}")
+        if key not in buffer:
+            raise KeyError(f"episode buffer has no column {key!r}")
+        buffer[key] = [np.array([bool(value)], dtype=bool) for value in values]
+
+    def dataset_episode_index_on_commit(self) -> int:
+        """Index the next :meth:`end_episode` will assign in the LeRobot dataset."""
+        return int(self.dataset.meta.total_episodes)
+
+    @property
+    def committed_episode_count(self) -> int:
+        """Number of episodes already saved in the underlying dataset."""
+        return int(self.dataset.meta.total_episodes)
+
+    def end_episode(self, episode_data: dict[str, Any] | None = None, **kwargs: Any) -> int | None:
+        """Flush the current episode buffer to disk. Returns saved episode index."""
+        if episode_data is None:
+            episode_data = kwargs.get("episode_data")
+        episode_metadata = kwargs.get("episode_metadata")
         if not self._episode_open:
-            return
-        # Disable parallel camera encoding: ProcessPool encoding can race with
-        # image-path stats (FileNotFoundError on frame PNGs during merge/export).
-        self.dataset.save_episode(parallel_encoding=False)
+            return None
+        index = self.dataset_episode_index_on_commit()
+        self.dataset.save_episode(
+            episode_data, parallel_encoding=False, episode_metadata=episode_metadata
+        )
         self._episode_open = False
+        return index
 
     def clear_open_episode(self) -> None:
         """Discard buffered frames for a failed episode (do not save)."""

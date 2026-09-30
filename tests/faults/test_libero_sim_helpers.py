@@ -12,7 +12,12 @@ from lerobot.faults.sim.libero import (
     DEFAULT_GRIPPER_SETTLE_STEPS,
     force_open_gripper,
     get_place_destination,
+    is_object_grasped,
+    is_object_in_basket,
+    is_object_over_basket,
     midair_drop,
+    object_world_height,
+    quat_wxyz_to_mat,
 )
 
 
@@ -27,13 +32,35 @@ def test_loss_mask_from_fault_state():
     assert loss_mask_from_fault(triggered=False, drop_injection_step=False, recovery_active=False) == 1.0
     assert loss_mask_from_fault(triggered=True, drop_injection_step=True, recovery_active=True) == 0.0
     assert loss_mask_from_fault(triggered=True, drop_injection_step=False, recovery_active=True) == 1.0
+    assert (
+        loss_mask_from_fault(
+            triggered=True,
+            drop_injection_step=False,
+            recovery_active=False,
+            post_drop_dwell_step=True,
+        )
+        == 0.0
+    )
+
+
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_is_object_over_basket_wider_than_in_basket(mock_pose):
+    rs_env = MagicMock()
+    rs_env.sim.data.get_body_xpos.return_value = np.array([0.5, 0.0, 0.85], dtype=float)
+    # 0.25 m above basket rim: over opening but outside tight in_basket z_max=0.20.
+    mock_pose.return_value = {"pos": np.array([0.52, 0.0, 1.10], dtype=float)}
+
+    assert is_object_in_basket(rs_env, "alphabet_soup_1") is False
+    assert is_object_over_basket(rs_env, "alphabet_soup_1") is True
 
 
 def test_get_place_destination_prefers_basket():
     rs_env = MagicMock()
     basket = MagicMock()
     basket.root_body = "basket_1_main"
-    rs_env.get_object.side_effect = lambda name: basket if name == "basket_1" else (_ for _ in ()).throw(KeyError(name))
+    rs_env.get_object.side_effect = lambda name: (
+        basket if name == "basket_1" else (_ for _ in ()).throw(KeyError(name))
+    )
     rs_env.sim.data.get_body_xpos.return_value = np.array([0.4, 0.2, 0.85], dtype=float)
 
     dest = get_place_destination(rs_env, "alphabet_soup_1")
@@ -85,7 +112,7 @@ def test_force_open_gripper_settles_before_return():
 @patch("lerobot.faults.sim.libero.get_eef_pose", return_value=(np.zeros(3), np.ones(4)))
 @patch("lerobot.faults.sim.libero.get_object_pose")
 @patch("lerobot.faults.sim.libero.is_object_grasped")
-def test_midair_drop_opens_then_impulses(
+def test_midair_drop_opens_then_nudges_without_impulse(
     mock_grasp, mock_pose, mock_eef, mock_arm, mock_open, mock_impulse, mock_nudge
 ):
     mock_pose.return_value = {"pos": np.zeros(3), "quat_wxyz": np.ones(4)}
@@ -93,13 +120,71 @@ def test_midair_drop_opens_then_impulses(
     mock_grasp.side_effect = [True, True, False]
     rs_env = MagicMock()
 
-    midair_drop(rs_env, gripper_settle_steps=7, settle_steps=5)
+    telemetry = midair_drop(rs_env, gripper_settle_steps=7, settle_steps=5)
 
     assert mock_open.call_count == 2
+    assert all(call.kwargs.get("gripper_settle_steps") == 0 for call in mock_open.call_args_list)
     mock_nudge.assert_called_once()
-    mock_impulse.assert_called_once()
-    assert mock_impulse.call_args.kwargs["settle_steps"] == 80
+    mock_impulse.assert_not_called()
+    np.testing.assert_allclose(telemetry["impulse"]["lin_vel"], 0.0)
+    np.testing.assert_allclose(telemetry["impulse"]["ang_vel"], 0.0)
 
 
 def test_gripper_settle_default_at_least_five():
     assert DEFAULT_GRIPPER_SETTLE_STEPS >= 5
+
+
+def test_is_object_grasped_uses_finger_geom_groups():
+    rs_env = MagicMock()
+    obj = MagicMock()
+    obj.contact_geoms = ["obj_geom"]
+    rs_env.get_object.return_value = obj
+    rs_env._check_grasp.return_value = True
+    gripper = MagicMock()
+    gripper.important_geoms = {"left_finger": ["lf"], "right_finger": ["rf"]}
+    rs_env.robots = [MagicMock(gripper=gripper)]
+
+    assert is_object_grasped(rs_env, "alphabet_soup_1") is True
+    rs_env._check_grasp.assert_called_once_with(gripper=[["lf"], ["rf"]], object_geoms=["obj_geom"])
+
+
+def test_is_object_grasped_legacy_pad_gripper_object():
+    rs_env = MagicMock()
+    obj = MagicMock()
+    obj.contact_geoms = ["obj_geom"]
+    rs_env.get_object.return_value = obj
+    rs_env._check_grasp.return_value = False
+    gripper = MagicMock()
+    gripper.important_geoms = {}
+    rs_env.robots = [MagicMock(gripper=gripper)]
+
+    assert is_object_grasped(rs_env, "alphabet_soup_1") is False
+    rs_env._check_grasp.assert_called_once_with(gripper=gripper, object_geoms=["obj_geom"])
+
+
+@patch("lerobot.faults.sim.libero.object_body_extents")
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_object_world_height_identity(mock_pose, mock_extents):
+    mock_extents.return_value = np.array([0.062, 0.076, 0.062], dtype=np.float64)
+    mock_pose.return_value = {"quat_wxyz": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)}
+    h = object_world_height(MagicMock(), "alphabet_soup_1")
+    assert h == pytest.approx(0.062, abs=1e-6)
+
+
+@patch("lerobot.faults.sim.libero.object_body_extents")
+@patch("lerobot.faults.sim.libero.get_object_pose")
+def test_object_world_height_rotated_90_about_x(mock_pose, mock_extents):
+    extents = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    mock_extents.return_value = extents
+    angle = np.pi / 2
+    quat = np.array([np.cos(angle / 2), np.sin(angle / 2), 0.0, 0.0], dtype=np.float64)
+    mock_pose.return_value = {"quat_wxyz": quat}
+    h = object_world_height(MagicMock(), "obj")
+    rot = quat_wxyz_to_mat(quat)
+    expected = float(np.sum(np.abs(rot[2, :]) * extents))
+    assert h == pytest.approx(expected, abs=1e-6)
+    assert h == pytest.approx(2.0, abs=1e-6)
+
+
+def test_object_world_height_returns_none_on_magic_mock():
+    assert object_world_height(MagicMock(), "any") is None

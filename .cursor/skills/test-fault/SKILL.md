@@ -42,9 +42,9 @@ Expect a synthetic dataset under `outputs/demo_drop_recovery_dry/` (or `--output
 ```bash
 cd /home/aviya/Projects/lerobot
 export MUJOCO_GL=egl
-uv run python examples/faults/run_full_drop_recovery_pipeline.py \
-  --output-dir outputs/full_pipeline_demo \
-  --policy-path lerobot/smolvla_libero \
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/can_drop_datagen.json \
+  --episodes 1 \
   --device cuda
 ```
 

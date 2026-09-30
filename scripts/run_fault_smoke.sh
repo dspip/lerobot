@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A/B smoke using stock lerobot-eval + in-tree fault injection.
 # Requires: uv sync, LeRobot + LIBERO extras, CUDA for SmolVLA.
-# Does NOT cover midair_drop — use examples/faults/run_full_drop_recovery_pipeline.py.
+# Does NOT cover midair_drop — use examples/faults/run_drop_datagen.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

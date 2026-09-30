@@ -82,7 +82,11 @@ The same IK recovery planner can also be started on demand via
 `MidAirDropFault.request_recovery` (for example when an external monitor decides the
 episode needs help). That path uses current end-effector and object poses and does
 **not** apply a new physics impulse or set the drop-injection loss mask; only the
-automatic drop trigger (`_trigger_drop`) applies the impulse and gripper settle.
+automatic drop trigger (`_trigger_drop`) opens the gripper in sim and does not
+add a throw impulse (`impulse_lin_*` is ignored). The object then falls over
+later 20 Hz control steps with the arm held and the gripper open. Landing is
+ungrasped and `|vz| < 0.05` m/s for two checks; otherwise the episode truncates
+after 15 fall steps and IK does not start.
 
 See `src/lerobot/faults/config.py` for the full schema.
 
@@ -111,27 +115,24 @@ Mid-air drop + recovery is **not** covered by LIBERO smoke scripts. Use teammate
 # CI-safe dry-run (no LIBERO)
 uv run python examples/faults/run_drop_recovery_demo.py --dry-run
 
-# Full SmolVLA → grasp → **carry** → drop → recovery → video (GPU + LIBERO)
+# Unified drop-datagen matrix (GPU + LIBERO, recipe-driven)
 export MUJOCO_GL=egl
-uv run python examples/faults/run_full_drop_recovery_pipeline.py \
-  --output-dir outputs/full_pipeline_demo \
-  --policy-path lerobot/smolvla_libero \
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/can_drop_datagen.json \
   --device cuda
 ```
 
-Training-grade defaults: sampled `post_grasp_delay_steps` in `[20, 60]` (1–3 s of
-mid-air carry at 20 Hz), `seat_assist_enabled=false`, post-release settle frames
-written to Parquet. Demo-only teleport: `--allow-seat-assist`.
+The sole checked-in recipe drives SimpleIK and SmolVLA variants (controller ×
+post-drop mode) under `recording.output_dir`. Training-grade SmolVLA kwargs live
+in `src/lerobot/faults/recovery/recording_recipe.py` (`seat_assist_enabled=false`,
+XY-band drops, dwell steps from the recipe).
 
-Pass criteria: `fault_events.jsonl` contains `"event": "midair_drop"`; `pipeline_log.json`
-reports behavioral success (grasp, **carry before drop**, drop, unaided in-basket).
-
-**Multi-episode mix:** `examples/faults/run_failure_mix.py` appends many
-drop-recovery and nominal (no-fault) successes into one shared
-`output_dir/dataset` via `FaultRecoveryDatasetLogger.append`. Failed attempts
-call `clear_open_episode()` so bad trajectories are not saved. Per-attempt logs
-and videos live under `output_dir/episodes/seed_<n>/`; `mix_log.json` records
-kept seeds and failed checks.
+Pass criteria per variant: LeRobot datasets under
+`<output_dir>/<controller>/<post_drop_mode>/dataset/` and per-episode artifacts
+under `episode_XXXX/`. The run writes `run_manifest.json` at the recipe
+output root with `run_status` (`in_progress`, `complete`, or `aborted`),
+`error_summary` when aborted, and one metadata row per matrix episode
+(seeds, keep/reject, dataset episode index).
 
 ## Evidence of injection
 

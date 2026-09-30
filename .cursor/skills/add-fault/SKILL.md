@@ -42,7 +42,7 @@ Shared helpers:
 
 ## Steps
 
-1. **Design** — start/stop, proposed vs executed, proof (`fault_events.jsonl`, video, diag PNGs).
+1. **Design** — start/stop, proposed vs executed, proof (`fault_events.jsonl`, video, diag PNG files).
 2. **Config** — `src/lerobot/faults/config.py`: add to `_SUPPORTED_TYPES`, fields, `validate()`.
    Keep `enabled=False` default on `FaultInjectionConfig`.
 3. **Injector** — per-env state, `reset()`, `notify_dones()`, never mutate inputs, JSONL via
@@ -91,5 +91,6 @@ uv run lerobot-eval \
 - Sim-inject: `src/lerobot/faults/sim/object_slip.py`, `eef_bump.py`
 - Recovery: `src/lerobot/faults/recovery/midair_drop.py`
 - Integration: `src/lerobot/scripts/lerobot_eval.py` (`maybe_wrap_env_tree` only)
-- Drop pipeline demos: `examples/faults/run_drop_recovery_demo.py`,
-  `examples/faults/run_full_drop_recovery_pipeline.py`
+- Drop datagen: `examples/faults/run_drop_datagen.py` +
+  `examples/faults/recipes/can_drop_datagen.json`; dry-run demo:
+  `examples/faults/run_drop_recovery_demo.py`

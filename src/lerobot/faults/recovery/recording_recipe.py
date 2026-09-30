@@ -30,6 +30,7 @@ import numpy as np
 DEFAULT_POST_GRASP_DELAY_MIN = 20
 DEFAULT_POST_GRASP_DELAY_MAX = 60
 DEFAULT_MIN_DROP_DISTANCE_FROM_BASKET_M = 0.30
+DEFAULT_POST_DROP_DWELL_STEPS = 80
 
 
 def sample_post_grasp_delay_steps(
@@ -59,6 +60,9 @@ def training_midair_drop_kwargs(
     min_drop_distance_from_basket_m: float | None = None,
     drop_xy_band_min: float | None = None,
     drop_xy_band_max: float | None = None,
+    drop_xy_target_m: float | None = None,
+    post_drop_dwell_steps: int | None = None,
+    post_drop_mode: str = "continue_then_ik",
 ) -> dict[str, Any]:
     """Fault kwargs for an episode that is allowed into a training mix."""
     return {
@@ -83,10 +87,11 @@ def training_midair_drop_kwargs(
         "recovery_fps": int(policy_fps),
         "seed": int(seed),
         "log_path": Path(log_path),
-        "drop_xy_band_min": (
-            None if drop_xy_band_min is None else float(drop_xy_band_min)
+        "drop_xy_band_min": (None if drop_xy_band_min is None else float(drop_xy_band_min)),
+        "drop_xy_band_max": (None if drop_xy_band_max is None else float(drop_xy_band_max)),
+        "drop_xy_target_m": (None if drop_xy_target_m is None else float(drop_xy_target_m)),
+        "post_drop_dwell_steps": (
+            DEFAULT_POST_DROP_DWELL_STEPS if post_drop_dwell_steps is None else int(post_drop_dwell_steps)
         ),
-        "drop_xy_band_max": (
-            None if drop_xy_band_max is None else float(drop_xy_band_max)
-        ),
+        "post_drop_mode": str(post_drop_mode),
     }

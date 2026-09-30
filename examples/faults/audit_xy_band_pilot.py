@@ -13,7 +13,7 @@
 # limitations under the License.
 
 #!/usr/bin/env python3
-"""Audit kept episodes from run_xy_band_pilot.py."""
+"""Audit kept episodes from legacy ``run_xy_band_pilot.py`` outputs (recorder removed)."""
 
 from __future__ import annotations
 

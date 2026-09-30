@@ -34,6 +34,7 @@ from lerobot.faults.sim.libero import (
     is_object_grasped,
     is_object_held_midair,
     is_object_in_basket,
+    is_object_over_basket,
 )
 
 # Sticky category ids written as int64 (1,) in Parquet.
@@ -71,14 +72,24 @@ FAILURE_TYPE_FROM_CONFIG: dict[str, int] = {
 
 FAILURE_ANNOTATION_FEATURES: dict[str, dict[str, Any]] = {
     "is_failure": {"dtype": "bool", "shape": (1,), "names": None},
+    "ever_held_midair": {"dtype": "bool", "shape": (1,), "names": None},
     "failure_onset": {"dtype": "bool", "shape": (1,), "names": None},
     "failure_type": {"dtype": "int64", "shape": (1,), "names": None},
     "injection_active": {"dtype": "bool", "shape": (1,), "names": None},
     "phase": {"dtype": "int64", "shape": (1,), "names": None},
 }
 
+DATAGEN_FRAME_LABEL_FEATURES: dict[str, dict[str, Any]] = {
+    "tick_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "drop_release": {"dtype": "bool", "shape": (1,), "names": None},
+    "drop_event": {"dtype": "bool", "shape": (1,), "names": None},
+    "drop_window": {"dtype": "bool", "shape": (1,), "names": None},
+    "attempt_index": {"dtype": "int64", "shape": (1,), "names": None},
+}
+
 
 def failure_type_id(config_type: str | None) -> int:
+    """Map a fault config ``type`` string to the dataset ``failure_type`` int id."""
     if not config_type:
         return FAILURE_TYPE_NONE
     return int(FAILURE_TYPE_FROM_CONFIG.get(str(config_type), FAILURE_TYPE_NONE))
@@ -88,23 +99,32 @@ def default_failure_frame() -> dict[str, np.ndarray]:
     """Successful / unlabeled frame: all flags false, type and phase zero."""
     return {
         "is_failure": np.array([False]),
+        "ever_held_midair": np.array([False]),
         "failure_onset": np.array([False]),
         "failure_type": np.array([FAILURE_TYPE_NONE], dtype=np.int64),
         "injection_active": np.array([False]),
         "phase": np.array([PHASE_NOMINAL], dtype=np.int64),
+        "tick_index": np.array([0], dtype=np.int64),
+        "drop_release": np.array([False]),
+        "drop_event": np.array([False]),
+        "drop_window": np.array([False]),
+        "attempt_index": np.array([0], dtype=np.int64),
     }
 
 
 def annotation_to_frame(
     *,
     is_failure: bool,
+    ever_held_midair: bool,
     failure_onset: bool,
     failure_type: int,
     injection_active: bool,
     phase: int,
 ) -> dict[str, np.ndarray]:
+    """Build one LeRobot failure-annotation feature dict from scalar flags."""
     return {
         "is_failure": np.array([bool(is_failure)]),
+        "ever_held_midair": np.array([bool(ever_held_midair)]),
         "failure_onset": np.array([bool(failure_onset)]),
         "failure_type": np.array([int(failure_type)], dtype=np.int64),
         "injection_active": np.array([bool(injection_active)]),
@@ -113,6 +133,7 @@ def annotation_to_frame(
 
 
 def choose_phase(*, injection_active: bool, is_failure: bool, recovery_active: bool) -> int:
+    """Pick the ``phase`` id for a frame; injection beats recovery for labeling."""
     # Injection pulse wins so the glitch frame is not labeled as recovery-only.
     if injection_active:
         return PHASE_INJECTION
@@ -129,6 +150,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key in {"drop", "injection", "fault"}:
         return annotation_to_frame(
             is_failure=True,
+            ever_held_midair=False,
             failure_onset=onset,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=True,
@@ -137,6 +159,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key in {"post", "post_fault"}:
         return annotation_to_frame(
             is_failure=True,
+            ever_held_midair=False,
             failure_onset=False,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=False,
@@ -145,6 +168,7 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
     if key == "recovery":
         return annotation_to_frame(
             is_failure=False,
+            ever_held_midair=False,
             failure_onset=False,
             failure_type=FAILURE_TYPE_MIDAIR_DROP,
             injection_active=False,
@@ -155,9 +179,12 @@ def annotation_from_scripted_phase(phase: str, *, onset: bool = False) -> dict[s
 
 @dataclass
 class PhysicsSnapshot:
+    """Robosuite object state used to infer physical mid-air drop failures."""
+
     grasped: bool = False
     held_midair: bool = False
     in_basket: bool = False
+    over_basket: bool = False
     object_z: float | None = None
     available: bool = False
 
@@ -177,15 +204,15 @@ def read_physics_snapshot(
         return PhysicsSnapshot()
     try:
         grasped = bool(is_object_grasped(rs_env, object_name))
-        held = bool(
-            is_object_held_midair(rs_env, object_name, min_object_z=min_object_z)
-        )
+        held = bool(is_object_held_midair(rs_env, object_name, min_object_z=min_object_z))
         in_basket = bool(is_object_in_basket(rs_env, object_name, basket_name=basket_name))
+        over_basket = bool(is_object_over_basket(rs_env, object_name, basket_name=basket_name))
         z = float(get_object_pose(rs_env, object_name)["pos"][2])
         return PhysicsSnapshot(
             grasped=grasped,
             held_midair=held,
             in_basket=in_basket,
+            over_basket=over_basket,
             object_z=z,
             available=True,
         )
@@ -209,9 +236,11 @@ class FailureAnnotator:
     last_frames: list[dict[str, np.ndarray]] = field(init=False)
 
     def __post_init__(self) -> None:
+        """Initialize per-env latches and default frames."""
         self.reset()
 
     def reset(self, env_ids: list[int] | None = None) -> None:
+        """Clear failure latches for all envs or the given ``env_ids``."""
         indices = list(range(self.num_envs) if env_ids is None else env_ids)
         if env_ids is None:
             self._ever_held = [False] * self.num_envs
@@ -266,9 +295,12 @@ class FailureAnnotator:
             if snap.available:
                 if snap.held_midair:
                     self._ever_held[env_idx] = True
-                # Physical drop: was held in air this episode, currently free, not placed.
+                # Physical drop: was held in air, free, not placed, not releasing over basket.
                 is_failure = bool(
-                    self._ever_held[env_idx] and (not snap.grasped) and (not snap.in_basket)
+                    self._ever_held[env_idx]
+                    and (not snap.grasped)
+                    and (not snap.in_basket)
+                    and (not snap.over_basket)
                 )
             # After the first drop is cleared (regrasp / basket), a later ungrasp is
             # usually the recovery release into the basket — not a second failure.
@@ -290,6 +322,7 @@ class FailureAnnotator:
             )
             frame = annotation_to_frame(
                 is_failure=is_failure,
+                ever_held_midair=bool(self._ever_held[env_idx]),
                 failure_onset=onset,
                 failure_type=ftype,
                 injection_active=injection,
@@ -338,6 +371,7 @@ def clip_failure_to_first_interval(is_failure: list[bool] | np.ndarray) -> tuple
 
 
 def merge_annotation_into_info(info: Any, arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+    """Copy ``info`` and overlay failure-annotation arrays for Gym ``step``/``reset``."""
     merged: dict[str, Any] = dict(info) if isinstance(info, dict) else {}
     merged.update(arrays)
     return merged
