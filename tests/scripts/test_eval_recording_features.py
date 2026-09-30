@@ -15,7 +15,7 @@
 import numpy as np
 
 from lerobot.envs.configs import LiberoEnv
-from lerobot.scripts.lerobot_eval import _build_raw_frame, _env_features_to_dataset_features
+from lerobot.faults.eval_recording import _build_raw_frame, _env_features_to_dataset_features
 from lerobot.utils.feature_utils import _validate_feature_names
 
 
