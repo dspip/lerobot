@@ -88,6 +88,18 @@ def test_drop_window_is_empty_without_a_release() -> None:
     assert tick_in_drop_window(2, bounds) is False
 
 
+def test_cli_fps_override_writes_one_view() -> None:
+    from examples.faults.run_drop_datagen import _apply_overrides
+
+    recipe = load_drop_datagen_recipe(DROP_RECIPE)
+    ten = _apply_overrides(recipe, base_seed=None, output=None, episodes=None, fps=None)
+    twenty = _apply_overrides(recipe, base_seed=None, output=None, episodes=None, fps=20)
+    assert ten.recording.dataset_fps == 10
+    assert ten.recording.master_fps is None
+    assert twenty.recording.dataset_fps == 20
+    assert twenty.recording.master_fps is None
+
+
 def test_success_and_drop_recipes_match_the_episode_table() -> None:
     success = load_drop_datagen_recipe(SUCCESS_RECIPE)
     drop = load_drop_datagen_recipe(DROP_RECIPE)
@@ -96,7 +108,7 @@ def test_success_and_drop_recipes_match_the_episode_table() -> None:
     assert success.held_out_object_names == HELD_OUT
     assert drop.held_out_object_names == HELD_OUT
     assert success.recording.dataset_fps == 10
-    assert success.recording.master_fps == 20
+    assert success.recording.master_fps is None
     assert success.control_hz == 20
     assert [(row.post_drop_mode.value, row.drop, row.episodes) for row in success.experiment_matrix] == [
         ("immediate_ik", False, 400)

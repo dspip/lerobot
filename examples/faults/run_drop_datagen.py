@@ -61,6 +61,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override recording.episodes (dataset total across matrix rows; must be >= 1).",
     )
     parser.add_argument(
+        "--fps",
+        type=int,
+        default=None,
+        choices=(10, 20),
+        help="Write one dataset at this FPS (10 default from the recipe, or 20). "
+        "Does not write a second dataset_20hz/ copy.",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda",
@@ -87,12 +95,23 @@ def _apply_overrides(
     base_seed: int | None,
     output: Path | None,
     episodes: int | None,
+    fps: int | None,
 ) -> DropDatagenRecipe:
     recording = recipe.recording
     if base_seed is not None:
         recording = replace(recording, base_seed=int(base_seed))
     if output is not None:
         recording = replace(recording, output_dir=str(output))
+    # CLI always writes one view. recipe.master_fps is ignored here so an old
+    # JSON with master_fps=20 does not encode a second dataset every episode.
+    if fps is not None:
+        if int(fps) not in {10, int(recipe.control_hz)}:
+            raise RecipeError(
+                f"--fps must be 10 or control_hz ({recipe.control_hz}); got {fps}"
+            )
+        recording = replace(recording, dataset_fps=int(fps), master_fps=None)
+    else:
+        recording = replace(recording, master_fps=None)
     updated = replace(recipe, recording=recording)
     if episodes is not None:
         if int(episodes) <= 0:
@@ -154,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             base_seed=args.base_seed,
             output=args.output,
             episodes=args.episodes,
+            fps=args.fps,
         )
     except RecipeError as exc:
         print(f"Recipe error: {exc}", file=sys.stderr)

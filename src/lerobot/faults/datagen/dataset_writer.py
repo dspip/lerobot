@@ -244,7 +244,9 @@ class DatagenEpisodeSession:
         views = self.recording_views
         if not views:
             return
-        stride = recording_stride(int(self.control_hz), int(self.policy_fps))
+        # Pad is two 10 fps frames (four control ticks at 20 Hz), even if this
+        # run stores every tick at 20 fps.
+        stride = recording_stride(int(self.control_hz), 10)
         bounds = drop_window_bounds(
             views[0].segments._episode_snapshots,
             pad_frames=DROP_WINDOW_PAD_FRAMES,
@@ -382,7 +384,15 @@ class RunDatasetWriter:
                 raise StaleRunOutputError(
                     f"Cannot resume: manifest has {kept} kept episodes but {info_path} is missing."
                 )
-            total = int(json.loads(info_path.read_text(encoding="utf-8"))["total_episodes"])
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            stored_fps = int(info.get("fps", 0))
+            expected_fps = int(self._recipe.recording.dataset_fps)
+            if root.name == "dataset" and stored_fps and stored_fps != expected_fps:
+                raise StaleRunOutputError(
+                    f"Cannot resume {root}: dataset fps is {stored_fps} but this run is {expected_fps}. "
+                    "Use a new output_dir if you changed --fps."
+                )
+            total = int(info["total_episodes"])
             if total != kept:
                 raise StaleRunOutputError(
                     f"Cannot resume {root}: dataset has {total} episodes but the manifest kept {kept}. "

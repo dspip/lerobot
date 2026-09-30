@@ -11,19 +11,12 @@ Do not treat `libero_object_drop_train.json` / `libero_object_drop_heldout.json`
 | Layer | Rate | Notes |
 | --- | --- | --- |
 | MuJoCo physics | 500 Hz | `DEFAULT_MUJOCO_MODEL_TIMESTEP = 0.002` s in `lerobot.faults.recovery.fps` |
-| Control / env step | 20 Hz | Recipe `control_hz`; matches `recording.master_fps` when the master view is enabled |
+| Control / env step | 20 Hz | Recipe `control_hz` |
 | Physics substeps per control tick | 25 | One control period (0.05 s) ÷ model timestep |
 
-Each run writes **two LeRobot views** under the recipe `recording.output_dir`:
+Each run writes **one** LeRobot dataset at `dataset/` (`recording.dataset_fps`, default 10). Control stays 20 Hz. At 10 fps, stride is 2 (even ticks). `--fps 20` stores every control tick in that same `dataset/` folder. `run_drop_datagen.py` does not write a sibling `dataset_20hz/` (that path is leftover from older dual-view recipes; `master_fps` is ignored by the CLI).
 
-| View directory | FPS | Stride | Role |
-| --- | --- | --- | --- |
-| `dataset/` | 10 | 2 | **Train on this.** Logs ticks where `tick % stride == 0` |
-| `dataset_20hz/` | 20 | 1 | Master view: one frame per control tick |
-
-Recording uses **uniform stride only**. There are **no forced injection frames**. For the 10 fps view, boolean pulses (`drop_release`, `failure_onset`) are OR-accumulated across skipped ticks and applied on the next logged frame.
-
-If the 20 Hz view logs `N` frames, the 10 Hz view logs the even ticks of that episode (about `N / 2`).
+Recording uses **uniform stride only**. There are **no forced injection frames**. At 10 fps, boolean pulses (`drop_release`, `failure_onset`) are OR-accumulated across skipped ticks and applied on the next logged frame.
 
 ## Action–observation pairing
 
@@ -42,8 +35,7 @@ POST `env.step()` contract (`POST_STEP_LOGGING_CONTRACT` in `frame_logging.py`):
 
 Under `recording.output_dir`:
 
-- `dataset/` — 10 Hz LeRobot dataset + `meta/failure_segments.parquet`
-- `dataset_20hz/` — 20 Hz sibling
+- `dataset/` — the recorded LeRobot dataset (default 10 fps) + `meta/failure_segments.parquet`
 - `run_manifest.json` — kept and rejected attempts, seeds, object names
 - Per-variant diagnostics under `{controller}/{post_drop_mode}/episode_XXXX/` (no-drop rows use `{mode}_no_drop`)
 
@@ -58,7 +50,7 @@ Rerun the same `run_drop_datagen.py` command to resume. Completed variant keys (
 | `tick_index` | Control tick for this row |
 | `drop_release` | The frame the gripper released (pulse) |
 | `drop_event` | Object in free fall / injection window (unpadded) |
-| `drop_window` | Short drop label: 2 frames **before** release, through the fall, through 2 frames **after** landing, measured on the **10 fps** view. The same physical window is applied to the 20 Hz view (pad is 4 control ticks). `False` on every frame if the episode never released. Backfilled at commit. |
+| `drop_window` | Short drop label: two **10 fps** frames before release, the fall, two 10 fps frames after landing (4 control ticks of pad at 20 Hz control). Same physical window if you recorded with `--fps 20`. `False` if the episode never released. Backfilled at commit. |
 | `attempt_index` | `0` from the start through landing; `1` after landing until episode end. No-drop episodes stay `0`. This is the “first try / after the drop” split. There is no separate `subepisode` column. |
 | `loss_mask` | Whether this frame is used as an imitation target. See below. |
 | `is_failure` | Physical latch: was held mid-air, then not grasped, not in the basket, not releasing over the basket. **Not** the drop label. It can stay true for seconds after a drop because of dwell. |
@@ -117,12 +109,11 @@ Fall after release is typically **2–4 frames** at 10 fps (`drop_event`). `drop
 
 ## Trainer notes
 
-- Train on **`dataset/` (10 fps)**.
+- Train on **`dataset/`**. Default recording is 10 fps. Use `--fps 20` only if you want that one dataset at control rate.
 - Filter imitation loss with **`loss_mask`**. Do not use `is_failure` as that filter.
 - For a short “this is the drop” label, use **`drop_window`**, not `is_failure` and not the whole dwell.
 - `attempt_index == 0` is approach + carry (+ fall if any). `attempt_index == 1` is after landing (recovery).
 - Language comes from the dataset `task` / `task_index` (per-object LIBERO instruction). Use `instruction_mode="dataset_task"` if the loader has that switch.
-- Alpha-S `Phase1Dataset` can load `dataset/` or `dataset_20hz/`. Prefer 10 fps unless you intend 20 Hz.
 
 ## Sharding and audit
 

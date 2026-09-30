@@ -24,7 +24,7 @@ uv run python examples/faults/run_drop_datagen.py \
 
 Rerun the same command to continue after Ctrl+C. Finished attempts (kept or rejected) are skipped. The episode that was in progress is recorded again.
 
-Optional overrides: `--base-seed`, `--output`, `--episodes`, `--device`, `--logical-start` / `--logical-end`.
+Optional overrides: `--base-seed`, `--output`, `--episodes`, `--fps` (`10` or `20`), `--device`, `--logical-start` / `--logical-end`. Changing `--fps` after a run has started requires a new `output_dir`.
 
 `recording.episodes` is the **planned** attempt count. Missed grasps and stalled carries are not saved, so the on-disk episode count can be lower.
 
@@ -32,7 +32,7 @@ Optional overrides: `--base-seed`, `--output`, `--episodes`, `--device`, `--logi
 
 Both recipes:
 
-- Control at 20 Hz. Train on `dataset/` at **10 fps**. `dataset_20hz/` is a sibling, not a replacement.
+- Control at 20 Hz. One dataset: `dataset/` at **10 fps** by default. Pass `--fps 20` to store that one dataset at 20 fps instead. There is no second `dataset_20hz/` copy.
 - Eight pick targets, round-robin: `alphabet_soup_1`, `cream_cheese_1`, `salad_dressing_1`, `bbq_sauce_1`, `ketchup_1`, `butter_1`, `milk_1`, `chocolate_pudding_1`.
 - Held out of this recording: `tomato_sauce_1`, `orange_juice_1`. They are not pick targets. At record time they are hidden and parked off the table so they do not stay in the frames. Official LIBERO tasks 5 and 9 stay on disk for later eval; they are not recorded here.
 - Sidecar `dataset/meta/failure_segments.parquet` stores the episode's real `object_name` and `task_id`.
