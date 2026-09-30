@@ -14,6 +14,7 @@ from lerobot.faults.annotation import (
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
 )
+from lerobot.faults.episode_metadata import save_episode_adding_metadata
 from lerobot.faults.recovery.fps import assert_dataset_fps, resolve_target_fps
 
 try:
@@ -290,8 +291,11 @@ class FaultRecoveryDatasetLogger:
         if not self._episode_open:
             return None
         index = self.dataset_episode_index_on_commit()
-        self.dataset.save_episode(
-            episode_data, parallel_encoding=False, episode_metadata=episode_metadata
+        save_episode_adding_metadata(
+            self.dataset,
+            episode_data,
+            parallel_encoding=False,
+            episode_metadata=episode_metadata,
         )
         self._episode_open = False
         return index
