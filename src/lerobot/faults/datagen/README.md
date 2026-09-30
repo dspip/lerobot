@@ -1,6 +1,10 @@
 # Drop datagen (LIBERO-Object)
 
-Unified drop datagen: typed JSON recipes, experiment-matrix runner, controller adapters, and path-based drop triggers. This document focuses on the **multi-object LIBERO-Object drop** datasets (`libero_object_drop_train`, `libero_object_drop_heldout`); see `examples/faults/recipes/README.md` for recipe entry points.
+Typed JSON recipes, experiment-matrix runner, and path-based drop triggers.
+
+**Current training pair:** `libero_object_success.json` and `libero_object_drop.json` (see `examples/faults/recipes/README.md`). They write `outputs/datasets/libero_object_v1/success` and `…/drop`.
+
+Do not treat `libero_object_drop_train.json` / `libero_object_drop_heldout.json` as the current recording plan.
 
 ## Simulation and recording rates
 
@@ -14,156 +18,137 @@ Each run writes **two LeRobot views** under the recipe `recording.output_dir`:
 
 | View directory | FPS | Stride | Role |
 | --- | --- | --- | --- |
+| `dataset/` | 10 | 2 | **Train on this.** Logs ticks where `tick % stride == 0` |
 | `dataset_20hz/` | 20 | 1 | Master view: one frame per control tick |
-| `dataset/` | 10 | 2 | Policy view: logs ticks where `tick % stride == 0` |
 
-Recording uses **uniform stride only** (`should_log_view_tick` / `should_log_sim_step`); there are **no forced injection frames**. For strided views, boolean **pulses** in `PULSE_ANNOTATION_KEYS` (`drop_release`, `failure_onset`) are **OR-accumulated** across skipped ticks and applied on the next logged frame (`offer_tick_to_views` in `recording_views.py`).
+Recording uses **uniform stride only**. There are **no forced injection frames**. For the 10 fps view, boolean pulses (`drop_release`, `failure_onset`) are OR-accumulated across skipped ticks and applied on the next logged frame.
 
-For a given episode, if the master view logs `N` frames at 20 Hz, the 10 Hz view logs **⌈N / 2⌉** frames (stride 2, ticks 0, 2, 4, …).
+If the 20 Hz view logs `N` frames, the 10 Hz view logs the even ticks of that episode (about `N / 2`).
 
 ## Action–observation pairing
 
-Datagen follows the **POST `env.step()` contract** (`POST_STEP_LOGGING_CONTRACT` in `frame_logging.py`):
+POST `env.step()` contract (`POST_STEP_LOGGING_CONTRACT` in `frame_logging.py`):
 
-- **Observation** on each row is the dict returned **after** `env.step` (state at \(o_{t+1}\)).
-- **Action** is `env.last_executed_action` when set, otherwise the action tensor passed into `env.step` (the command executed for that transition, \(a_t\)).
-
-So each stored transition pairs **next observation with the action that was just executed**—standard “observe result of action” alignment for imitation learning.
+- **Observation** is the dict returned **after** `env.step` (\(o_{t+1}\)).
+- **Action** is the command that was just executed (\(a_t\)).
 
 ## Drop mechanism
 
-- Drops fire on the SimpleIK carry path during `lift` / `to_container` when the paired plan requests a drop (`path_drop` + shared `drop_u`).
-- On release, the fault opens the gripper and sets **`falling`**; the arm **keeps executing** the nominal carry command (scaled release branch in `_nominal_action`) while the object falls.
-- **Recording does not alter physics**: logging stride and the no-drop matrix row only change which ticks are written. `force_drop_injection` is ignored in `should_log_sim_step`. Audit checks that drop vs no-drop episodes share **identical `observation.state` prefixes before `drop_release`** (`_audit_pairs` in `audit.py`).
+- Drops fire on the SimpleIK carry path during `lift` / `to_container` when the paired plan requests a drop.
+- On release the gripper opens and the object falls. The arm keeps the nominal carry command while falling.
+- Logging stride does not change physics. A no-drop matrix row is a different episode, not a different simulator.
 
 ## On-disk layout
 
 Under `recording.output_dir`:
 
-- `dataset/` — 10 Hz LeRobot dataset + `meta/failure_segments.parquet` for that view
-- `dataset_20hz/` — 20 Hz sibling (`master_dataset_directory`)
-- `run_manifest.json` — kept/discarded episodes, seeds, matrix metadata
+- `dataset/` — 10 Hz LeRobot dataset + `meta/failure_segments.parquet`
+- `dataset_20hz/` — 20 Hz sibling
+- `run_manifest.json` — kept and rejected attempts, seeds, object names
 - Per-variant diagnostics under `{controller}/{post_drop_mode}/episode_XXXX/` (no-drop rows use `{mode}_no_drop`)
 
-## Frame columns (policy view)
+Rerun the same `run_drop_datagen.py` command to resume. Completed variant keys (kept or rejected) are skipped. A kill discards only the in-progress episode.
 
-New datagen labels (`DATAGEN_FRAME_LABEL_FEATURES`) are added alongside existing failure columns; **dtypes/shapes of prior columns are unchanged**.
+## Frame columns
 
-| Column | Dtype | Meaning |
-| --- | --- | --- |
-| `tick_index` | int64 (1,) | Control tick index for this row |
-| `drop_release` | bool (1,) | Rising edge of `triggered`: release pulse |
-| `drop_event` | bool (1,) | `triggered` and (`falling` or `drop_injection_step`): object in free fall / injection window |
-| `attempt_index` | int64 (1,) | `0` through landing (`drop_event` true); `1` after landing until episode end (no-drop stays `0`) |
+`DATAGEN_FRAME_LABEL_FEATURES` plus existing failure columns. Policy inputs stay images + 8-D state + 7-D action + `task`.
 
-Existing privileged / label columns (unchanged contract) include `is_failure`, `failure_onset`, `injection_active`, `phase`, `failure_type`, `ever_held_midair`, plus `loss_mask`, images, 8-D state, 7-D action, and `task`. **There are no pad-force columns.**
+| Column | Meaning |
+| --- | --- |
+| `tick_index` | Control tick for this row |
+| `drop_release` | The frame the gripper released (pulse) |
+| `drop_event` | Object in free fall / injection window (unpadded) |
+| `drop_window` | Short drop label: 2 frames **before** release, through the fall, through 2 frames **after** landing, measured on the **10 fps** view. The same physical window is applied to the 20 Hz view (pad is 4 control ticks). `False` on every frame if the episode never released. Backfilled at commit. |
+| `attempt_index` | `0` from the start through landing; `1` after landing until episode end. No-drop episodes stay `0`. This is the “first try / after the drop” split. There is no separate `subepisode` column. |
+| `loss_mask` | Whether this frame is used as an imitation target. See below. |
+| `is_failure` | Physical latch: was held mid-air, then not grasped, not in the basket, not releasing over the basket. **Not** the drop label. It can stay true for seconds after a drop because of dwell. |
 
-### Failure semantics
+`is_failure` may appear downstream as `object_lost`. The parquet name is `is_failure`.
 
-- **`is_failure`** (`annotation.py`): physical latch—object was held mid-air, then is not grasped, not in the basket, and not releasing over the basket. Recovery regrasp / basket placement clears subsequent “ungrasp” from counting as failure.
-- **Training alias**: downstream Action Expert code may refer to this as **`object_lost`**; the dataset column name is **`is_failure`**.
-- **Detector target**: “did a drop occur during this sub-task?” — successful recovery is **not** treated as failure for that objective.
-- **`injection_active`**: injector window (includes the fall while `drop_injection_step` / fall logic is active)—separate from the physical latch so models do not learn the injection clock alone.
-- **No per-episode verdict broadcast** onto frame rows; attempt-level timing lives in the sidecar.
+### `loss_mask`
+
+- **1** on a normal carry, including the 2 frames before release (still a normal hold).
+- **0** from release through the post-drop wait (fall + dwell) so the policy does not learn the freeze.
+- **1** again when IK recovery is active (`recovery_active`).
+- **`immediate_smolvla`:** **0** from release through the **rest of the episode**, even if IK later starts.
+- **No-drop episodes:** **1** on every frame.
+
+`loss_mask_from_fault` zeroes injection and dwell. `MidAirDropFault.loss_mask_for_env` adds the SmolVLA rule.
 
 ### Sidecar `meta/failure_segments.parquet`
 
-One or two rows per **(episode, attempt)** (`failure_segments.py`), with release/landing tick and frame indices, times at `control_hz`, and `object_z_at_release`. Built from per-tick snapshots during logging, not from a global episode verdict.
+One or two rows per episode (`attempt_index` 0 / 1). Stores release and landing ticks/frames, plus **`object_name` and `task_id` of that episode** (not `object_names[0]` of the recipe). Written on every commit so a resume does not lose rows.
 
 ### Model inputs vs labels
 
-- **Inputs**: two RGB images (`observation.images.image`, `observation.images.image2`) + **8-D** `observation.state`.
-- **Privileged / training labels**: failure and drop columns above, `loss_mask`, and sidecar segments—kept separate from policy inputs.
+- **Inputs:** two RGB images + 8-D `observation.state` + language `task`.
+- **Labels / filters:** `loss_mask`, `drop_window`, `drop_event`, `attempt_index`, `is_failure`, sidecar. Do not feed privileged columns as policy inputs unless the trainer is built for that.
 
-## Experiment matrix (five rows per logical episode)
+## Current recipes
 
-Each **logical episode index** runs **five** matrix rows with the **same** layout, motion profile, and drop draw (`paired_context.build_paired_episode_plan`). Rows differ by post-drop behavior:
-
-| `post_drop_mode` | `drop` | Behavior (all rows use `controller: simple_ik` in train/heldout recipes) |
-| --- | --- | --- |
-| `immediate_ik` | true | Drop then IK recovery |
-| `continue_then_ik` | true | Dwell / continue carry, then IK |
-| `reset_then_ik` | true | SmolVLA dwell segment, policy reset, then IK |
-| `immediate_ik` | false | **No drop** control baseline (`…/immediate_ik_no_drop/` artifacts) |
-| `immediate_smolvla` | true | Drop then SmolVLA policy actions until done or timeout |
-
-Drop and no-drop **pairs share identical observations before release** (audit + shared paired plan).
-
-## Drop timing (empirical, 10 Hz view)
-
-From finalized train merges (audit / dataset card histograms):
-
-| Stat | Release → landing | Release height (`object_z`) |
-| --- | --- | --- |
-| p50 | 0.30 s | — |
-| p90 | 0.32 s | — |
-| max | 0.35 s | 0.12–0.23 m |
-
-At 10 Hz, fall duration is typically **2–4 frames** after the release pulse.
-
-**Training window (not stored in parquet)**: e.g. **k = 3** post-release frames at 10 Hz, total window **W ≈ 1.6 s (16 frames)** for temporal drop detectors.
-
-## Object splits
-
-| Split | Pick targets (`object_names`) | Recording seed | Planned dataset episodes (`recording.episodes`) |
+| Recipe | Seed | Planned attempts | Matrix |
 | --- | --- | --- | --- |
-| Train | `alphabet_soup_1`, `cream_cheese_1`, `salad_dressing_1`, `bbq_sauce_1`, `ketchup_1`, `butter_1`, `milk_1`, `chocolate_pudding_1` | `20000` | 800 (160 logical × 5 rows) |
-| Held-out objects | `tomato_sauce_1`, `orange_juice_1` (evaluation only, recorded at evaluation time) | `30000` | 100 (20 logical × 5 rows) |
+| `libero_object_success.json` | 21000 | 400 no-drop | one row |
+| `libero_object_drop.json` | 22000 | 400 | five equal rows (4 drop modes + 1 no-drop) |
 
-Targets rotate by **logical episode index** (`select_episode_object_round_robin`). Official LIBERO task ids come from `libero_object_tasks.official_task_id` per target, not from a single static scene.
+Eight recorded objects, round-robin by logical index. Held-out names `tomato_sauce_1` and `orange_juice_1` are excluded from layout sampling and hidden in the sim. They are **not** recorded as a second training dataset.
 
-- The training dataset is recorded from the train recipe only. Held-out objects are never recorded for training and never trained on; `libero_object_drop_heldout.json` exists so the unseen-object evaluation set can be recorded with the same pipeline after training.
-- Held-out SKUs are removed from the scene at record time. They are not pick targets and they are not left in frame as distractors.
-- **Leakage caveat**: public SmolVLA LIBERO checkpoints were likely trained on **all ten** LIBERO-Object tasks; held-out objects are a **recording** split, not a guarantee the base VLA never saw them.
+Public SmolVLA LIBERO checkpoints were likely trained on all ten official tasks. Held-out here is a **recording** split, not a claim the base VLA never saw those objects.
 
-### In-distribution test split
+Missed grasp / stalled carry → episode not saved. A success cell of “50 per object” can finish under 50. A drop cell of “10 per mode per object” can finish under 10.
 
-After merge, `merge_drop_datagen_shards.build_splits` assigns episodes with **`logical_episode_index % 100 < test_percent`** (default **15**) to **`test_in_distribution`**; all five matrix rows for that logical index share the split.
+## Experiment matrix (drop recipe)
 
-## Reproducibility and sharding
+Each **logical episode index** runs **five** rows with the same layout, motion profile, and drop draw. All rows use `simple_ik`.
+
+| `post_drop_mode` | `drop` |
+| --- | --- |
+| `immediate_ik` | true |
+| `continue_then_ik` | true |
+| `reset_then_ik` | true |
+| `immediate_smolvla` | true |
+| `immediate_ik` | false |
+
+The success recipe is only the no-drop row.
+
+## Drop timing (10 Hz)
+
+Fall after release is typically **2–4 frames** at 10 fps (`drop_event`). `drop_window` adds two stored frames before release and two after landing. Use `drop_window` for a short detector target. Do not invent a 16-frame window that is not in the parquet.
+
+## Trainer notes
+
+- Train on **`dataset/` (10 fps)**.
+- Filter imitation loss with **`loss_mask`**. Do not use `is_failure` as that filter.
+- For a short “this is the drop” label, use **`drop_window`**, not `is_failure` and not the whole dwell.
+- `attempt_index == 0` is approach + carry (+ fall if any). `attempt_index == 1` is after landing (recovery).
+- Language comes from the dataset `task` / `task_index` (per-object LIBERO instruction). Use `instruction_mode="dataset_task"` if the loader has that switch.
+- Alpha-S `Phase1Dataset` can load `dataset/` or `dataset_20hz/`. Prefer 10 fps unless you intend 20 Hz.
+
+## Sharding and audit
 
 ```bash
 export MUJOCO_GL=egl
 uv run python examples/faults/run_drop_datagen.py \
-  --recipe examples/faults/recipes/libero_object_drop_train.json \
-  --logical-start 0 --logical-end 32
+  --recipe examples/faults/recipes/libero_object_drop.json \
+  --logical-start 0 --logical-end 16
 ```
 
-- **`--logical-start` / `--logical-end`**: half-open range of logical episodes (`shard_range.validate_logical_shard_range`).
-- **Merge**: `examples/faults/merge_drop_datagen_shards.py --shards … --output … --test-percent 15`
-- **Audit**: `examples/faults/audit_drop_dataset.py <run_dir> --heldout-objects tomato_sauce_1,orange_juice_1`
+- `--logical-start` / `--logical-end`: half-open logical range.
+- Merge: `examples/faults/merge_drop_datagen_shards.py`
+- Audit: `examples/faults/audit_drop_dataset.py <run_dir> --heldout-objects tomato_sauce_1,orange_juice_1`  
+  Audit only flags held-out names used as the **pick target**. Pixel exclusion is hide-at-record-time, not that check.
 
-Operational notes (single GPU shard, order-of-magnitude):
+After merge, `logical_episode_index % 100 < test_percent` (default 15) is `test_in_distribution`.
 
-- **~5.6 GB RAM** (SmolVLA + env + video encoders), **~1.6 GB GPU** for rows that load the policy
-- On a **23 GB** machine, run shards **sequentially** or under a memory cap
-- **~2.5 min** per logical episode (five matrix rows)
+## Known timing deviations
 
-## Trainer notes
+Gripper settle runs extra MuJoCo substeps inside a control tick without extra logged frames (regrasp close ~40 substeps vs 25; release open ~30 vs 25). About 0.04 s of physics on those ticks is not extra dataset frames.
 
-- **`injection_active`** is true across the fall/injection window; combine with **`loss_mask`** for Phase-1-style filtering.
-- In the five-row smoke run, roughly **~45%** of frames had **`loss_mask = 0`** (post-drop dwell, fall ticks, and post-drop SmolVLA segment while `triggered && !recovery_active && !drop_injection_step`).
-- **`loss_mask` derivation**: `loss_mask_from_fault` — zero on `drop_injection_step` or post-drop dwell; nominal no-drop episodes log **1.0** throughout.
-- **Alpha-S `Phase1Dataset`** (`third_party/Eran's_code/Gangelia_AlphaS/alpha_s_xy60/phase1_data.py`, private, not vendored here) loads either view (`dataset/` or `dataset_20hz/`) unmodified; use **`instruction_mode="dataset_task"`** so `task` strings match the per-object LIBERO instructions. `loss_mask` already zeroes the fall ticks.
+## Recording-quality notes
 
-## Known timing deviations (documented, not changed)
-
-Gripper settle runs **extra MuJoCo substeps inside a control tick** without additional logged frames:
-
-| Event | Extra substeps | Typical tick total |
-| --- | --- | --- |
-| Recovery regrasp close (`force_close_gripper`) | **15** (`max(gripper_settle_steps, 15)`) | **40** vs normal 25 |
-| Recovery release open (`force_open_gripper`) | **`gripper_settle_steps`** (default **5**) | **30** vs normal 25 |
-
-~**0.04 s** of physics per affected tick is **not** represented as extra dataset frames.
-
-## Fixes relevant to multi-object recording
-
-- **Grasp detection** uses **finger link geoms** (`left_finger` / `right_finger`), not pad-only groups, so tall bottles pinched above the pads count as grasped (`is_object_grasped` in `sim/libero.py`).
-- **LIBERO wrapper** no longer **`reset()` inside `step`** (`step_without_success_reset`); post-step annotation and labels see the terminal scene.
-- **Vector env** uses **`AutoresetMode.NEXT_STEP`**; datagen loop **stops on `done`** so post-success frames are not recorded after autoreset would fire.
-- **SimpleIK carry stall**: if the EEF moves **< 1 cm** for **40** control ticks during carry, outcome **`nominal_carry_stalled`** → **`evaluate_datagen_keep` rejects** the episode (far-edge singularities).
-- **Pre-drop rejects**: **`nominal_grasp_missed`**, **`nominal_carry_stalled`** (and other keep rules in `dataset_writer.evaluate_datagen_keep`).
+- Grasp uses finger-link geoms, not pad-only groups.
+- LIBERO wrapper does not `reset()` inside `step`; datagen stops on `done`.
+- `nominal_grasp_missed` and `nominal_carry_stalled` are rejected (not saved).
 
 ## Module map
 
@@ -175,4 +160,4 @@ Gripper settle runs **extra MuJoCo substeps inside a control tick** without addi
 | Controllers | `controllers/simple_ik.py`, `controllers/smolvla.py`, `smolvla_pipeline.py` |
 | Sim / wrap | `../sim/libero.py`, `../wrappers.py`, `../annotation.py` |
 
-CLI wrappers: `examples/faults/run_drop_datagen.py`, `merge_drop_datagen_shards.py`, `audit_drop_dataset.py`.
+CLI: `examples/faults/run_drop_datagen.py`, `merge_drop_datagen_shards.py`, `audit_drop_dataset.py`.
