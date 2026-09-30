@@ -6,7 +6,7 @@
 
 **Architecture:** Pure functions own recipe, layout, eligible-set, and drop sampling. A two-pass executor records a nominal SimpleIK trace (phase + can XY per step), builds `E`, then resets, reapplies the same layout, and replays with at most one inject at the sampled index. Tk UI subscribes to a fan-out event log (memory + JSONL + stdout).
 
-**Tech Stack:** Python 3.12, numpy, pytest, Tk/PIL (viewer only), existing `SimpleIKRecoveryPlanner` + `MidAirDropFault` in `lerobot/src/lerobot/faults/`.
+**Tech Stack:** Python 3.12, numpy, pytest, Tk/PIL (viewer only), existing `SimpleIKRecoveryPlanner` + `MidAirDropFault` in `lerobot/src/fault_system/`.
 
 ## Global Constraints
 
@@ -25,12 +25,12 @@
 
 | Path | Role |
 | --- | --- |
-| `src/lerobot/faults/datagen/recipe.py` | Load/validate JSON recipe |
-| `src/lerobot/faults/datagen/drop_timing.py` | Phase aliases, eligible indices, drop sample |
-| `src/lerobot/faults/datagen/layout.py` | Rejection-sample XY/yaw for all movable objects |
-| `src/lerobot/faults/datagen/events.py` | Fan-out event log |
-| `src/lerobot/faults/datagen/runtime.py` | LIBERO object discovery and quaternion helpers |
-| `src/lerobot/faults/datagen/__init__.py` | Public exports |
+| `src/fault_system/datagen/recipe.py` | Load/validate JSON recipe |
+| `src/fault_system/datagen/drop_timing.py` | Phase aliases, eligible indices, drop sample |
+| `src/fault_system/datagen/layout.py` | Rejection-sample XY/yaw for all movable objects |
+| `src/fault_system/datagen/events.py` | Fan-out event log |
+| `src/fault_system/datagen/runtime.py` | LIBERO object discovery and quaternion helpers |
+| `src/fault_system/datagen/__init__.py` | Public exports |
 | `examples/faults/recipes/can_simpleik_datagen.json` | Default recipe |
 | `examples/faults/can_simpleik_viewer.py` | Tk camera + log pane (no LIBERO) |
 | `examples/faults/run_can_simpleik_datagen.py` | LIBERO two-pass loop + viewer |
@@ -46,8 +46,8 @@ Do not modify `run_full_drop_recovery_pipeline.py` in this slice.
 ### Task 1: Recipe loader
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/__init__.py`
-- Create: `src/lerobot/faults/datagen/recipe.py`
+- Create: `src/fault_system/datagen/__init__.py`
+- Create: `src/fault_system/datagen/recipe.py`
 - Create: `examples/faults/recipes/can_simpleik_datagen.json`
 - Test: `tests/faults/test_datagen_recipe.py`
 
@@ -96,7 +96,7 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_faults.datagen.recipe import RecipeError, load_recipe
+from fault_system.datagen.recipe import RecipeError, load_recipe
 
 
 def test_load_recipe_reads_q_and_object(tmp_path: Path):
@@ -169,11 +169,11 @@ Expected: PASS
 ### Task 2: Eligible set and drop sampler
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/drop_timing.py`
+- Create: `src/fault_system/datagen/drop_timing.py`
 - Test: `tests/faults/test_datagen_drop_timing.py`
 
 **Interfaces:**
-- Consumes: `HARD_BASKET_KEEPOUT_M` from `lerobot_faults.recovery.midair_drop`
+- Consumes: `HARD_BASKET_KEEPOUT_M` from `fault_system.recovery.midair_drop`
 - Produces:
   - `canonicalize_phase(name: str) -> str` (`to_container` → `to_basket_hover`; other names unchanged)
   - `keepout_m(min_drop_distance_from_basket_m: float) -> float` = `max(min_drop, HARD_BASKET_KEEPOUT_M)`
@@ -187,7 +187,7 @@ Expected: PASS
 ```python
 import numpy as np
 
-from lerobot_faults.datagen.drop_timing import (
+from fault_system.datagen.drop_timing import (
     DropDecision,
     TraceFrame,
     eligible_indices,
@@ -283,7 +283,7 @@ Expected: PASS
 ### Task 3: Layout sampler (pure)
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/layout.py`
+- Create: `src/fault_system/datagen/layout.py`
 - Test: `tests/faults/test_datagen_layout.py`
 
 **Interfaces:**
@@ -299,8 +299,8 @@ Rules: for each object independently sample `dx,dy ~ Unif[-xy_range, xy_range]` 
 ```python
 import numpy as np
 
-from lerobot_faults.datagen.layout import ObjectPose2d, sample_layout
-from lerobot_faults.datagen.recipe import PlacementRecipe
+from fault_system.datagen.layout import ObjectPose2d, sample_layout
+from fault_system.datagen.recipe import PlacementRecipe
 
 
 def _place(**kwargs):
@@ -373,7 +373,7 @@ Run: `uv run pytest tests/faults/test_datagen_layout.py -v`
 ### Task 4: Event log fan-out
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/events.py`
+- Create: `src/fault_system/datagen/events.py`
 - Test: `tests/faults/test_datagen_events.py`
 
 **Interfaces:**
@@ -394,7 +394,7 @@ Minimum `kind` strings used later: `recipe`, `layout_ok`, `layout_failed`, `plan
 ```python
 from pathlib import Path
 
-from lerobot_faults.datagen.events import DatagenEventLog
+from fault_system.datagen.events import DatagenEventLog
 
 
 def test_emit_writes_jsonl_and_listeners(tmp_path: Path, capsys):
@@ -443,7 +443,7 @@ HUD is **not** the log. `show` draws overlay on the numpy frame (reuse `_overlay
 
 - [ ] **Step 1: Write a unit test for auto-scroll helper (no Tk)**
 
-Put in `src/lerobot/faults/datagen/events.py`:
+Put in `src/fault_system/datagen/events.py`:
 
 ```python
 def should_autoscroll(yview_hi: float) -> bool:
@@ -453,7 +453,7 @@ def should_autoscroll(yview_hi: float) -> bool:
 Test:
 
 ```python
-from lerobot_faults.datagen.events import should_autoscroll
+from fault_system.datagen.events import should_autoscroll
 
 def test_should_autoscroll():
     assert should_autoscroll(1.0) is True
@@ -471,7 +471,7 @@ def test_should_autoscroll():
 
 **Files:**
 - Create: `examples/faults/run_can_simpleik_datagen.py`
-- Modify: `src/lerobot/faults/datagen/__init__.py` exports
+- Modify: `src/fault_system/datagen/__init__.py` exports
 
 **Interfaces:**
 - Consumes: `load_recipe`, `sample_layout`, `eligible_indices`, `sample_drop`, `DatagenEventLog`, `DatagenViewer.try_create`, `SimpleIKRecoveryPlanner`, `DropRecoveryEnvWrapper`, `MidAirDropFault.trigger_manual_drop`, `request_recovery`, `offset_object_xy_on_table` (and a small yaw setter if free-joint `q` has 7 dims — set `q[0], q[1]` plus optional yaw via quaternion on `q[3:7]`; if yaw write is unsafe, skip yaw and log `yaw_skipped`).
@@ -532,7 +532,7 @@ Apply pose: `dx, dy = new_xy - reset_xy`; `offset_object_xy_on_table(rs, name, d
 - [ ] **Step 1: Smoke-test without LIBERO** — add `tests/faults/test_datagen_runner_helpers.py`:
 
 ```python
-from lerobot_faults.datagen.drop_timing import TraceFrame, eligible_indices, sample_drop
+from fault_system.datagen.drop_timing import TraceFrame, eligible_indices, sample_drop
 import numpy as np
 
 def test_two_pass_uses_pass_a_trace_not_live_resample():

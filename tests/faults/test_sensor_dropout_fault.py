@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot_faults import (
+from fault_system import (
     FaultEventLogger,
     FaultInjectionConfig,
     SensorDropoutFault,
@@ -54,7 +54,7 @@ def _obs(image_fill: int = 128, proprio_fill: float = 1.5) -> dict:
 
 
 def test_rotation_matrix_not_treated_as_image():
-    from lerobot_faults.observation.utils import is_image_field
+    from fault_system.observation.utils import is_image_field
 
     assert not is_image_field("eef_mat", np.zeros((3, 3), dtype=np.float32))
     assert not is_image_field("eef_mat", np.zeros((1, 3, 3), dtype=np.float32))

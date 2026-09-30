@@ -46,14 +46,14 @@ REPO = Path(__file__).resolve().parents[2]
 
 from lerobot.envs.configs import LiberoEnv  # noqa: E402
 from lerobot.envs.factory import make_env  # noqa: E402
-from lerobot_faults.config import FaultInjectionConfig  # noqa: E402
-from lerobot_faults.recovery.midair_drop import MidAirDropFault  # noqa: E402
-from lerobot_faults.sim.libero import (  # noqa: E402
+from fault_system.config import FaultInjectionConfig  # noqa: E402
+from fault_system.recovery.midair_drop import MidAirDropFault  # noqa: E402
+from fault_system.sim.libero import (  # noqa: E402
     get_robosuite_env,
     is_object_grasped,
     unwrap_libero_env,
 )
-from lerobot_faults.wrappers import DropRecoveryEnvWrapper  # noqa: E402
+from fault_system.wrappers import DropRecoveryEnvWrapper  # noqa: E402
 
 _XY60_EXTRACT_ROOT = Path(tempfile.gettempdir()) / "xy_band_mix_60ep_extract"
 AUDIT_REPORT = _XY60_EXTRACT_ROOT / "audit_report.json"

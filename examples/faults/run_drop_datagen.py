@@ -22,16 +22,16 @@ import sys
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 
-from lerobot_faults.datagen.dataset_writer import RunDatasetWriter
-from lerobot_faults.datagen.recipe import (
+from fault_system.datagen.dataset_writer import RunDatasetWriter
+from fault_system.datagen.recipe import (
     DropDatagenRecipe,
     RecipeError,
     apply_recording_episode_total,
     load_drop_datagen_recipe,
 )
-from lerobot_faults.datagen.recipe_identity import recipe_content_hash_from_json_path
-from lerobot_faults.datagen.runner import run_drop_datagen_matrix
-from lerobot_faults.datagen.shard_range import validate_logical_shard_range
+from fault_system.datagen.recipe_identity import recipe_content_hash_from_json_path
+from fault_system.datagen.runner import run_drop_datagen_matrix
+from fault_system.datagen.shard_range import validate_logical_shard_range
 
 
 def _build_parser() -> argparse.ArgumentParser:

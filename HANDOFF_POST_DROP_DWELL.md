@@ -160,7 +160,7 @@ for the dwell counter (do not invent a different off-by-one):
 
 ### 3.2 Labels / masks
 
-Do **not** edit `src/lerobot/faults/annotation.py` unless a test proves a label
+Do **not** edit `src/fault_system/annotation.py` unless a test proves a label
 is wrong.
 
 | Frames | `is_failure` | `loss_mask` |
@@ -226,12 +226,12 @@ Do **not** change:
 
 | Path | Job |
 | ---- | --- |
-| `src/lerobot/faults/config.py` | Fields + `validate()` |
-| `src/lerobot/faults/recovery/midair_drop.py` | Split drop vs planner; dwell counter; mask; log mode/dwell; `consume_policy_reset` |
-| `src/lerobot/faults/recovery/loss_mask.py` | `post_drop_dwell_step` |
-| `src/lerobot/faults/recovery/recording_recipe.py` | Training defaults + optional recipe load |
-| `src/lerobot/faults/recovery/__init__.py` | Export new constants if added |
-| `src/lerobot/faults/wrappers.py` | Optional `consume_policy_reset`; no policy import |
+| `src/fault_system/config.py` | Fields + `validate()` |
+| `src/fault_system/recovery/midair_drop.py` | Split drop vs planner; dwell counter; mask; log mode/dwell; `consume_policy_reset` |
+| `src/fault_system/recovery/loss_mask.py` | `post_drop_dwell_step` |
+| `src/fault_system/recovery/recording_recipe.py` | Training defaults + optional recipe load |
+| `src/fault_system/recovery/__init__.py` | Export new constants if added |
+| `src/fault_system/wrappers.py` | Optional `consume_policy_reset`; no policy import |
 | `examples/faults/run_full_drop_recovery_pipeline.py` | Pass dwell/mode; reset once; summary `fault_config` keys |
 | `examples/faults/run_xy_band_checkpoint.py` | Load recipe / pass kwargs (do not hardcode hover) |
 | `examples/faults/recipes/can_simpleik_datagen.json` | **Create.** Shared with teammate |
@@ -444,7 +444,7 @@ eval). Do not fold `grasp_miss` into this work (`HANDOFF_GRASP_MISS.md`).
 
 Diagnostics already in tree (keep; not the product):
 
-- `src/lerobot/faults/recovery/post_drop_trace.py`
+- `src/fault_system/recovery/post_drop_trace.py`
 - `tests/faults/test_post_drop_trace.py`
 - `examples/faults/diagnose_post_drop_vla.py`
 
@@ -494,7 +494,7 @@ Supervisor records decisions here. Do not re-decide them in code.
 
 **No extra control-step wait.** [certain]
 
-- `midair_drop` already opens the gripper and runs `physics_settle = max(settle_steps, 80)` MuJoCo substeps **before** the next env action (`src/lerobot/faults/sim/libero.py`). Training uses `settle_steps=100`. The can is already falling/landed inside the drop call. The arm has not taken another VLA step yet.
+- `midair_drop` already opens the gripper and runs `physics_settle = max(settle_steps, 80)` MuJoCo substeps **before** the next env action (`src/fault_system/sim/libero.py`). Training uses `settle_steps=100`. The can is already falling/landed inside the drop call. The arm has not taken another VLA step yet.
 - Measured continue traces (§2.1): at the first control frame after the drop the EEF is **2–5 cm** from the can. By **t ≈ 1 s** it is **>20 cm** away, because the queued carry chunk is still executing.
 - A 1 s **VLA** wait before `policy.reset()` would spend that second walking the arm away, then reset from the far pose. That is the continue distribution, not a retry near the can.
 - Therefore `reset_then_ik` calls `policy.reset()` **once on the drop step** (after physics settle, before further VLA steps), then runs VLA for `post_drop_dwell_steps` (80), then starts IK if still ungrasped and not in basket. No `pre_reset_wait_steps` field unless a new trace shows the can still airborne at the first control frame.

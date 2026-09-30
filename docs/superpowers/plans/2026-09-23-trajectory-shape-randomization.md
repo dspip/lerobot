@@ -26,9 +26,9 @@
 ### Task 1: Recipe schema and deterministic episode motion profiles
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/motion_profile.py`
+- Create: `src/fault_system/datagen/motion_profile.py`
 - Create: `tests/faults/test_datagen_motion_profile.py`
-- Modify: `src/lerobot/faults/datagen/recipe.py`
+- Modify: `src/fault_system/datagen/recipe.py`
 - Modify: `tests/faults/test_datagen_recipe.py`
 - Modify: `examples/faults/recipes/can_simpleik_datagen.json`
 
@@ -191,9 +191,9 @@ Inspect `git diff` for Task 1 only. Confirm there are no edits outside the five 
 ### Task 2: Shared trajectory geometry and planner via-points
 
 **Files:**
-- Create: `src/lerobot/faults/recovery/trajectory.py`
+- Create: `src/fault_system/recovery/trajectory.py`
 - Create: `tests/faults/test_trajectory_geometry.py`
-- Modify: `src/lerobot/faults/recovery/planner.py`
+- Modify: `src/fault_system/recovery/planner.py`
 - Modify: `tests/faults/test_planner.py`
 
 **Interfaces:**
@@ -325,7 +325,7 @@ Confirm the planner's existing direct path is byte-for-byte equivalent in phase 
 ### Task 3: Uniform drop sampling over a bent carry polyline
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/path_drop.py`
+- Modify: `src/fault_system/datagen/path_drop.py`
 - Modify: `tests/faults/test_datagen_path_drop.py`
 
 **Interfaces:**
@@ -410,8 +410,8 @@ Use a 10,000-draw deterministic statistical test and confirm observed per-piece 
 ### Task 4: Explicit recovery motion-profile plumbing
 
 **Files:**
-- Modify: `src/lerobot/faults/recovery/midair_drop.py`
-- Modify: `src/lerobot/faults/config.py`
+- Modify: `src/fault_system/recovery/midair_drop.py`
+- Modify: `src/fault_system/config.py`
 - Modify: `tests/faults/test_midair_drop_fault.py`
 - Modify: `tests/faults/test_side_grasp_and_drop_gates.py`
 
@@ -653,7 +653,7 @@ Run:
 
 ```bash
 .venv/bin/python -m compileall -q \
-  src/lerobot/faults \
+  src/fault_system \
   examples/faults \
   tests/faults
 git diff --check
@@ -735,7 +735,7 @@ Rerun:
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/faults tests/envs -q
-.venv/bin/python -m compileall -q src/lerobot/faults examples/faults tests/faults
+.venv/bin/python -m compileall -q src/fault_system examples/faults tests/faults
 git diff --check
 ```
 

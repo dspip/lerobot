@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from lerobot_faults.logging import FaultEventLogger
-from lerobot_faults.recovery.midair_drop import MidAirDropFault
+from fault_system.logging import FaultEventLogger
+from fault_system.recovery.midair_drop import MidAirDropFault
 from tests.faults.test_midair_drop_fault import _cfg, _mock_rs_env
 
 
@@ -17,12 +17,12 @@ def _action(batch: int, dim: int, fill: float) -> np.ndarray:
     return np.full((batch, dim), fill, dtype=np.float32)
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_request_recovery_starts_planner_without_impulse(
     mock_get_rs,
     mock_arm_q,
@@ -50,11 +50,11 @@ def test_request_recovery_starts_planner_without_impulse(
     mock_dest.assert_called_once()
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_on_step_after_request_returns_planner_not_policy(
     mock_get_rs,
     mock_arm_q,
@@ -79,11 +79,11 @@ def test_on_step_after_request_returns_planner_not_policy(
     assert inj.loss_mask_for_env(0) == 1.0
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_request_while_already_recovering_does_not_reset_planner(
     mock_get_rs,
     mock_arm_q,
@@ -108,11 +108,11 @@ def test_request_while_already_recovering_does_not_reset_planner(
     mock_dest.assert_called_once()
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_request_recovery_logs_reason(
     mock_get_rs,
     mock_arm_q,
@@ -146,11 +146,11 @@ def test_request_recovery_disabled_returns_none():
     assert not inj._states[0].recovery_active
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_request_recovery_can_leave_first_action_for_wrapper(
     mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_dest
 ):
@@ -169,10 +169,10 @@ def test_request_recovery_can_leave_first_action_for_wrapper(
     assert not np.allclose(action, [[99.0] * 7])
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_object_linear_velocity")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_manual_drop_uses_fault_lifecycle_without_starting_recovery(
     mock_get_rs, mock_arm_q, mock_drop, mock_lin_vel, tmp_path: Path
 ):
@@ -197,13 +197,13 @@ def test_manual_drop_uses_fault_lifecycle_without_starting_recovery(
     assert event["drop_trigger_reason"] == "manual"
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity")
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.is_object_in_basket")
-@patch("lerobot_faults.recovery.midair_drop.is_object_grasped")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.get_object_linear_velocity")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.is_object_in_basket")
+@patch("fault_system.recovery.midair_drop.is_object_grasped")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
 def test_manual_drop_waits_until_request_recovery(
     mock_get_rs,
     mock_arm_q,
@@ -221,8 +221,8 @@ def test_manual_drop_waits_until_request_recovery(
     mock_dest.return_value = np.array([0.3, 0.2, 0.9])
 
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_object_pose") as mock_obj_pose,
-        patch("lerobot_faults.recovery.midair_drop.get_eef_pose") as mock_eef,
+        patch("fault_system.recovery.midair_drop.get_object_pose") as mock_obj_pose,
+        patch("fault_system.recovery.midair_drop.get_eef_pose") as mock_eef,
     ):
         mock_obj_pose.return_value = {
             "pos": np.zeros(3),

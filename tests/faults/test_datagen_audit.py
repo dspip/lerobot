@@ -24,9 +24,9 @@ import torch
 pytest.importorskip("datasets")
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot_faults.datagen.audit import audit_drop_run
-from lerobot_faults.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
-from lerobot_faults.datagen.manifest import (
+from fault_system.datagen.audit import audit_drop_run
+from fault_system.datagen.failure_segments import FAILURE_SEGMENTS_REL_PATH
+from fault_system.datagen.manifest import (
     EpisodeMetadataRow,
     RunManifest,
     RunStatus,

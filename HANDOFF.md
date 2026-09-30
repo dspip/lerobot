@@ -25,14 +25,14 @@ SmolVLA camera/state/action keys are unchanged. Extra columns are ignored by the
 **Recorders**
 
 1. Eval: `lerobot_eval.py` `rollout()` when `--eval.recording=true` (pre-step images, post-step labels — same as `next.reward`).
-2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `lerobot_faults.datagen`) (**post-step** obs + labels).
+2. Drop-recovery: `FaultRecoveryDatasetLogger` used by unified datagen (`examples/faults/run_drop_datagen.py` → `fault_system.datagen`) (**post-step** obs + labels).
 3. Hardware `lerobot-record`: not wired.
 
 **Injection:** `maybe_wrap_env_tree` after `make_env`. Wrappers annotate **after** `env.step` and **before** `notify_dones`.
 
-**Physics:** `src/lerobot/faults/annotation.py` + `sim/libero.py`.
+**Physics:** `src/fault_system/annotation.py` + `sim/libero.py`.
 
-**Training-grade recipe (not the library FaultInjectionConfig defaults):** `src/lerobot/faults/recovery/recording_recipe.py`.
+**Training-grade recipe (not the library FaultInjectionConfig defaults):** `src/fault_system/recovery/recording_recipe.py`.
 
 ## 3. Plan (do not skip)
 
@@ -57,9 +57,9 @@ Branch: `feature/failure-annotation-parquet`
 
 | File | Role |
 | ---- | ---- |
-| `src/lerobot/faults/annotation.py` | Latch + schema + Gym info helpers |
-| `src/lerobot/faults/wrappers.py` | All three wrappers stamp `info` |
-| `src/lerobot/faults/recovery/dataset_logger.py` | Writes label columns |
+| `src/fault_system/annotation.py` | Latch + schema + Gym info helpers |
+| `src/fault_system/wrappers.py` | All three wrappers stamp `info` |
+| `src/fault_system/recovery/dataset_logger.py` | Writes label columns |
 | `src/lerobot/scripts/lerobot_eval.py` | Eval recording includes labels |
 | injectors (`hold`, `burst`, `sensor_dropout`, `object_slip`, `eef_bump`) | `just_injected` pulse |
 | `tests/faults/test_failure_annotation.py` | Latch / wrapper tests (no GPU) |
@@ -69,7 +69,7 @@ Branch: `feature/failure-annotation-parquet`
 
 | File | Role |
 | ---- | ---- |
-| `src/lerobot/faults/recovery/recording_recipe.py` | Sample delay `[20,60]`, `seat_assist_enabled=False` |
+| `src/fault_system/recovery/recording_recipe.py` | Sample delay `[20,60]`, `seat_assist_enabled=False` |
 | `examples/faults/run_drop_datagen.py` | Public CLI; matrix of controller × post-drop mode variants |
 | `tests/faults/test_recording_recipe.py` | No-sim tests |
 

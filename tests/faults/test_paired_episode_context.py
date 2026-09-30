@@ -18,15 +18,15 @@ from pathlib import Path
 
 import numpy as np
 
-from lerobot_faults.datagen.drop_timing import keepout_m
-from lerobot_faults.datagen.paired_context import build_paired_episode_plan, resolve_path_drop_trigger
-from lerobot_faults.datagen.path_drop import eligible_path
-from lerobot_faults.datagen.recipe import (
+from fault_system.datagen.drop_timing import keepout_m
+from fault_system.datagen.paired_context import build_paired_episode_plan, resolve_path_drop_trigger
+from fault_system.datagen.path_drop import eligible_path
+from fault_system.datagen.recipe import (
     legacy_drop_recipe,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot_faults.recovery.trajectory import CarryPath, PathSegment
+from fault_system.recovery.trajectory import CarryPath, PathSegment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"

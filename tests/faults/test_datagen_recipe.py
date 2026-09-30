@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_faults.datagen.paired_context import build_paired_episode_plan
-from lerobot_faults.datagen.recipe import (
+from fault_system.datagen.paired_context import build_paired_episode_plan
+from fault_system.datagen.recipe import (
     DatagenController,
     PostDropMode,
     RecipeError,
@@ -280,7 +280,7 @@ def test_object_names_rejects_non_poc_values(tmp_path: Path) -> None:
     with pytest.raises(RecipeError, match="task_id"):
         load_drop_datagen_recipe(path)
 
-    from lerobot_faults.datagen.libero_object_tasks import supported_object_names
+    from fault_system.datagen.libero_object_tasks import supported_object_names
 
     path = tmp_path / "all_objects.json"
     payload = _valid_unified_recipe(

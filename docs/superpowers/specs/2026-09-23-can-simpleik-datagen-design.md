@@ -116,7 +116,7 @@ Default recipe file: `examples/faults/recipes/can_simpleik_datagen.json`.
 | Unit | Responsibility | Depends on |
 | --- | --- | --- |
 | Recipe loader | Parse/validate JSON | stdlib |
-| Layout sampler | Offset every movable object; reject basket/pairwise/off-table | `lerobot_faults.sim.libero` |
+| Layout sampler | Offset every movable object; reject basket/pairwise/off-table | `fault_system.sim.libero` |
 | Nominal SimpleIK plan | Seeded pickup/transport via-points, exact grasp/place endpoints, and one episode speed | `SimpleIKRecoveryPlanner` |
 | Eligible-path builder | Clip the planner's carry polyline against the basket keep-out | `CarryPath` + basket pose |
 | Drop sampler | Skip or sample one point uniformly over eligible arc length | `q`, eligible path, RNG |

@@ -24,20 +24,20 @@ from pathlib import Path
 
 import numpy as np
 
-from lerobot_faults.annotation import annotation_from_scripted_phase
-from lerobot_faults.datagen.demo_randomization import RandomizationConfig, sample_episode_params
-from lerobot_faults.recovery.dataset_logger import FaultRecoveryDatasetLogger
-from lerobot_faults.recovery.fps import (
+from fault_system.annotation import annotation_from_scripted_phase
+from fault_system.datagen.demo_randomization import RandomizationConfig, sample_episode_params
+from fault_system.recovery.dataset_logger import FaultRecoveryDatasetLogger
+from fault_system.recovery.fps import (
     SMOLVLA_LIBERO_TARGET_FPS,
     assert_control_rate_aligned,
     assert_dataset_fps,
     recording_stride,
     resolve_target_fps,
 )
-from lerobot_faults.recovery.libero_hook import install_libero_control_freq_hook
-from lerobot_faults.recovery.loss_mask import loss_mask_for_step
-from lerobot_faults.recovery.planner import SimpleIKRecoveryPlanner
-from lerobot_faults.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
+from fault_system.recovery.libero_hook import install_libero_control_freq_hook
+from fault_system.recovery.loss_mask import loss_mask_for_step
+from fault_system.recovery.planner import SimpleIKRecoveryPlanner
+from fault_system.sim.libero import get_robosuite_env, read_control_freq, read_model_timestep
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DRY_DIR = REPO_ROOT / "outputs" / "demo_drop_recovery_dry"
@@ -136,13 +136,13 @@ def run_dry_run(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS
 def run_live(output_dir: Path, *, policy_fps: int = SMOLVLA_LIBERO_TARGET_FPS) -> None:
     """Run one LIBERO episode with midair_drop when dependencies are available."""
     from lerobot.envs.factory import make_env
-    from lerobot_faults.config import FaultInjectionConfig
-    from lerobot_faults.wrappers import DropRecoveryEnvWrapper
+    from fault_system.config import FaultInjectionConfig
+    from fault_system.wrappers import DropRecoveryEnvWrapper
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
 
-    from lerobot_faults.recovery.fps import DEFAULT_LIBERO_CONTROL_FREQ
+    from fault_system.recovery.fps import DEFAULT_LIBERO_CONTROL_FREQ
 
     policy_fps = resolve_target_fps(policy_fps)
     # Live control must stay at LIBERO 20 Hz; dataset/planner target remains policy_fps.

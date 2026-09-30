@@ -20,11 +20,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from lerobot_faults.config import FaultInjectionConfig
-from lerobot_faults.datagen.controllers.simple_ik import _nominal_action, run_simple_ik_episode_loop
-from lerobot_faults.datagen.drop_timing import DropDecision
-from lerobot_faults.recovery.midair_drop import MidAirDropFault
-from lerobot_faults.recovery.trajectory import CarryPath, PathSegment
+from fault_system.config import FaultInjectionConfig
+from fault_system.datagen.controllers.simple_ik import _nominal_action, run_simple_ik_episode_loop
+from fault_system.datagen.drop_timing import DropDecision
+from fault_system.recovery.midair_drop import MidAirDropFault
+from fault_system.recovery.trajectory import CarryPath, PathSegment
 from tests.faults.test_midair_drop_fault import _action, _setup_drop_mocks
 
 
@@ -37,7 +37,7 @@ def moving_eef():
         calls["n"] += 1
         return np.array([0.02 * calls["n"], 0.0, 0.2]), np.array([1.0, 0.0, 0.0, 0.0])
 
-    with patch("lerobot_faults.datagen.controllers.simple_ik.get_eef_pose", side_effect=_pose):
+    with patch("fault_system.datagen.controllers.simple_ik.get_eef_pose", side_effect=_pose):
         yield
 
 
@@ -63,26 +63,26 @@ def test_post_drop_carry_command_stays_open() -> None:
     planner.phase_name = "to_basket_hover"
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_eef_pose",
+            "fault_system.datagen.controllers.simple_ik.get_eef_pose",
             return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.zeros(3)},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_gripper_closing_axis",
+            "fault_system.datagen.controllers.simple_ik.get_gripper_closing_axis",
             return_value=np.array([1.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.object_pose_orientation",
+            "fault_system.datagen.controllers.simple_ik.object_pose_orientation",
             return_value={"axis": np.array([0.0, 0.0, 1.0])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
-        patch("lerobot_faults.datagen.controllers.simple_ik.hold_gripper_closed") as hold_closed,
+        patch("fault_system.datagen.controllers.simple_ik.hold_gripper_closed") as hold_closed,
     ):
         action = _nominal_action(
             planner,
@@ -98,7 +98,7 @@ def test_post_drop_carry_command_stays_open() -> None:
     assert planner.next_action.call_args.kwargs["object_grasped"] is False
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: MagicMock) -> None:
     fault = _fault_continue()
     scheduled = MagicMock(wraps=fault.trigger_scheduled_drop)
@@ -119,43 +119,43 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
 
     with (
         patch(
-            "lerobot_faults.recovery.midair_drop.get_robosuite_env",
+            "fault_system.recovery.midair_drop.get_robosuite_env",
             return_value=rs_env,
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_arm_qpos",
+            "fault_system.recovery.midair_drop.get_arm_qpos",
             return_value=np.zeros(7),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_eef_pose",
+            "fault_system.recovery.midair_drop.get_eef_pose",
             return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_object_pose",
+            "fault_system.recovery.midair_drop.get_object_pose",
             return_value={"pos": np.zeros(3), "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0])},
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.midair_drop",
+            "fault_system.recovery.midair_drop.midair_drop",
             return_value={"object_pose_after": {"pos": [0, 0, 0]}},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.55, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=False,
         ),
     ):
@@ -181,14 +181,14 @@ def test_continue_uses_scheduled_drop_without_immediate_recovery(mock_nominal: M
     assert not fault._states[0].recovery_active
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity")
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
-@patch("lerobot_faults.recovery.midair_drop.is_object_grasped")
+@patch("fault_system.recovery.midair_drop.get_object_linear_velocity")
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.is_object_grasped")
 def test_continue_dwell_timeline_matches_automatic_drop(
     mock_grasped,
     mock_get_rs,
@@ -227,15 +227,15 @@ def test_continue_dwell_timeline_matches_automatic_drop(
     assert not np.allclose(out_rec, _action(1, 7, 99.0))
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity")
-@patch("lerobot_faults.recovery.midair_drop.is_object_in_basket", return_value=False)
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
-@patch("lerobot_faults.recovery.midair_drop.is_object_grasped")
+@patch("fault_system.recovery.midair_drop.get_object_linear_velocity")
+@patch("fault_system.recovery.midair_drop.is_object_in_basket", return_value=False)
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.is_object_grasped")
 def test_continue_first_post_drop_grasp_clears_suppress_then_skip(
     mock_grasped,
     mock_get_rs,
@@ -266,8 +266,8 @@ def test_continue_first_post_drop_grasp_clears_suppress_then_skip(
     mock_dest.assert_not_called()
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik.sample_path_drop")
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.datagen.controllers.simple_ik.sample_path_drop")
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_paired_no_drop_never_resamples_or_schedules(
     _mock_nominal: MagicMock,
     mock_sample_path_drop: MagicMock,
@@ -289,23 +289,23 @@ def test_paired_no_drop_never_resamples_or_schedules(
     )
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.55, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=False,
         ),
     ):
@@ -336,8 +336,8 @@ def test_paired_no_drop_never_resamples_or_schedules(
     }
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik.sample_path_drop")
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=None)
+@patch("fault_system.datagen.controllers.simple_ik.sample_path_drop")
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=None)
 def test_paired_no_drop_success_when_object_in_basket(
     _mock_nominal: MagicMock,
     mock_sample_path_drop: MagicMock,
@@ -357,19 +357,19 @@ def test_paired_no_drop_success_when_object_in_basket(
     )
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.55, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=True,
         ),
     ):
@@ -399,8 +399,8 @@ def test_paired_no_drop_success_when_object_in_basket(
     }
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik.sample_path_drop")
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.datagen.controllers.simple_ik.sample_path_drop")
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_paired_no_drop_stops_on_success_termination_before_autoreset(
     _mock_nominal: MagicMock,
     mock_sample_path_drop: MagicMock,
@@ -428,19 +428,19 @@ def test_paired_no_drop_stops_on_success_termination_before_autoreset(
     planner = MagicMock(phase_name="open_place", carry_path=carry_path, done=False)
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.01, 0.25, 0.17])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.25, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=False,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=False,
         ),
     ):
@@ -472,8 +472,8 @@ def test_paired_no_drop_stops_on_success_termination_before_autoreset(
     }
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik.sample_path_drop")
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=None)
+@patch("fault_system.datagen.controllers.simple_ik.sample_path_drop")
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=None)
 def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
     _mock_nominal: MagicMock,
     mock_sample_path_drop: MagicMock,
@@ -495,19 +495,19 @@ def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
     )
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.1, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=True,
         ),
     ):
@@ -537,16 +537,16 @@ def test_paired_planned_drop_never_fired_stays_failure_despite_in_basket(
     assert facts.drop_trigger["drop"] is True
 
 
-@patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity")
-@patch("lerobot_faults.recovery.midair_drop.is_object_in_basket", return_value=False)
-@patch("lerobot_faults.recovery.midair_drop.get_place_destination")
-@patch("lerobot_faults.recovery.midair_drop.midair_drop")
-@patch("lerobot_faults.recovery.midair_drop.get_object_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_eef_pose")
-@patch("lerobot_faults.recovery.midair_drop.get_arm_qpos")
-@patch("lerobot_faults.recovery.midair_drop.get_robosuite_env")
-@patch("lerobot_faults.recovery.midair_drop.is_object_grasped")
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.recovery.midair_drop.get_object_linear_velocity")
+@patch("fault_system.recovery.midair_drop.is_object_in_basket", return_value=False)
+@patch("fault_system.recovery.midair_drop.get_place_destination")
+@patch("fault_system.recovery.midair_drop.midair_drop")
+@patch("fault_system.recovery.midair_drop.get_object_pose")
+@patch("fault_system.recovery.midair_drop.get_eef_pose")
+@patch("fault_system.recovery.midair_drop.get_arm_qpos")
+@patch("fault_system.recovery.midair_drop.get_robosuite_env")
+@patch("fault_system.recovery.midair_drop.is_object_grasped")
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_loop_returns_skipped_recovery_outcome(
     mock_nominal: MagicMock,
     mock_grasped,
@@ -586,19 +586,19 @@ def test_loop_returns_skipped_recovery_outcome(
 
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([1.0, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
     ):
@@ -624,7 +624,7 @@ def test_loop_returns_skipped_recovery_outcome(
     assert facts.actual_dwell_steps == 1
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_nominal_grasp_miss_fails_fast_before_drop(_mock_nominal: MagicMock) -> None:
     fault = _fault_continue()
     env = MagicMock()
@@ -641,19 +641,19 @@ def test_nominal_grasp_miss_fails_fast_before_drop(_mock_nominal: MagicMock) -> 
     )
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.55, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
     ):
@@ -680,7 +680,7 @@ def test_nominal_grasp_miss_fails_fast_before_drop(_mock_nominal: MagicMock) -> 
     assert facts.actual_dwell_steps == 0
 
 
-@patch("lerobot_faults.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
+@patch("fault_system.datagen.controllers.simple_ik._nominal_action", return_value=np.ones(7))
 def test_nominal_carry_stall_fails_fast_before_drop(_mock_nominal: MagicMock) -> None:
     fault = _fault_continue()
     env = MagicMock()
@@ -692,23 +692,23 @@ def test_nominal_carry_stall_fails_fast_before_drop(_mock_nominal: MagicMock) ->
     )
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.array([0.55, 0.0, 0.2])},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_eef_pose",
+            "fault_system.datagen.controllers.simple_ik.get_eef_pose",
             return_value=(np.array([0.14, -0.12, 0.25]), np.array([1.0, 0.0, 0.0, 0.0])),
         ),
     ):

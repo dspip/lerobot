@@ -38,7 +38,7 @@ distinct from drop-auto reasons `xy_band` / `delay_elapsed` (`status="triggered"
 
 | File | Change |
 |------|--------|
-| `src/lerobot/faults/recovery/midair_drop.py` | `_start_recovery_planner`, `request_recovery`; `_trigger_drop` delegates planner setup |
+| `src/fault_system/recovery/midair_drop.py` | `_start_recovery_planner`, `request_recovery`; `_trigger_drop` delegates planner setup |
 | `tests/faults/test_midair_drop_request_recovery.py` | New unit tests (mocks only) |
 | `docs/source/fault_injection.mdx` | Short paragraph on request vs impulse path |
 

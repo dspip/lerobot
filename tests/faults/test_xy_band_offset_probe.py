@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 
-from lerobot_faults.recovery.xy_band_offset_probe import (
+from fault_system.recovery.xy_band_offset_probe import (
     compass_offsets,
     first_band_hits_after_grasp,
     soup_basket_xy_series,

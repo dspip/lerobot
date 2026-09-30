@@ -37,7 +37,7 @@ def _load_module(name: str, filename: str):
 
 @pytest.fixture(scope="module")
 def pipeline_mod():
-    from lerobot_faults.datagen import smolvla_pipeline
+    from fault_system.datagen import smolvla_pipeline
 
     return smolvla_pipeline
 

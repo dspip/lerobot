@@ -123,6 +123,6 @@ If `keep` is false, the episode is not in the training dataset. Failed IK recove
 
 ## 5. Do not
 
-- Edit `src/lerobot/faults/datagen/smolvla_pipeline.py` “just to record”
+- Edit `src/fault_system/datagen/smolvla_pipeline.py` “just to record”
 - Point training at `outputs/failure_annotation_verify/`
 - Treat `reset_then_ik` as a MuJoCo scene reset; it is SimpleIK → drop → SmolVLA dwell → IK

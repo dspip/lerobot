@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lerobot_faults.datagen.drop_timing import (
+from fault_system.datagen.drop_timing import (
     DropDecision,
     TraceFrame,
     eligible_indices,

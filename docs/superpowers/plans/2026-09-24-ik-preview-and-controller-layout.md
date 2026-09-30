@@ -22,8 +22,8 @@
 ### Task 1: Shared episode preview component
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/episode_preview.py`
-- Modify: `src/lerobot/faults/datagen/smolvla_pipeline.py`
+- Create: `src/fault_system/datagen/episode_preview.py`
+- Modify: `src/fault_system/datagen/smolvla_pipeline.py`
 - Create: `tests/faults/test_episode_preview.py`
 
 **Interfaces:**
@@ -59,7 +59,7 @@ Run:
 uv run pytest tests/faults/test_episode_preview.py -q
 ```
 
-Expected: collection fails because `lerobot_faults.datagen.episode_preview` does not exist.
+Expected: collection fails because `fault_system.datagen.episode_preview` does not exist.
 
 - [ ] **Step 3: Implement the shared preview module**
 
@@ -104,7 +104,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/lerobot/faults/datagen/episode_preview.py src/lerobot/faults/datagen/smolvla_pipeline.py tests/faults/test_episode_preview.py
+git add src/fault_system/datagen/episode_preview.py src/fault_system/datagen/smolvla_pipeline.py tests/faults/test_episode_preview.py
 git commit -m "refactor: share episode preview rendering"
 ```
 
@@ -113,7 +113,7 @@ git commit -m "refactor: share episode preview rendering"
 ### Task 2: Save SimpleIK preview artifacts
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/controllers/simple_ik.py`
+- Modify: `src/fault_system/datagen/controllers/simple_ik.py`
 - Modify: `tests/faults/test_simple_ik_episode_logging.py`
 - Modify: `tests/faults/test_datagen_final_review_contracts.py`
 
@@ -183,7 +183,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/lerobot/faults/datagen/controllers/simple_ik.py tests/faults/test_simple_ik_episode_logging.py tests/faults/test_datagen_final_review_contracts.py
+git add src/fault_system/datagen/controllers/simple_ik.py tests/faults/test_simple_ik_episode_logging.py tests/faults/test_datagen_final_review_contracts.py
 git commit -m "feat: save SimpleIK episode previews"
 ```
 
@@ -192,8 +192,8 @@ git commit -m "feat: save SimpleIK episode previews"
 ### Task 3: Controller-specific stock SmolVLA layout
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/recipe.py`
-- Modify: `src/lerobot/faults/datagen/runner.py`
+- Modify: `src/fault_system/datagen/recipe.py`
+- Modify: `src/fault_system/datagen/runner.py`
 - Modify: `examples/faults/recipes/can_drop_datagen.json`
 - Modify: `tests/faults/test_datagen_recipe.py`
 - Modify: `tests/faults/test_datagen_runner.py`
@@ -281,7 +281,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/lerobot/faults/datagen/recipe.py src/lerobot/faults/datagen/runner.py examples/faults/recipes/can_drop_datagen.json tests/faults/test_datagen_recipe.py tests/faults/test_datagen_runner.py HANDOFF_UNIFIED_DROP_DATAGEN.md
+git add src/fault_system/datagen/recipe.py src/fault_system/datagen/runner.py examples/faults/recipes/can_drop_datagen.json tests/faults/test_datagen_recipe.py tests/faults/test_datagen_runner.py HANDOFF_UNIFIED_DROP_DATAGEN.md
 git commit -m "feat: use stock layouts for SmolVLA"
 ```
 

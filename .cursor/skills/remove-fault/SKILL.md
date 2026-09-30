@@ -2,7 +2,7 @@
 name: remove-fault
 description: >-
   Use when removing, disabling, deleting, or retiring a fault type from the
-  in-tree `src/lerobot/faults/` package so leftover factory, wrapper, test, or
+  in-tree `src/fault_system/` package so leftover factory, wrapper, test, or
   doc wiring does not remain.
 ---
 
@@ -14,14 +14,14 @@ Delete the injector **and** every registration. A leftover `_ACTION_TYPES` entry
 ## Checklist (all required)
 
 1. Injector module under the correct subpackage:
-   - `src/lerobot/faults/action/<name>.py`
-   - `src/lerobot/faults/observation/<name>.py`
-   - `src/lerobot/faults/sim/<name>.py`
-   - `src/lerobot/faults/recovery/<name>.py`
-2. Subpackage and package `__init__.py` exports (`src/lerobot/faults/__init__.py`).
-3. `src/lerobot/faults/factory.py`: type frozenset, `make_*` branch, type aliases.
-4. `src/lerobot/faults/config.py`: `_SUPPORTED_TYPES`, type-specific fields, `validate()` branch.
-5. `src/lerobot/faults/wrappers.py`: `maybe_wrap_env` dispatch; delete wrapper class only if
+   - `src/fault_system/action/<name>.py`
+   - `src/fault_system/observation/<name>.py`
+   - `src/fault_system/sim/<name>.py`
+   - `src/fault_system/recovery/<name>.py`
+2. Subpackage and package `__init__.py` exports (`src/fault_system/__init__.py`).
+3. `src/fault_system/factory.py`: type frozenset, `make_*` branch, type aliases.
+4. `src/fault_system/config.py`: `_SUPPORTED_TYPES`, type-specific fields, `validate()` branch.
+5. `src/fault_system/wrappers.py`: `maybe_wrap_env` dispatch; delete wrapper class only if
    no remaining types use it (`DropRecoveryEnvWrapper` / `SimFaultEnvWrapper`).
 6. Tests: `tests/faults/test_<name>_*.py` and mentions in `test_wrappers.py` or composition tests.
 7. Docs: `docs/source/fault_injection.mdx`.
@@ -41,7 +41,7 @@ defaults, smoke, or example configs.
 
 ```bash
 uv run pytest tests/faults -q
-rg -n '<fault_type_string>' src/lerobot/faults tests/faults docs .cursor scripts
+rg -n '<fault_type_string>' src/fault_system tests/faults docs .cursor scripts
 ```
 
 The type string (for example `midair_drop`) must not remain in factory frozensets or

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lerobot_faults.recovery.trajectory import build_carry_path, build_pickup_via
+from fault_system.recovery.trajectory import build_carry_path, build_pickup_via
 
 
 def _carry(offset: float):

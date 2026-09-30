@@ -19,14 +19,14 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from lerobot_faults.datagen.motion_profile import sample_episode_motion_profile
-from lerobot_faults.datagen.recipe import SimpleIKRecipe
-from lerobot_faults.datagen.runtime import (
+from fault_system.datagen.motion_profile import sample_episode_motion_profile
+from fault_system.datagen.recipe import SimpleIKRecipe
+from fault_system.datagen.runtime import (
     movable_object_names,
     rotate_quat_about_world_z,
     stabilize_carry_action,
 )
-from lerobot_faults.recovery.planner import CARRY_PHASES
+from fault_system.recovery.planner import CARRY_PHASES
 
 
 def test_motion_profile_is_independent_of_layout_rng_draws():

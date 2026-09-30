@@ -53,7 +53,7 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
   existing HuggingFace headers on files you only edit; do not rewrite upstream
   copyrights. See `.cursor/skills/libero-object-overlays/SKILL.md` and
   `.cursor/rules/gangelia-copyright.mdc`.
-- **Fork boundary:** This repo pins upstream LeRobot. New behavior goes in `src/lerobot_faults/` or `packages/lerobot_env_libero_overlay/`. Fault eval is `lerobot-eval-faults`. See `.cursor/rules/fork-boundary.mdc`.
+- **Fork boundary:** This repo pins upstream LeRobot. New behavior goes in `src/fault_system/` or `packages/lerobot_env_libero_overlay/`. Fault eval is `lerobot-eval-faults`. See `.cursor/rules/fork-boundary.mdc`.
 - **Mypy**: one ruleset (`[tool.mypy]` in `pyproject.toml`) checks the paths in its `files` setting, except `lerobot.rl`, the vendored `molmoact2_hf_model` and the generated `*_pb2` modules. Run it with `pre-commit run mypy --all-files`. Add type annotations when modifying code.
 - **Imports**: prefer top-level imports; relative (`from .sibling import X`) across sibling files within a module, absolute (`from lerobot.module import X`) across modules.
 - **Optional dependencies**: many policies, envs, and robots are behind extras (e.g., `lerobot[aloha]`, see `pyproject.toml`). Guard optional imports with `TYPE_CHECKING or _foo_available` at module top + a `require_package(...)` check at use time. Reuse the `_foo_available` flags in `utils/import_utils.py`; don't call `is_package_available`.

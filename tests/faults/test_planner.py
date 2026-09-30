@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lerobot_faults.recovery.planner import BLENDABLE_PHASES, SimpleIKRecoveryPlanner
+from fault_system.recovery.planner import BLENDABLE_PHASES, SimpleIKRecoveryPlanner
 
 
 def _default_poses():
@@ -534,7 +534,7 @@ def test_grasp_z_offset_size_aware():
 
 
 def test_descend_grasp_arrival_tighter_z_when_height_known():
-    from lerobot_faults.recovery import planner as planner_mod
+    from fault_system.recovery import planner as planner_mod
 
     planner = SimpleIKRecoveryPlanner(fps=10, arrive_tol=0.02, seed=0)
 

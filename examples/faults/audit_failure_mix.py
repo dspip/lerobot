@@ -45,7 +45,7 @@ def _load_verify_parquet():
 
 
 def main(argv: list[str] | None = None) -> int:
-    from lerobot_faults.recovery.mix_audit import (
+    from fault_system.recovery.mix_audit import (
         audit_failure_mix,
         audit_report_dict,
         format_drop_table,

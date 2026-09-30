@@ -20,23 +20,23 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot_faults.datagen.controllers.smolvla import (
+from fault_system.datagen.controllers.smolvla import (
     SmolVLADatagenAdapter,
     smolvla_behavioral_outcome,
 )
-from lerobot_faults.datagen.dataset_writer import RunDatasetWriter
-from lerobot_faults.datagen.episode import EpisodeRequest, EpisodeResult
-from lerobot_faults.datagen.manifest import read_run_manifest
-from lerobot_faults.datagen.paired_context import build_paired_episode_plan, resolve_init_state_id
-from lerobot_faults.datagen.path_drop import EligiblePath, eligible_path
-from lerobot_faults.datagen.recipe import (
+from fault_system.datagen.dataset_writer import RunDatasetWriter
+from fault_system.datagen.episode import EpisodeRequest, EpisodeResult
+from fault_system.datagen.manifest import read_run_manifest
+from fault_system.datagen.paired_context import build_paired_episode_plan, resolve_init_state_id
+from fault_system.datagen.path_drop import EligiblePath, eligible_path
+from fault_system.datagen.recipe import (
     DatagenController,
     RecipeError,
     load_drop_datagen_recipe,
     paired_episode_seed_manifests,
 )
-from lerobot_faults.datagen.runner import DropDatagenRunnerError, run_drop_datagen_matrix
-from lerobot_faults.recovery.trajectory import CarryPath, PathSegment
+from fault_system.datagen.runner import DropDatagenRunnerError, run_drop_datagen_matrix
+from fault_system.recovery.trajectory import CarryPath, PathSegment
 from tests.faults.test_datagen_recipe import _valid_unified_recipe, _write_recipe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -191,7 +191,7 @@ def _fake_preview_cls() -> MagicMock:
 
 @pytest.mark.parametrize("manifest_index", (0, 1))
 def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_index: int) -> None:
-    from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    from fault_system.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifests = paired_episode_seed_manifests(recipe, logical_episode_index=0)
@@ -204,11 +204,11 @@ def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_
 
     def _fake_loop(*_args, **kwargs):  # noqa: ANN003
         captured.update(kwargs)
-        from lerobot_faults.datagen.controllers import simple_ik as mod
+        from fault_system.datagen.controllers import simple_ik as mod
 
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 
-    import lerobot_faults.datagen.controllers.simple_ik as simple_ik_mod
+    import fault_system.datagen.controllers.simple_ik as simple_ik_mod
 
     adapter = SimpleIKDatagenAdapter(recipe)
     mock_env = MagicMock()
@@ -257,14 +257,14 @@ def test_simple_ik_adapter_uses_episode_and_drop_seeds(tmp_path: Path, manifest_
 
 
 def test_simple_ik_rejects_control_hz_mismatch(tmp_path: Path) -> None:
-    from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    from fault_system.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
     plan = build_paired_episode_plan(
         recipe, manifest=manifest, object_name="alphabet_soup_1", num_init_states=50
     )
-    import lerobot_faults.datagen.controllers.simple_ik as simple_ik_mod
+    import fault_system.datagen.controllers.simple_ik as simple_ik_mod
 
     mock_env = MagicMock()
     mock_env.fault = MagicMock()
@@ -322,7 +322,7 @@ def test_run_manifest_tracks_in_progress_and_aborted(tmp_path: Path) -> None:
         def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
             raise RuntimeError("boom")
 
-    from lerobot_faults.datagen.layout_provider import LayoutProviderContext
+    from fault_system.datagen.layout_provider import LayoutProviderContext
 
     def _layout(_ctx: LayoutProviderContext) -> dict:
         return {"alphabet_soup_1": {"pos": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}}
@@ -366,7 +366,7 @@ def test_smolvla_adapter_reuses_policy_resources(tmp_path: Path) -> None:
         assert kwargs["policy_resources"] is bundle
         return {"behavioral_success": True, "checks": {}}
 
-    import lerobot_faults.datagen.controllers.smolvla as smolvla_mod
+    import fault_system.datagen.controllers.smolvla as smolvla_mod
 
     adapter = SmolVLADatagenAdapter(recipe, pipeline_runner=_pipe)
     with pytest.MonkeyPatch.context() as mp:
@@ -431,8 +431,8 @@ def _make_simple_ik_adapter_mounts(mp, simple_ik_mod, mock_env, mock_rs_env, fak
 
 def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path) -> None:
     """Adapter creates EpisodePreview, passes on_post_step callback, finalizes with rs_env, and merges artifacts."""
-    import lerobot_faults.datagen.controllers.simple_ik as simple_ik_mod
-    from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import fault_system.datagen.controllers.simple_ik as simple_ik_mod
+    from fault_system.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
@@ -445,7 +445,7 @@ def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path
 
     def _fake_loop(*_args, **kwargs):  # noqa: ANN003
         loop_kwargs.update(kwargs)
-        from lerobot_faults.datagen.controllers import simple_ik as mod
+        from fault_system.datagen.controllers import simple_ik as mod
 
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 
@@ -491,8 +491,8 @@ def test_simple_ik_adapter_finalizes_preview_and_merges_artifacts(tmp_path: Path
 
 def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: Path) -> None:
     """Preview finalization runs even when the episode outcome is not success."""
-    import lerobot_faults.datagen.controllers.simple_ik as simple_ik_mod
-    from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import fault_system.datagen.controllers.simple_ik as simple_ik_mod
+    from fault_system.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
@@ -501,7 +501,7 @@ def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: P
     )
 
     def _fake_loop_fail(*_args, **kwargs):  # noqa: ANN003
-        from lerobot_faults.datagen.controllers import simple_ik as mod
+        from fault_system.datagen.controllers import simple_ik as mod
 
         return mod.SimpleIKEpisodeFacts(False, "nominal_completed_after_drop", None, None, 0)
 
@@ -543,8 +543,8 @@ def test_simple_ik_adapter_finalizes_preview_on_unsuccessful_outcome(tmp_path: P
 
 def test_simple_ik_adapter_closes_env_after_finalization(tmp_path: Path) -> None:
     """env.close() must be called after preview.finalize(), not before."""
-    import lerobot_faults.datagen.controllers.simple_ik as simple_ik_mod
-    from lerobot_faults.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
+    import fault_system.datagen.controllers.simple_ik as simple_ik_mod
+    from fault_system.datagen.controllers.simple_ik import SimpleIKDatagenAdapter
 
     recipe = load_drop_datagen_recipe(CAN_DROP_RECIPE)
     manifest = paired_episode_seed_manifests(recipe, logical_episode_index=0)[0]
@@ -553,7 +553,7 @@ def test_simple_ik_adapter_closes_env_after_finalization(tmp_path: Path) -> None
     )
 
     def _fake_loop(*_args, **kwargs):  # noqa: ANN003
-        from lerobot_faults.datagen.controllers import simple_ik as mod
+        from fault_system.datagen.controllers import simple_ik as mod
 
         return mod.SimpleIKEpisodeFacts(True, "recovery_completed_in_basket", None, None, 0)
 

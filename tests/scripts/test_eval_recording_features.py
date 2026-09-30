@@ -16,7 +16,7 @@ import numpy as np
 
 from lerobot.envs.configs import LiberoEnv
 from lerobot.utils.feature_utils import _validate_feature_names
-from lerobot_faults.eval_recording import _build_raw_frame, _env_features_to_dataset_features
+from fault_system.eval_recording import _build_raw_frame, _env_features_to_dataset_features
 
 
 def test_libero_recording_features_have_no_slashes():

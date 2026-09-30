@@ -19,8 +19,8 @@ import pandas as pd
 import pytest
 
 from lerobot.utils.constants import SUCCESS
-from lerobot_faults.eval_cli import FaultEvalConfig
-from lerobot_faults.success_filter import (
+from fault_system.eval_cli import FaultEvalConfig
+from fault_system.success_filter import (
     filter_successful_episodes,
     finish_eval_recorded_episode,
     list_successful_episode_indices,

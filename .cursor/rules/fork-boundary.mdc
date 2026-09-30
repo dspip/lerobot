@@ -9,7 +9,7 @@ This repo depends on a pinned Hugging Face LeRobot. It does not contain the LeRo
 
 ## Where new code goes
 
-- Faults, recovery, datagen, and eval recording: `src/lerobot_faults/`
+- Faults, recovery, datagen, and eval recording: `src/fault_system/`
 - LIBERO scene changes: `packages/lerobot_env_libero_overlay/` (stock BDDL stays untouched)
 - Tests: `tests/faults/`, `tests/envs/test_libero_overlays.py`, `tests/envs/test_libero_gui_renderer.py`
 
@@ -17,10 +17,10 @@ This repo depends on a pinned Hugging Face LeRobot. It does not contain the LeRo
 
 ## Do not extend upstream
 
-Fault flags and success-only recording belong on `lerobot-eval-faults` (`lerobot_faults.eval_cli`). Do not add them to `EvalPipelineConfig` or `EvalConfig`.
+Fault flags and success-only recording belong on `lerobot-eval-faults` (`fault_system.eval_cli`). Do not add them to `EvalPipelineConfig` or `EvalConfig`.
 
-Per-episode fields such as `success` are merged in `lerobot_faults.episode_metadata` around `meta.save_episode`. Do not add `episode_metadata` onto `LeRobotDataset.save_episode`.
+Per-episode fields such as `success` are merged in `fault_system.episode_metadata` around `meta.save_episode`. Do not add `episode_metadata` onto `LeRobotDataset.save_episode`.
 
 Overlays are `--env.type=libero_overlay`. Do not put `overlay` on stock `LiberoEnv`. Headless rendering is `install_headless_libero_renderer` / `OverlayLiberoEnv._ensure_env`.
 
-Eval recording (`features_map`, failure columns, success-only) lives in `lerobot_faults.eval_recording` and is attached by `lerobot-eval-faults`. Do not thread those arguments through `rollout` / `eval_policy_all`.
+Eval recording (`features_map`, failure columns, success-only) lives in `fault_system.eval_recording` and is attached by `lerobot-eval-faults`. Do not thread those arguments through `rollout` / `eval_policy_all`.

@@ -28,7 +28,7 @@ import argparse
 import json
 from pathlib import Path
 
-from lerobot_faults.success_filter import filter_successful_episodes
+from fault_system.success_filter import filter_successful_episodes
 
 
 def _build_parser() -> argparse.ArgumentParser:

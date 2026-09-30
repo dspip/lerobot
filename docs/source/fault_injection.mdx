@@ -88,7 +88,7 @@ later 20 Hz control steps with the arm held and the gripper open. Landing is
 ungrasped and `|vz| < 0.05` m/s for two checks; otherwise the episode truncates
 after 15 fall steps and IK does not start.
 
-See `src/lerobot/faults/config.py` for the full schema.
+See `src/fault_system/config.py` for the full schema.
 
 ## Example: action hold
 
@@ -124,7 +124,7 @@ uv run python examples/faults/run_drop_datagen.py \
 
 The sole checked-in recipe drives SimpleIK and SmolVLA variants (controller ×
 post-drop mode) under `recording.output_dir`. Training-grade SmolVLA kwargs live
-in `src/lerobot/faults/recovery/recording_recipe.py` (`seat_assist_enabled=false`,
+in `src/fault_system/recovery/recording_recipe.py` (`seat_assist_enabled=false`,
 XY-band drops, dwell steps from the recipe).
 
 Pass criteria per variant: LeRobot datasets under
@@ -179,4 +179,4 @@ Modes: `baseline`, `injected`, `delay`, `jitter`, `sensor`. Does **not** include
 - `--env.max_parallel_tasks=1` while faults are enabled
 - One fault type per eval run
 - Unit tests: `tests/faults/` (no simulator or GPU required)
-- In-tree package: `src/lerobot/faults/` — not the old `lerobot_faults` sidecar
+- Package: `src/fault_system/`

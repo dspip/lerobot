@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot_faults import ActionJitterFault, FaultEventLogger, FaultInjectionConfig, make_fault_injector
+from fault_system import ActionJitterFault, FaultEventLogger, FaultInjectionConfig, make_fault_injector
 
 
 def _cfg(**kwargs) -> FaultInjectionConfig:

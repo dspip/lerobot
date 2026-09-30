@@ -21,18 +21,18 @@ from unittest.mock import MagicMock, patch
 import gymnasium as gym
 import numpy as np
 
-from lerobot_faults.config import FaultInjectionConfig
-from lerobot_faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
-from lerobot_faults.datagen.dataset_writer import RunDatasetWriter
-from lerobot_faults.datagen.drop_timing import DropDecision
-from lerobot_faults.datagen.frame_logging import (
+from fault_system.config import FaultInjectionConfig
+from fault_system.datagen.controllers.simple_ik import run_simple_ik_episode_loop
+from fault_system.datagen.dataset_writer import RunDatasetWriter
+from fault_system.datagen.drop_timing import DropDecision
+from fault_system.datagen.frame_logging import (
     DATAGEN_POST_STEP_ANNOTATION_KEY,
     DatagenPostStepLogContext,
     should_log_sim_step,
 )
-from lerobot_faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
-from lerobot_faults.recovery.trajectory import CarryPath, PathSegment
-from lerobot_faults.wrappers import DropRecoveryEnvWrapper
+from fault_system.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
+from fault_system.recovery.trajectory import CarryPath, PathSegment
+from fault_system.wrappers import DropRecoveryEnvWrapper
 from tests.faults.test_datagen_dataset_writer import _minimal_processed_frame, _RecordingLogger
 from tests.faults.test_midair_drop_fault import _setup_drop_mocks
 from tests.faults.test_simple_ik_post_drop_transition import moving_eef  # noqa: F401  (autouse)
@@ -96,33 +96,33 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
         return held_midair_checks["n"] > 1
 
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_place_destination") as mock_dest,
-        patch("lerobot_faults.recovery.midair_drop.midair_drop") as mock_drop,
-        patch("lerobot_faults.recovery.midair_drop.get_object_pose") as mock_obj_pose,
-        patch("lerobot_faults.recovery.midair_drop.get_eef_pose") as mock_eef,
-        patch("lerobot_faults.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped") as mock_grasped,
-        patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
+        patch("fault_system.recovery.midair_drop.get_place_destination") as mock_dest,
+        patch("fault_system.recovery.midair_drop.midair_drop") as mock_drop,
+        patch("fault_system.recovery.midair_drop.get_object_pose") as mock_obj_pose,
+        patch("fault_system.recovery.midair_drop.get_eef_pose") as mock_eef,
+        patch("fault_system.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
+        patch("fault_system.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
+        patch("fault_system.recovery.midair_drop.is_object_grasped") as mock_grasped,
+        patch("fault_system.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik._nominal_action",
+            "fault_system.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),
         ),
-        patch("lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket", return_value=False),
-        patch("lerobot_faults.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
+        patch("fault_system.datagen.controllers.simple_ik.is_object_in_basket", return_value=False),
+        patch("fault_system.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             side_effect=_held_midair,
         ),
-        patch("lerobot_faults.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
-        patch("lerobot_faults.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
+        patch("fault_system.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
+        patch("fault_system.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
         patch("lerobot.envs.utils.preprocess_observation", side_effect=lambda obs: obs),
         patch(
-            "lerobot_faults.recovery.dataset_logger.libero_obs_to_frame",
+            "fault_system.recovery.dataset_logger.libero_obs_to_frame",
             side_effect=lambda obs: _minimal_processed_frame(),
         ),
         patch(
-            "lerobot_faults.datagen.frame_logging.mujoco_sim_time_s",
+            "fault_system.datagen.frame_logging.mujoco_sim_time_s",
             side_effect=(lambda: (lambda _rs: 0.05))(),
         ),
     ):
@@ -223,26 +223,26 @@ def test_simple_ik_loop_logs_dwell_and_recovery_masks_with_stride() -> None:
 def test_simple_ik_loop_calls_on_post_step() -> None:
     """on_post_step is invoked with (step_index, phase_name) after each env.step call."""
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_place_destination") as mock_dest,
-        patch("lerobot_faults.recovery.midair_drop.midair_drop") as mock_drop,
-        patch("lerobot_faults.recovery.midair_drop.get_object_pose") as mock_obj_pose,
-        patch("lerobot_faults.recovery.midair_drop.get_eef_pose") as mock_eef,
-        patch("lerobot_faults.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped") as mock_grasped,
-        patch("lerobot_faults.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
+        patch("fault_system.recovery.midair_drop.get_place_destination") as mock_dest,
+        patch("fault_system.recovery.midair_drop.midair_drop") as mock_drop,
+        patch("fault_system.recovery.midair_drop.get_object_pose") as mock_obj_pose,
+        patch("fault_system.recovery.midair_drop.get_eef_pose") as mock_eef,
+        patch("fault_system.recovery.midair_drop.get_arm_qpos") as mock_arm_q,
+        patch("fault_system.recovery.midair_drop.get_robosuite_env") as mock_get_rs,
+        patch("fault_system.recovery.midair_drop.is_object_grasped") as mock_grasped,
+        patch("fault_system.recovery.midair_drop.get_object_linear_velocity") as mock_lin_vel,
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik._nominal_action",
+            "fault_system.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),
         ),
-        patch("lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket", return_value=True),
-        patch("lerobot_faults.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
+        patch("fault_system.datagen.controllers.simple_ik.is_object_in_basket", return_value=True),
+        patch("fault_system.datagen.controllers.simple_ik.is_object_grasped", return_value=False),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=False,
         ),
-        patch("lerobot_faults.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
-        patch("lerobot_faults.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
+        patch("fault_system.datagen.controllers.simple_ik.get_place_destination") as mock_dest_simple,
+        patch("fault_system.datagen.controllers.simple_ik.get_object_pose") as mock_obj_pose_simple,
     ):
         _setup_drop_mocks(
             mock_grasped, mock_get_rs, mock_arm_q, mock_eef, mock_obj_pose, mock_drop, mock_dest

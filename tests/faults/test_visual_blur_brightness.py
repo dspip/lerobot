@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lerobot_faults import (
+from fault_system import (
     BrightnessDropFault,
     FaultInjectionConfig,
     VisualBlurFault,
@@ -79,7 +79,7 @@ def test_factory_routes():
 
 
 def test_blur_preserves_float_0_255_range():
-    from lerobot_faults.observation.utils import apply_box_blur
+    from fault_system.observation.utils import apply_box_blur
 
     img = np.zeros((16, 16, 3), dtype=np.float32)
     img[4:12, 4:12] = 200.0

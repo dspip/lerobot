@@ -21,7 +21,7 @@ import json
 import sys
 from pathlib import Path
 
-from lerobot_faults.datagen.audit import AuditError, audit_drop_run
+from fault_system.datagen.audit import AuditError, audit_drop_run
 
 
 def _build_parser() -> argparse.ArgumentParser:

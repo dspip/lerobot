@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_faults.datagen.recipe import RecipeError, load_drop_datagen_recipe
-from lerobot_faults.datagen.shard_range import max_logical_episodes, validate_logical_shard_range
+from fault_system.datagen.recipe import RecipeError, load_drop_datagen_recipe
+from fault_system.datagen.shard_range import max_logical_episodes, validate_logical_shard_range
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"

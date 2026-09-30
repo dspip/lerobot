@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from examples.faults import run_drop_datagen as cli
-from lerobot_faults.datagen.recipe import RecipeError, load_drop_datagen_recipe
+from fault_system.datagen.recipe import RecipeError, load_drop_datagen_recipe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"
@@ -51,6 +51,6 @@ def test_cli_episodes_one_returns_error_code() -> None:
 
 
 def test_smolvla_pipeline_run_pipeline_is_in_package() -> None:
-    from lerobot_faults.datagen.smolvla_pipeline import run_pipeline
+    from fault_system.datagen.smolvla_pipeline import run_pipeline
 
     assert callable(run_pipeline)

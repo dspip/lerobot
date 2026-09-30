@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_faults.datagen.controllers.smolvla import SmolVLADatagenAdapter
-from lerobot_faults.datagen.drop_timing import DropDecision
-from lerobot_faults.datagen.episode import EpisodeRequest
-from lerobot_faults.datagen.paired_context import build_paired_episode_plan
-from lerobot_faults.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
+from fault_system.datagen.controllers.smolvla import SmolVLADatagenAdapter
+from fault_system.datagen.drop_timing import DropDecision
+from fault_system.datagen.episode import EpisodeRequest
+from fault_system.datagen.paired_context import build_paired_episode_plan
+from fault_system.datagen.recipe import load_drop_datagen_recipe, paired_episode_seed_manifests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAN_DROP_RECIPE = REPO_ROOT / "examples" / "faults" / "recipes" / "can_drop_datagen.json"

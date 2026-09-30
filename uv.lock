@@ -34,8 +34,8 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "fault-system",
     "lerobot-env-libero-overlay",
-    "lerobot-faults",
 ]
 
 [[package]]
@@ -1169,6 +1169,21 @@ wheels = [
 ]
 
 [[package]]
+name = "fault-system"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "lerobot", extra = ["dataset", "dev", "libero", "smolvla", "test"] },
+    { name = "lerobot-env-libero-overlay" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lerobot", extras = ["dataset", "test", "dev", "libero", "smolvla"], git = "https://github.com/huggingface/lerobot.git?rev=e0d50211ef236143ae867228662b7dfaba554f02" },
+    { name = "lerobot-env-libero-overlay", editable = "packages/lerobot_env_libero_overlay" },
+]
+
+[[package]]
 name = "filelock"
 version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2221,21 +2236,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "lerobot", git = "https://github.com/huggingface/lerobot.git?rev=e0d50211ef236143ae867228662b7dfaba554f02" }]
-
-[[package]]
-name = "lerobot-faults"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "lerobot", extra = ["dataset", "dev", "libero", "smolvla", "test"] },
-    { name = "lerobot-env-libero-overlay" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "lerobot", extras = ["dataset", "test", "dev", "libero", "smolvla"], git = "https://github.com/huggingface/lerobot.git?rev=e0d50211ef236143ae867228662b7dfaba554f02" },
-    { name = "lerobot-env-libero-overlay", editable = "packages/lerobot_env_libero_overlay" },
-]
 
 [[package]]
 name = "librt"

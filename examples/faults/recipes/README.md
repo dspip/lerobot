@@ -1,6 +1,6 @@
 # Fault datagen JSON recipes
 
-Shared JSON recipes for drop datagen. Rates, frame columns, and `loss_mask` rules are in [`src/lerobot/faults/datagen/README.md`](../../src/lerobot/faults/datagen/README.md).
+Shared JSON recipes for drop datagen. Rates, frame columns, and `loss_mask` rules are in [`src/fault_system/datagen/README.md`](../../src/fault_system/datagen/README.md).
 
 ## What to record
 

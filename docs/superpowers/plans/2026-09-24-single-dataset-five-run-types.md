@@ -25,8 +25,8 @@
 ### Task 1: Matrix Schema and Stable Seed Identity
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/recipe.py`
-- Modify: `src/lerobot/faults/datagen/paired_context.py`
+- Modify: `src/fault_system/datagen/recipe.py`
+- Modify: `src/fault_system/datagen/paired_context.py`
 - Modify: `tests/faults/test_datagen_recipe.py`
 
 **Interfaces:**
@@ -44,8 +44,8 @@
 ### Task 2: One Dataset and Episode-Level Success
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/dataset_writer.py`
-- Modify: `src/lerobot/faults/recovery/dataset_logger.py`
+- Modify: `src/fault_system/datagen/dataset_writer.py`
+- Modify: `src/fault_system/recovery/dataset_logger.py`
 - Modify: `src/lerobot/datasets/lerobot_dataset.py`
 - Modify: `src/lerobot/datasets/dataset_writer.py`
 - Modify: `tests/faults/test_datagen_dataset_writer.py`
@@ -66,8 +66,8 @@
 ### Task 3: Planned Type-5 Fault Mode and Mask
 
 **Files:**
-- Modify: `src/lerobot/faults/config.py`
-- Modify: `src/lerobot/faults/recovery/midair_drop.py`
+- Modify: `src/fault_system/config.py`
+- Modify: `src/fault_system/recovery/midair_drop.py`
 - Modify: `tests/faults/test_midair_drop_fault.py`
 - Modify: `tests/faults/test_datagen_dataset_writer.py`
 
@@ -84,10 +84,10 @@
 ### Task 4: SimpleIK Carry Followed by SmolVLA
 
 **Files:**
-- Create: `src/lerobot/faults/datagen/smolvla_action_provider.py`
-- Modify: `src/lerobot/faults/datagen/controllers/simple_ik.py`
-- Modify: `src/lerobot/faults/datagen/controllers/smolvla.py`
-- Modify: `src/lerobot/faults/datagen/smolvla_resources.py`
+- Create: `src/fault_system/datagen/smolvla_action_provider.py`
+- Modify: `src/fault_system/datagen/controllers/simple_ik.py`
+- Modify: `src/fault_system/datagen/controllers/smolvla.py`
+- Modify: `src/fault_system/datagen/smolvla_resources.py`
 - Modify: `tests/faults/test_simple_ik_episode_logging.py`
 - Create: `tests/faults/test_smolvla_action_provider.py`
 
@@ -106,7 +106,7 @@
 ### Task 5: Keep Policy and Canonical Recipe
 
 **Files:**
-- Modify: `src/lerobot/faults/datagen/dataset_writer.py`
+- Modify: `src/fault_system/datagen/dataset_writer.py`
 - Modify: `examples/faults/recipes/can_drop_datagen.json`
 - Modify: `examples/faults/recipes/README.md`
 - Modify: `HANDOFF_UNIFIED_DROP_DATAGEN.md`
@@ -129,7 +129,7 @@
 - Check: all files above
 
 - [ ] Run `uv run pytest tests/faults -q --tb=short`.
-- [ ] Run `uv run ruff check src/lerobot/faults src/lerobot/datasets tests/faults examples/faults`.
+- [ ] Run `uv run ruff check src/fault_system tests/faults examples/faults`.
 - [ ] Run `uv run python examples/faults/run_drop_datagen.py --recipe examples/faults/recipes/can_drop_datagen.json --help` to confirm imports/CLI startup without GPU recording.
 - [ ] Inspect `git diff --check` if git metadata is available; otherwise inspect lints for edited files.
 - [ ] Re-read `docs/superpowers/specs/2026-09-24-single-dataset-five-run-types-design.md` and verify every in-scope requirement against tests.

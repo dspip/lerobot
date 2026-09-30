@@ -11,11 +11,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from lerobot_faults.config import FaultInjectionConfig
-from lerobot_faults.recovery.evaluation import evaluate_recovery_episode
-from lerobot_faults.recovery.midair_drop import MidAirDropFault
-from lerobot_faults.recovery.planner import SimpleIKRecoveryPlanner, _wrap_to_half_pi
-from lerobot_faults.sim.libero import (
+from fault_system.config import FaultInjectionConfig
+from fault_system.recovery.evaluation import evaluate_recovery_episode
+from fault_system.recovery.midair_drop import MidAirDropFault
+from fault_system.recovery.planner import SimpleIKRecoveryPlanner, _wrap_to_half_pi
+from fault_system.sim.libero import (
     get_gripper_closing_axis,
     get_object_pose,
     lay_object_on_side,
@@ -245,7 +245,7 @@ def _lay_env(half_extents: np.ndarray | None = None) -> MagicMock:
 @pytest.mark.parametrize("heading_deg", [0, 45, 90, 135])
 def test_lay_object_on_side_requests_a_pose_that_is_actually_lying(heading_deg):
     env, apply = _lay_env()
-    with patch("lerobot_faults.sim.libero.set_object_pose", side_effect=apply):
+    with patch("fault_system.sim.libero.set_object_pose", side_effect=apply):
         info = lay_object_on_side(env, OBJ, float(np.deg2rad(heading_deg)))
     assert info["orientation"]["lying"]
     assert _wrap_to_half_pi(info["orientation"]["long_axis_yaw"]) == pytest.approx(
@@ -257,7 +257,7 @@ def test_lay_object_on_side_requests_a_pose_that_is_actually_lying(heading_deg):
 
 def test_lay_object_on_side_raises_when_the_object_is_not_elongated():
     env, apply = _lay_env(half_extents=np.array([0.03, 0.031, 0.03]))
-    with patch("lerobot_faults.sim.libero.set_object_pose", side_effect=apply):
+    with patch("fault_system.sim.libero.set_object_pose", side_effect=apply):
         with pytest.raises(RuntimeError, match="no measurable long axis"):
             lay_object_on_side(env, OBJ, 0.0)
 
@@ -265,7 +265,7 @@ def test_lay_object_on_side_raises_when_the_object_is_not_elongated():
 def test_lay_object_on_side_raises_when_the_pose_does_not_stick():
     """A staging no-op must fail loudly, never be reported as a lying can."""
     env = _fake_can_env(_standing_quat())
-    with patch("lerobot_faults.sim.libero.set_object_pose", return_value={}):
+    with patch("fault_system.sim.libero.set_object_pose", return_value={}):
         with pytest.raises(RuntimeError, match="Failed to lay"):
             lay_object_on_side(env, OBJ, 0.0)
 
@@ -481,18 +481,18 @@ def _patched_trigger(basket_dist, cfg: FaultInjectionConfig, steps: int) -> int 
     inj = MidAirDropFault(cfg, num_envs=1)
     state = inj._states[0]
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch("fault_system.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("fault_system.recovery.midair_drop.is_object_grasped", return_value=True),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_object_pose",
+            "fault_system.recovery.midair_drop.get_object_pose",
             return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_eef_pose",
+            "fault_system.recovery.midair_drop.get_eef_pose",
             return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.object_basket_xy_distance",
+            "fault_system.recovery.midair_drop.object_basket_xy_distance",
             return_value=basket_dist,
         ),
     ):
@@ -555,18 +555,18 @@ def test_trigger_records_distance_and_reason():
     inj = MidAirDropFault(cfg, num_envs=1)
     state = inj._states[0]
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch("fault_system.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("fault_system.recovery.midair_drop.is_object_grasped", return_value=True),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_object_pose",
+            "fault_system.recovery.midair_drop.get_object_pose",
             return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_eef_pose",
+            "fault_system.recovery.midair_drop.get_eef_pose",
             return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.object_basket_xy_distance",
+            "fault_system.recovery.midair_drop.object_basket_xy_distance",
             return_value=0.50,
         ),
     ):
@@ -634,18 +634,18 @@ def test_xy_band_trigger_reason_and_event_fields():
     inj = MidAirDropFault(cfg, num_envs=1)
     state = inj._states[0]
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch("fault_system.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("fault_system.recovery.midair_drop.is_object_grasped", return_value=True),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_object_pose",
+            "fault_system.recovery.midair_drop.get_object_pose",
             return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_eef_pose",
+            "fault_system.recovery.midair_drop.get_eef_pose",
             return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.object_basket_xy_distance",
+            "fault_system.recovery.midair_drop.object_basket_xy_distance",
             return_value=0.44,
         ),
     ):
@@ -660,18 +660,18 @@ def test_trigger_never_fires_close_in_after_delay_no_keepout_edge_reason():
     inj = MidAirDropFault(cfg, num_envs=1)
     state = inj._states[0]
     with (
-        patch("lerobot_faults.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
-        patch("lerobot_faults.recovery.midair_drop.is_object_grasped", return_value=True),
+        patch("fault_system.recovery.midair_drop.get_robosuite_env", return_value=MagicMock()),
+        patch("fault_system.recovery.midair_drop.is_object_grasped", return_value=True),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_object_pose",
+            "fault_system.recovery.midair_drop.get_object_pose",
             return_value={"pos": np.array([0.1, -0.2, 0.2]), "quat_wxyz": UPRIGHT},
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.get_eef_pose",
+            "fault_system.recovery.midair_drop.get_eef_pose",
             return_value=(np.array([0.1, -0.2, 0.2]), np.array([0.0, 0.0, 0.0, 1.0])),
         ),
         patch(
-            "lerobot_faults.recovery.midair_drop.object_basket_xy_distance",
+            "fault_system.recovery.midair_drop.object_basket_xy_distance",
             return_value=0.18,
         ),
     ):

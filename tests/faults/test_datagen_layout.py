@@ -17,8 +17,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lerobot_faults.datagen.layout import ObjectPose2d, sample_layout
-from lerobot_faults.datagen.recipe import PlacementRecipe
+from fault_system.datagen.layout import ObjectPose2d, sample_layout
+from fault_system.datagen.recipe import PlacementRecipe
 
 
 def _placement(**kwargs) -> PlacementRecipe:

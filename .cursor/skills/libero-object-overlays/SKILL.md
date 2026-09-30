@@ -180,9 +180,9 @@ Then `lerobot-eval-overlay ... --env.type=libero_overlay --env.overlay=<yaml>`. 
 
 ## Code map
 
-- Config: `src/lerobot/envs/libero_overlays/config.py`
-- BDDL patch: `src/lerobot/envs/libero_overlays/bddl.py`
-- Apply + temp file: `src/lerobot/envs/libero_overlays/apply.py`
-- Object import: `src/lerobot/envs/libero_overlays/objects.py`
+- Config: `packages/lerobot_env_libero_overlay/src/lerobot_env_libero_overlay/config.py`
+- BDDL patch: `packages/lerobot_env_libero_overlay/src/lerobot_env_libero_overlay/bddl.py`
+- Apply + temp file: `packages/lerobot_env_libero_overlay/src/lerobot_env_libero_overlay/apply.py`
+- Object import: `packages/lerobot_env_libero_overlay/src/lerobot_env_libero_overlay/objects.py`
 - Env hook: `LiberoOverlayEnvConfig` (`--env.type=libero_overlay --env.overlay`) and `OverlayLiberoEnv`
 - Tests: `tests/envs/test_libero_overlays.py`

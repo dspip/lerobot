@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import pytest
 
-from lerobot_faults.datagen.drop_trigger import (
+from fault_system.datagen.drop_trigger import (
     sample_smolvla_band_target,
     smolvla_fault_drop_fields,
 )
-from lerobot_faults.datagen.recipe import DropXYBand
-from lerobot_faults.recovery.basket_drop_target import basket_distance_target_reached
+from fault_system.datagen.recipe import DropXYBand
+from fault_system.recovery.basket_drop_target import basket_distance_target_reached
 
 
 def test_target_crossing_detects_single_step_jump() -> None:
@@ -48,7 +48,7 @@ def test_target_requires_held_midair() -> None:
 
 
 def test_drop_xy_target_requires_band_and_in_range() -> None:
-    from lerobot_faults.config import FaultInjectionConfig
+    from fault_system.config import FaultInjectionConfig
 
     with pytest.raises(ValueError, match="requires drop_xy_band"):
         FaultInjectionConfig(

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from lerobot_faults.recovery.mix_audit import audit_failure_mix
+from fault_system.recovery.mix_audit import audit_failure_mix
 
 
 def _write_drop_episode(

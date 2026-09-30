@@ -21,16 +21,16 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from lerobot_faults.datagen.controllers.simple_ik import run_simple_ik_episode_loop
-from lerobot_faults.datagen.dataset_writer import RunDatasetWriter
-from lerobot_faults.datagen.failure_segments import (
+from fault_system.datagen.controllers.simple_ik import run_simple_ik_episode_loop
+from fault_system.datagen.dataset_writer import RunDatasetWriter
+from fault_system.datagen.failure_segments import (
     AttemptTickSnapshot,
     attempt_rows_from_tick_snapshots,
     tick_index_at_or_after_frame,
 )
-from lerobot_faults.datagen.frame_logging import log_post_step_to_session
-from lerobot_faults.datagen.recipe import RecipeError, load_drop_datagen_recipe, replace
-from lerobot_faults.datagen.recording_views import (
+from fault_system.datagen.frame_logging import log_post_step_to_session
+from fault_system.datagen.recipe import RecipeError, load_drop_datagen_recipe, replace
+from fault_system.datagen.recording_views import (
     ViewRecordingState,
     build_datagen_frame_labels,
     offer_tick_to_views,
@@ -188,7 +188,7 @@ def test_dual_view_commit_aligns_episode_indices(tmp_path: Path) -> None:
         logger_factory=lambda root, repo_id, **_kw: _RecordingLogger(root),
     )
     manifest = __import__(
-        "lerobot_faults.datagen.recipe", fromlist=["paired_episode_seed_manifests"]
+        "fault_system.datagen.recipe", fromlist=["paired_episode_seed_manifests"]
     ).paired_episode_seed_manifests(recipe, 0)[0]
     session = writer.open_episode_session(manifest)
     assert len(session.recording_views) == 2
@@ -208,8 +208,8 @@ def test_simple_ik_stops_env_step_after_done() -> None:
 
     import gymnasium as gym
 
-    from lerobot_faults.config import FaultInjectionConfig
-    from lerobot_faults.wrappers import DropRecoveryEnvWrapper
+    from fault_system.config import FaultInjectionConfig
+    from fault_system.wrappers import DropRecoveryEnvWrapper
 
     step_calls = {"n": 0}
 
@@ -242,31 +242,31 @@ def test_simple_ik_stops_env_step_after_done() -> None:
     planner = MagicMock(phase_name="lift", carry_path=None, done=False)
     with (
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik._nominal_action",
+            "fault_system.datagen.controllers.simple_ik._nominal_action",
             return_value=np.ones(7),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_object_pose",
+            "fault_system.datagen.controllers.simple_ik.get_object_pose",
             return_value={"pos": np.zeros(3)},
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_eef_pose",
+            "fault_system.datagen.controllers.simple_ik.get_eef_pose",
             return_value=(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.get_place_destination",
+            "fault_system.datagen.controllers.simple_ik.get_place_destination",
             return_value=np.zeros(3),
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_in_basket",
+            "fault_system.datagen.controllers.simple_ik.is_object_in_basket",
             return_value=True,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_held_midair",
+            "fault_system.datagen.controllers.simple_ik.is_object_held_midair",
             return_value=False,
         ),
         patch(
-            "lerobot_faults.datagen.controllers.simple_ik.is_object_grasped",
+            "fault_system.datagen.controllers.simple_ik.is_object_grasped",
             return_value=False,
         ),
     ):

@@ -22,8 +22,8 @@ Read this section before editing shared files. Do not reconstruct the work from 
 ### Additive paths (take whole files; should not conflict)
 
 ```
-src/lerobot/faults/datagen/           # new package
-src/lerobot/faults/recovery/trajectory.py
+src/fault_system/datagen/           # new package
+src/fault_system/recovery/trajectory.py
 examples/faults/run_can_simpleik_datagen.py
 examples/faults/can_simpleik_viewer.py
 examples/faults/recipes/can_simpleik_datagen.json
@@ -33,17 +33,17 @@ tests/envs/test_libero_gui_renderer.py
 docs/superpowers/
 ```
 
-If the other branch also added `src/lerobot/faults/datagen/`, merge module-by-module; this package is the recipe loader, layout sampler, motion profile, path drop, events, viewer helpers.
+If the other branch also added `src/fault_system/datagen/`, merge module-by-module; this package is the recipe loader, layout sampler, motion profile, path drop, events, viewer helpers.
 
 ### Shared files (conflict likely) — keep these symbols
 
 | File | This branch added | Do not lose |
 | --- | --- | --- |
 | `src/lerobot/envs/libero.py` | `disable_gui_renderer(env)` + call in `LiberoEnv` ctor after env create, before `reset` | Headless reset livelock fix. Other branch may also construct `OffScreenRenderEnv`; call this helper there too. |
-| `src/lerobot/faults/recovery/libero_hook.py` | import `disable_gui_renderer`; call after `OffScreenRenderEnv(**kwargs)` | Same. |
-| `src/lerobot/faults/config.py` | `FaultInjectionConfig` fields `pickup_via_offset_m=0.0`, `transport_via_offset_m=0.0`, `waypoint_blend_radius_m=0.0` + `__post_init__` `>= 0` checks | Insert next to existing `arm_posture_noise_deg`. Dataclass field **order** matters if anyone constructs positionally. |
-| `src/lerobot/faults/recovery/planner.py` | See API block below | Highest conflict risk. |
-| `src/lerobot/faults/recovery/midair_drop.py` | Import `CARRY_PHASES`; pass via offsets + `waypoint_blend_radius_m` into `SimpleIKRecoveryPlanner(...)`; `carrying = phase in CARRY_PHASES` | Old check `phase in ("lift", "to_basket_hover")` **misses** `to_basket_via` and opens the gripper mid-carry. |
+| `src/fault_system/recovery/libero_hook.py` | import `disable_gui_renderer`; call after `OffScreenRenderEnv(**kwargs)` | Same. |
+| `src/fault_system/config.py` | `FaultInjectionConfig` fields `pickup_via_offset_m=0.0`, `transport_via_offset_m=0.0`, `waypoint_blend_radius_m=0.0` + `__post_init__` `>= 0` checks | Insert next to existing `arm_posture_noise_deg`. Dataclass field **order** matters if anyone constructs positionally. |
+| `src/fault_system/recovery/planner.py` | See API block below | Highest conflict risk. |
+| `src/fault_system/recovery/midair_drop.py` | Import `CARRY_PHASES`; pass via offsets + `waypoint_blend_radius_m` into `SimpleIKRecoveryPlanner(...)`; `carrying = phase in CARRY_PHASES` | Old check `phase in ("lift", "to_basket_hover")` **misses** `to_basket_via` and opens the gripper mid-carry. |
 | `tests/faults/test_planner.py` | Keep both test sets | New tests import `BLENDABLE_PHASES`. |
 | `tests/faults/test_midair_drop_fault.py` | Extra cases for new planner kwargs / carry phases | Keep both. |
 
@@ -68,11 +68,11 @@ BLENDABLE_PHASES = frozenset({"retract", "pickup_via", "lift", "to_basket_via"})
 New / used attributes and phase names:
 
 - `planner.phase_name` — string; extra values vs `main`: `"pickup_via"`, `"to_basket_via"`.
-- `planner.carry_path` — `CarryPath | None` from `lerobot_faults.recovery.trajectory`; set when entering `lift`.
+- `planner.carry_path` — `CarryPath | None` from `fault_system.recovery.trajectory`; set when entering `lift`.
 - Waypoint names in order when offsets are non-zero: `retract`, `pickup_via`, `approach_hover`, `descend_grasp`, `close_grasp`, `lift`, `to_basket_via`, `to_basket_hover`, `open_place`, `retract_done`.
 - Any `if phase == ...` or `phase in (...)` on the other branch that lists only `lift` / `to_basket_hover` must include `to_basket_via` for carry, and must allow `pickup_via` as a pre-grasp transit phase.
 
-Geometry helpers live in `lerobot_faults.recovery.trajectory`: `build_pickup_via`, `build_carry_path`, `CarryPath`, `ResolvedPickupVia`. Prefer importing those rather than inlining keep-out math.
+Geometry helpers live in `fault_system.recovery.trajectory`: `build_pickup_via`, `build_carry_path`, `CarryPath`, `ResolvedPickupVia`. Prefer importing those rather than inlining keep-out math.
 
 ### Path drop contract (if the other branch touches drop timing)
 
@@ -130,7 +130,7 @@ MUJOCO_GL=egl PYTHONPATH=examples/faults:src .venv/bin/python \
 
 ## Recipe (`examples/faults/recipes/can_simpleik_datagen.json`)
 
-Loaded by `src/lerobot/faults/datagen/recipe.py`. Every field is required (no silent defaults once the file is loaded).
+Loaded by `src/fault_system/datagen/recipe.py`. Every field is required (no silent defaults once the file is loaded).
 
 
 | Field                                                           | Role                                                                                                                                                                          |
@@ -152,7 +152,7 @@ Loaded by `src/lerobot/faults/datagen/recipe.py`. Every field is required (no si
 | `simple_ik.waypoint_blend_radius_m`                             | Pass-through radius for free-space via points. Recipe: `0.02`. `0` restores stop-at-every-waypoint.                                                                           |
 
 
-## New package: `src/lerobot/faults/datagen/`
+## New package: `src/fault_system/datagen/`
 
 
 | Module              | What it does                                                                                                                                                                                                                                                                                                             |
@@ -167,7 +167,7 @@ Loaded by `src/lerobot/faults/datagen/recipe.py`. Every field is required (no si
 | `drop_timing.py`    | Leftover two-pass helpers (`TraceFrame`, `eligible_indices`, `sample_drop`) still exported from `__init__.py`. The runner does **not** use a dry-run pass.                                                                                                                                                               |
 
 
-## Planner and recovery (`src/lerobot/faults/recovery/`)
+## Planner and recovery (`src/fault_system/recovery/`)
 
 ### `planner.py` (`SimpleIKRecoveryPlanner`)
 
@@ -230,8 +230,8 @@ New fields, default 0 (old behavior): `pickup_via_offset_m`, `transport_via_offs
 
 **Added**
 
-- `src/lerobot/faults/datagen/`*
-- `src/lerobot/faults/recovery/trajectory.py`
+- `src/fault_system/datagen/`*
+- `src/fault_system/recovery/trajectory.py`
 - `examples/faults/run_can_simpleik_datagen.py`
 - `examples/faults/can_simpleik_viewer.py`
 - `examples/faults/recipes/can_simpleik_datagen.json`
@@ -240,8 +240,8 @@ New fields, default 0 (old behavior): `pickup_via_offset_m`, `transport_via_offs
 
 **Modified**
 
-- `src/lerobot/faults/recovery/planner.py`, `midair_drop.py`, `libero_hook.py`
-- `src/lerobot/faults/config.py`
+- `src/fault_system/recovery/planner.py`, `midair_drop.py`, `libero_hook.py`
+- `src/fault_system/config.py`
 - `src/lerobot/envs/libero.py`
 - `tests/faults/test_planner.py`, `tests/faults/test_midair_drop_fault.py`
 

@@ -36,8 +36,8 @@ CUDA mix recording and Phase 2 head expansion are **follow-on** unless the user 
 
 | Piece | Path | Behavior |
 | --- | --- | --- |
-| Latch | `src/lerobot/faults/annotation.py` | `is_failure` = `_ever_held` and not grasped and not in basket. **A grasp miss never latches.** |
-| Injector | `src/lerobot/faults/recovery/midair_drop.py` | Fires after a **good mid-air grasp**, then impulse + `SimpleIKRecoveryPlanner`. |
+| Latch | `src/fault_system/annotation.py` | `is_failure` = `_ever_held` and not grasped and not in basket. **A grasp miss never latches.** |
+| Injector | `src/fault_system/recovery/midair_drop.py` | Fires after a **good mid-air grasp**, then impulse + `SimpleIKRecoveryPlanner`. |
 | Wrapper | `DropRecoveryEnvWrapper` in `wrappers.py` | `type='midair_drop'` only. Suppresses success-reset while `recovery_active`. |
 | Pulse | `injector_injection_active` | `drop_injection_step` / `just_injected` / `remaining`. |
 | Dataset columns | `FAILURE_ANNOTATION_FEATURES` | `is_failure`, `failure_onset`, `failure_type`, `injection_active`, `phase`. **No new columns required for v1.** |
@@ -182,7 +182,7 @@ Follow [`.cursor/skills/add-fault/SKILL.md`](./.cursor/skills/add-fault/SKILL.md
 
 ### Slice B — injector + wrapper
 
-4. New `src/lerobot/faults/recovery/grasp_miss.py`
+4. New `src/fault_system/recovery/grasp_miss.py`
    - Mirror `MidAirDropFault` API: `reset`, `notify_dones`, `on_step`, `after_physics_step` if needed, `_states`
    - State: `soup_xy0`, `miss_count`, `last_miss_xy`, `t_onset`, `recovery_active`, `just_injected` / pulse, `planner`
    - JSONL: `event=grasp_miss`, `status=onset|memory_trap|planner|cleared`
@@ -217,14 +217,14 @@ Follow [`.cursor/skills/add-fault/SKILL.md`](./.cursor/skills/add-fault/SKILL.md
 
 | File | Change |
 | --- | --- |
-| `src/lerobot/faults/annotation.py` | Type 12 + miss latch |
-| `src/lerobot/faults/config.py` | Type + fields |
-| `src/lerobot/faults/recovery/grasp_miss.py` | **New** injector |
-| `src/lerobot/faults/factory.py` | Register |
-| `src/lerobot/faults/wrappers.py` | Dispatch + annotator pulse |
-| `src/lerobot/faults/__init__.py` | Exports |
-| `src/lerobot/faults/recovery/__init__.py` | Exports |
-| `src/lerobot/faults/sim/libero.py` | Gripper-width / optional `offset_object_xy_on_table` reuse if already present |
+| `src/fault_system/annotation.py` | Type 12 + miss latch |
+| `src/fault_system/config.py` | Type + fields |
+| `src/fault_system/recovery/grasp_miss.py` | **New** injector |
+| `src/fault_system/factory.py` | Register |
+| `src/fault_system/wrappers.py` | Dispatch + annotator pulse |
+| `src/fault_system/__init__.py` | Exports |
+| `src/fault_system/recovery/__init__.py` | Exports |
+| `src/fault_system/sim/libero.py` | Gripper-width / optional `offset_object_xy_on_table` reuse if already present |
 | `tests/faults/test_failure_annotation.py` | Miss cases |
 | `tests/faults/test_grasp_miss_fault.py` | **New** |
 | `docs/source/fault_injection.mdx` | Table row |

@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot_faults.recovery.mix_recording import (
+from fault_system.recovery.mix_recording import (
     MixCounters,
     MixWorkItem,
     commit_or_discard,

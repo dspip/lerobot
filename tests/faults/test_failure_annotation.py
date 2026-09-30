@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lerobot_faults.annotation import (
+from fault_system.annotation import (
     FAILURE_TYPE_MIDAIR_DROP,
     PHASE_INJECTION,
     PHASE_NOMINAL,
@@ -32,8 +32,8 @@ from lerobot_faults.annotation import (
     failure_frame_from_info,
     frames_to_info_arrays,
 )
-from lerobot_faults.config import FaultInjectionConfig
-from lerobot_faults.wrappers import FaultEnvWrapper
+from fault_system.config import FaultInjectionConfig
+from fault_system.wrappers import FaultEnvWrapper
 from tests.faults.test_wrappers import _DummyEnv
 
 

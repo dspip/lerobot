@@ -2,13 +2,13 @@
 name: test-fault
 description: >-
   Use when testing, smoke-running, or validating in-tree fault injectors under
-  `src/lerobot/faults/`, including midair_drop recovery, action_hold, or LIBERO eval.
+  `src/fault_system/`, including midair_drop recovery, action_hold, or LIBERO eval.
 ---
 
 # Test fault injection
 
 All paths are in-tree under `/home/aviya/Projects/lerobot`. Do **not** use the
-`lerobot_faults` sidecar package.
+`fault_system` sidecar package.
 
 ## Unit tests (no simulator, no GPU)
 

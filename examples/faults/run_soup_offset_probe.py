@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main(argv: list[str] | None = None) -> int:
-    from lerobot_faults.recovery.xy_band_offset_probe import (
+    from fault_system.recovery.xy_band_offset_probe import (
         compass_offsets,
         summarize_nominal_offset_probe,
     )
@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to write offset probe into the checkpoint dataset.", flush=True)
         return 2
 
-    from lerobot_faults.datagen.smolvla_pipeline import run_pipeline
+    from fault_system.datagen.smolvla_pipeline import run_pipeline
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
