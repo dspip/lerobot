@@ -152,7 +152,7 @@ print(applied.bddl_path.read_text())
 PY
 ```
 
-Then `lerobot-eval ... --env.overlay=<yaml>`. Full commands: `examples/libero_overlays/README.md`.
+Then `lerobot-eval-overlay ... --env.type=libero_overlay --env.overlay=<yaml>`. Full commands: `examples/libero_overlays/README.md`.
 
 ## YAML fields
 
@@ -184,5 +184,5 @@ Then `lerobot-eval ... --env.overlay=<yaml>`. Full commands: `examples/libero_ov
 - BDDL patch: `src/lerobot/envs/libero_overlays/bddl.py`
 - Apply + temp file: `src/lerobot/envs/libero_overlays/apply.py`
 - Object import: `src/lerobot/envs/libero_overlays/objects.py`
-- Env hook: `LiberoEnv(overlay=...)` / `--env.overlay`
+- Env hook: `LiberoOverlayEnvConfig` (`--env.type=libero_overlay --env.overlay`) and `OverlayLiberoEnv`
 - Tests: `tests/envs/test_libero_overlays.py`

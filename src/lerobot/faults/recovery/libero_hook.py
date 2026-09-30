@@ -27,8 +27,10 @@ def install_libero_control_freq_hook(control_freq: int) -> bool:
         return True
 
     try:
-        from lerobot.envs.libero import LiberoEnv, disable_gui_renderer
         from libero.libero.envs import OffScreenRenderEnv
+
+        from lerobot.envs.libero import LiberoEnv
+        from lerobot.envs.libero_overlays.gui import disable_gui_renderer
     except ImportError:
         return False
 

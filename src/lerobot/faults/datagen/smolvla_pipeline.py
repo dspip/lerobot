@@ -327,6 +327,9 @@ def run_pipeline(
     policy.eval()
     policy.reset()  # required by SmolVLA action-chunk queue (matches lerobot_eval.rollout)
 
+    from lerobot.envs.libero_overlays.gym_env import install_headless_libero_renderer
+
+    install_headless_libero_renderer()
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
     vec = next(iter(envs[task].values()))
     log_task = task_description or task

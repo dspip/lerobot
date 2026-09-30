@@ -130,9 +130,9 @@ uv run lerobot-eval \
 ### 2) Replace tomato sauce with a red cube
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-overlay \
   --policy.path=lerobot/smolvla_libero \
-  --env.type=libero \
+  --env.type=libero_overlay \
   --env.task=libero_object \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/replace_tomato_with_red_cube.yaml \
@@ -147,9 +147,9 @@ uv run lerobot-eval \
 ### 3) Add several distractors (keep stock objects)
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-overlay \
   --policy.path=lerobot/smolvla_libero \
-  --env.type=libero \
+  --env.type=libero_overlay \
   --env.task=libero_object \
   --env.task_ids="[5]" \
   --env.overlay=examples/libero_overlays/add_red_cube.yaml \

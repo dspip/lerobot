@@ -4,9 +4,9 @@
 # disabled automatically unless you set keep_init_states: true.
 #
 # Usage (smolvla_libero needs camera1/camera2 + one padded slot):
-#   uv run lerobot-eval \
+#   uv run lerobot-eval-overlay \
 #     --policy.path=lerobot/smolvla_libero \
-#     --env.type=libero \
+#     --env.type=libero_overlay \
 #     --env.task=libero_object \
 #     --env.task_ids="[5]" \
 #     --env.overlay=examples/libero_overlays/add_red_cube.yaml \

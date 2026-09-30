@@ -66,6 +66,9 @@ def libero_init_state_count_for_task(recipe: DropDatagenRecipe, *, task_id: int)
         observation_width=256,
         episode_length=4000,
     )
+    from lerobot.envs.libero_overlays.gym_env import install_headless_libero_renderer
+
+    install_headless_libero_renderer()
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
     vec = _vec_env(envs)
     try:
@@ -98,6 +101,9 @@ def libero_shared_layout_provider(context: LayoutProviderContext) -> dict[str, d
         observation_width=256,
         episode_length=4000,
     )
+    from lerobot.envs.libero_overlays.gym_env import install_headless_libero_renderer
+
+    install_headless_libero_renderer()
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
     vec = _vec_env(envs)
     try:

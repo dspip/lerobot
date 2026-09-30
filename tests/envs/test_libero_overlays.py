@@ -235,6 +235,10 @@ def test_example_objects_package_imports():
 
 def test_libero_env_config_default_has_no_overlay():
     from lerobot.envs.configs import LiberoEnv
+    from lerobot.envs.libero_overlays.env_config import LiberoOverlayEnvConfig
 
     cfg = LiberoEnv(task="libero_object", task_ids=[5])
-    assert cfg.overlay is None
+    assert not hasattr(cfg, "overlay")
+    overlay_cfg = LiberoOverlayEnvConfig(task="libero_object", task_ids=[5])
+    assert overlay_cfg.overlay is None
+    assert overlay_cfg.type == "libero_overlay"

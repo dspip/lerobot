@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+import lerobot.envs.libero_overlays.env_config  # noqa: F401  # registers libero_overlay
 from lerobot.configs import parser
 from lerobot.configs.default import EvalConfig
 from lerobot.configs.eval import EvalPipelineConfig
@@ -81,6 +82,10 @@ def fault_eval_main(cfg: FaultEvalPipelineConfig) -> None:
     """Build envs, wrap them when faults are enabled, and run eval."""
     device = prepare_eval(cfg)
     _prepare_fault_log(cfg)
+    if getattr(cfg.env, "type", None) in {"libero", "libero_overlay"}:
+        from lerobot.envs.libero_overlays.gym_env import install_headless_libero_renderer
+
+        install_headless_libero_renderer()
     logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
     envs = make_env(
         cfg.env,

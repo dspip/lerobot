@@ -568,6 +568,9 @@ class SimpleIKDatagenAdapter:
             observation_width=256,
             episode_length=4000,
         )
+        from lerobot.envs.libero_overlays.gym_env import install_headless_libero_renderer
+
+        install_headless_libero_renderer()
         envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
         suite = next(iter(envs.values()))
         vec = next(iter(suite.values()))
