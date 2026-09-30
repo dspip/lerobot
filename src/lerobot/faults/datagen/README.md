@@ -113,7 +113,7 @@ At 10 Hz, fall duration is typically **2–4 frames** after the release pulse.
 Targets rotate by **logical episode index** (`select_episode_object_round_robin`). Official LIBERO task ids come from `libero_object_tasks.official_task_id` per target, not from a single static scene.
 
 - The training dataset is recorded from the train recipe only. Held-out objects are never recorded for training and never trained on; `libero_object_drop_heldout.json` exists so the unseen-object evaluation set can be recorded with the same pipeline after training.
-- Held-out SKUs may appear as **distractors** in train layouts but must **never** be the pick target in the train recipe (enforce with audit).
+- Held-out SKUs are removed from the scene at record time. They are not pick targets and they are not left in frame as distractors.
 - **Leakage caveat**: public SmolVLA LIBERO checkpoints were likely trained on **all ten** LIBERO-Object tasks; held-out objects are a **recording** split, not a guarantee the base VLA never saw them.
 
 ### In-distribution test split

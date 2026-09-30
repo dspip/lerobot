@@ -24,6 +24,8 @@ from typing import Any
 import numpy as np
 
 from lerobot.faults.datagen.episode import EpisodeRequest, EpisodeResult
+from lerobot.faults.datagen.failure_segments import FailureSegmentsWriter
+from lerobot.faults.datagen.libero_object_tasks import official_task_id
 from lerobot.faults.datagen.manifest import (
     EpisodeMetadataRow,
     RunManifest,
@@ -31,7 +33,6 @@ from lerobot.faults.datagen.manifest import (
     build_episode_metadata_row,
     write_run_manifest_atomic,
 )
-from lerobot.faults.datagen.failure_segments import FailureSegmentsWriter
 from lerobot.faults.datagen.recipe import DropDatagenRecipe, EpisodeSeedManifest, PostDropMode
 from lerobot.faults.datagen.recording_views import (
     ViewRecordingState,
@@ -95,7 +96,7 @@ def assert_fresh_run_output_dir(recipe: DropDatagenRecipe) -> None:
     if any(root.iterdir()):
         raise StaleRunOutputError(
             f"Recording output {root} is not empty. "
-            "Use a fresh output_dir for a new run (resume is not supported)."
+            "Rerun the same command to resume, or use a fresh output_dir."
         )
 
 
@@ -159,7 +160,7 @@ class DatagenEpisodeSession:
     def recording_views(self) -> tuple[_BoundRecordingView, ...]:
         if self._views:
             return self._views
-        return (
+        self._views = (
             _BoundRecordingView(
                 name="dataset",
                 dataset_root=self.dataset_root,
@@ -174,6 +175,7 @@ class DatagenEpisodeSession:
                 ),
             ),
         )
+        return self._views
 
     def reset_view_episode_state(self) -> None:
         self.last_tick_triggered = False
@@ -231,14 +233,54 @@ class DatagenEpisodeSession:
         self._open = False
         self.reset_view_episode_state()
 
-    def commit(self, *, success: bool) -> int:
+    def _apply_drop_windows(self) -> None:
+        from lerobot.faults.datagen.recording_views import (
+            DROP_WINDOW_PAD_FRAMES,
+            drop_window_bounds,
+            tick_in_drop_window,
+        )
+        from lerobot.faults.recovery.fps import recording_stride
+
+        views = self.recording_views
+        if not views:
+            return
+        stride = recording_stride(int(self.control_hz), int(self.policy_fps))
+        bounds = drop_window_bounds(
+            views[0].segments._episode_snapshots,
+            pad_frames=DROP_WINDOW_PAD_FRAMES,
+            dataset_stride=stride,
+        )
+        for view in views:
+            logger = view.logger
+            if not hasattr(logger, "set_open_episode_bool_column"):
+                continue
+            writer = getattr(getattr(logger, "dataset", None), "writer", None)
+            buffer = None if writer is None else getattr(writer, "episode_buffer", None)
+            if buffer is None or "tick_index" not in buffer:
+                continue
+            flags = [
+                tick_in_drop_window(int(np.asarray(tick).reshape(-1)[0]), bounds)
+                for tick in buffer["tick_index"]
+            ]
+            logger.set_open_episode_bool_column("drop_window", flags)
+
+    def commit(
+        self,
+        *,
+        success: bool,
+        object_name: str | None = None,
+        task_id: int | None = None,
+    ) -> int:
         """Persist buffered frames; return the dataset episode index written."""
         if not self._open:
             raise RuntimeError("cannot commit datagen episode: no open frame buffer")
+        self._apply_drop_windows()
         index = int(self.logger.dataset_episode_index_on_commit())
         recipe = self.recipe
-        object_name = recipe.object_names[0] if recipe is not None else ""
-        task_id = int(recipe.task_id) if recipe is not None else 0
+        if object_name is None:
+            object_name = recipe.object_names[0] if recipe is not None else ""
+        if task_id is None:
+            task_id = int(recipe.task_id) if recipe is not None else 0
         for view in self.recording_views:
             if view.name != "dataset":
                 _ = int(view.logger.dataset_episode_index_on_commit())
@@ -254,6 +296,7 @@ class DatagenEpisodeSession:
                 episode_seed=int(self.manifest.episode_seed),
                 layout_seed=int(self.manifest.layout_seed),
             )
+            view.segments.finalize()
         self._open = False
         self.reset_view_episode_state()
         return index
@@ -270,9 +313,11 @@ class RunDatasetWriter:
         skip_fresh_output_check: bool = False,
         logical_range: tuple[int, int] | None = None,
         recipe_content_hash: str | None = None,
+        resume: bool = False,
     ) -> None:
         """Create per-variant loggers and enforce a fresh recording output directory."""
-        if not skip_fresh_output_check:
+        self._resume = bool(resume)
+        if not skip_fresh_output_check and not self._resume:
             assert_fresh_run_output_dir(recipe)
         self._recipe = recipe
         self._logical_range = logical_range
@@ -284,11 +329,66 @@ class RunDatasetWriter:
         self._episode_rows: list[EpisodeMetadataRow] = []
         self._manifest_written = False
         self._run_started = False
+        self._resume_loaded = False
+        if self._resume:
+            self._load_resume_state()
 
     @property
     def episode_rows(self) -> tuple[EpisodeMetadataRow, ...]:
         """Metadata rows accumulated for episodes processed so far."""
         return tuple(self._episode_rows)
+
+    def completed_variant_keys(self) -> set[tuple[int, str, str, bool]]:
+        """Logical episode variants already decided (kept or rejected)."""
+        keys: set[tuple[int, str, str, bool]] = set()
+        for row in self._episode_rows:
+            drop = bool(row.drop_decision.get("drop")) if isinstance(row.drop_decision, dict) else False
+            keys.add((int(row.logical_episode_index), str(row.controller), str(row.post_drop_mode), drop))
+        return keys
+
+    def _load_resume_state(self) -> None:
+        from lerobot.faults.datagen.manifest import read_run_manifest
+
+        path = self._manifest_path()
+        if not path.is_file():
+            return
+        manifest = read_run_manifest(path)
+        if manifest.recipe_content_hash != self._recipe_content_hash:
+            raise StaleRunOutputError(
+                f"Cannot resume {path.parent}: recipe hash {manifest.recipe_content_hash} "
+                f"does not match {self._recipe_content_hash}."
+            )
+        if manifest.base_seed != int(self._recipe.recording.base_seed):
+            raise StaleRunOutputError(
+                f"Cannot resume {path.parent}: base_seed {manifest.base_seed} "
+                f"does not match {self._recipe.recording.base_seed}."
+            )
+        self._episode_rows = list(manifest.episodes)
+        self._resume_loaded = True
+        self._assert_resume_dataset_counts()
+
+    def _assert_resume_dataset_counts(self) -> None:
+        import json
+
+        kept = sum(1 for row in self._episode_rows if row.keep)
+        roots = [Path(self._recipe.recording.output_dir) / "dataset"]
+        if self._recipe.recording.master_fps is not None:
+            roots.append(master_dataset_directory(roots[0]))
+        for root in roots:
+            info_path = root / "meta" / "info.json"
+            if not info_path.is_file():
+                if kept == 0:
+                    continue
+                raise StaleRunOutputError(
+                    f"Cannot resume: manifest has {kept} kept episodes but {info_path} is missing."
+                )
+            total = int(json.loads(info_path.read_text(encoding="utf-8"))["total_episodes"])
+            if total != kept:
+                raise StaleRunOutputError(
+                    f"Cannot resume {root}: dataset has {total} episodes but the manifest kept {kept}. "
+                    "The last episode may have been saved without a manifest update. "
+                    "Start a new output directory instead of continuing this one."
+                )
 
     def mark_run_started(self) -> None:
         """Record that matrix orchestration has begun (manifest required on abort)."""
@@ -333,7 +433,8 @@ class RunDatasetWriter:
         dataset_stride = recording_stride(control_hz, int(self._recipe.recording.dataset_fps))
         if key not in self._loggers:
             info_path = root / "meta" / "info.json"
-            if info_path.is_file():
+            append = bool(self._resume and info_path.is_file())
+            if info_path.is_file() and not append:
                 raise StaleRunOutputError(
                     f"Variant dataset already exists at {root}. Refusing to append to a prior run."
                 )
@@ -342,7 +443,7 @@ class RunDatasetWriter:
                 root,
                 repo_id,
                 policy_fps=self._recipe.recording.dataset_fps,
-                append=False,
+                append=append,
             )
         views: list[_BoundRecordingView] = [
             _BoundRecordingView(
@@ -361,7 +462,8 @@ class RunDatasetWriter:
             master_repo = master_dataset_repo_id(repo_id)
             if key not in self._master_loggers:
                 master_info = master_root / "meta" / "info.json"
-                if master_info.is_file():
+                append_master = bool(self._resume and master_info.is_file())
+                if master_info.is_file() and not append_master:
                     raise StaleRunOutputError(
                         f"Master dataset already exists at {master_root}. Refusing to append."
                     )
@@ -370,7 +472,7 @@ class RunDatasetWriter:
                     master_root,
                     master_repo,
                     policy_fps=int(master_fps),
-                    append=False,
+                    append=append_master,
                 )
             views.append(
                 _BoundRecordingView(
@@ -406,7 +508,10 @@ class RunDatasetWriter:
     ) -> FailureSegmentsWriter:
         slot = (key, view_name)
         if slot not in self._segment_writers:
-            self._segment_writers[slot] = FailureSegmentsWriter(root, stride=stride, control_hz=control_hz)
+            writer = FailureSegmentsWriter(root, stride=stride, control_hz=control_hz)
+            if self._resume:
+                writer.load_existing()
+            self._segment_writers[slot] = writer
         return self._segment_writers[slot]
 
     def record_episode_outcome(
@@ -425,7 +530,11 @@ class RunDatasetWriter:
                     "cannot keep datagen episode with no logged frames "
                     f"({manifest.controller.value} × {manifest.post_drop_mode.value})"
                 )
-            dataset_episode_index = session.commit(success=result.success)
+            dataset_episode_index = session.commit(
+                success=result.success,
+                object_name=request.object_name,
+                task_id=official_task_id(request.object_name),
+            )
         elif session.is_open:
             session.discard()
         row = build_episode_metadata_row(

@@ -10,11 +10,17 @@ Example: `recording.episodes: 100` with five rows at `weight: 1` → 20 episodes
 
 ## Recording command
 
+Record these two recipes. Do not record `libero_object_drop_train.json` or `libero_object_drop_heldout.json`.
+
+`libero_object_success.json` is 400 no-drop episodes (50 per recorded object). `libero_object_drop.json` is 400 episodes split evenly across four drop-recovery modes and one no-drop row (10 of each per object). Both record the same eight objects and remove `tomato_sauce_1` and `orange_juice_1` from the scene. Stored datasets stay at 10 fps. Rerunning the same command continues after the last committed episode.
+
 ```bash
 export MUJOCO_GL=egl
 uv run python examples/faults/run_drop_datagen.py \
-  --recipe examples/faults/recipes/libero_object_drop_train.json \
-  --logical-start 0 --logical-end 32
+  --recipe examples/faults/recipes/libero_object_success.json
+
+uv run python examples/faults/run_drop_datagen.py \
+  --recipe examples/faults/recipes/libero_object_drop.json
 ```
 
 Optional overrides: `--base-seed`, `--output`, `--episodes`, `--device`, `--logical-start` / `--logical-end` (half-open logical range for sharding).

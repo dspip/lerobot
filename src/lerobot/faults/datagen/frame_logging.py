@@ -68,7 +68,7 @@ def build_datagen_post_step_log_context(
     env_idx: int = 0,
 ) -> DatagenPostStepLogContext:
     """Summarize fault phase and loss mask after one env step."""
-    state = env.fault._states[env_idx]
+    state = env.fault.post_step_state(env_idx)
     drop_injection_step = bool(is_drop_episode and state.drop_injection_step)
     post_drop_dwell_step = bool(
         is_drop_episode and state.triggered and not state.recovery_active and not state.drop_injection_step
@@ -193,7 +193,7 @@ def log_post_step_to_session(
         env_idx=env_idx,
     )
     mask = log_ctx.loss_mask
-    state = env.fault._states[env_idx]
+    state = env.fault.post_step_state(env_idx)
     object_z = _object_z_for_logging(rs_env, object_name)
     raw_labels = build_datagen_frame_labels(
         state,

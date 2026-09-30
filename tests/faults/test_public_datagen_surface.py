@@ -30,9 +30,11 @@ def test_checked_in_drop_datagen_recipes() -> None:
     assert json_files == [
         "alphabet_soup_ik_random.json",
         "can_drop_datagen.json",
+        "libero_object_drop.json",
         "libero_object_drop_heldout.json",
         "libero_object_drop_train.json",
         "libero_object_grasp_pilot.json",
+        "libero_object_success.json",
     ]
     assert CAN_DROP_RECIPE.is_file()
 

@@ -44,6 +44,7 @@ _ROOT_KEYS = frozenset(
         "control_hz",
         "q",
         "object_names",
+        "held_out_object_names",
         "basket_name",
         "placement",
         "simple_ik",
@@ -280,6 +281,7 @@ class DropDatagenRecipe:
     post_drop: PostDropRecipe
     recording: RecordingRecipe
     experiment_matrix: tuple[MatrixVariant, ...]
+    held_out_object_names: tuple[str, ...] = ()
 
 
 def validate_poc_recipe_constraints(recipe: DropDatagenRecipe) -> None:
@@ -309,6 +311,15 @@ def validate_poc_recipe_constraints(recipe: DropDatagenRecipe) -> None:
             f"task_id must be {expected_task_id} (official task for object_names[0="
             f"{recipe.object_names[0]!r}) when listing multiple scenes (got {recipe.task_id})"
         )
+    recorded = set(recipe.object_names)
+    for name in recipe.held_out_object_names:
+        if name not in allowed:
+            raise RecipeError(
+                f"held_out_object_names contains unsupported object {name!r}; "
+                f"supported: {list(supported_object_names())}"
+            )
+        if name in recorded:
+            raise RecipeError(f"held_out_object_names overlaps recorded pick target {name!r}")
 
 
 def _required(mapping: dict[str, Any], key: str, *, section: str = "recipe") -> Any:
@@ -757,6 +768,13 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
     object_names = tuple(
         _require_json_str(value, field=f"object_names[{idx}]") for idx, value in enumerate(object_names_raw)
     )
+    held_raw = raw.get("held_out_object_names", [])
+    if not isinstance(held_raw, list):
+        raise RecipeError("held_out_object_names must be an array")
+    held_out_object_names = tuple(
+        _require_json_str(value, field=f"held_out_object_names[{idx}]")
+        for idx, value in enumerate(held_raw)
+    )
 
     basket_name = _require_json_str(_required(raw, "basket_name"), field="basket_name")
 
@@ -964,6 +982,7 @@ def load_drop_datagen_recipe(path: Path | str) -> DropDatagenRecipe:
         post_drop=post_drop,
         recording=recording,
         experiment_matrix=experiment_matrix,
+        held_out_object_names=held_out_object_names,
     )
     validate_poc_recipe_constraints(recipe)
     return recipe

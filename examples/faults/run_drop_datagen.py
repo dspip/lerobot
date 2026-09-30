@@ -111,6 +111,40 @@ def _serialize_result(result: object) -> dict:
     raise TypeError(f"Cannot serialize {type(result)!r}")
 
 
+def _resume_decision(output_dir: Path, recipe_hash: str) -> bool | None:
+    """Return True to resume, False to start fresh, None when the run is already complete.
+
+    A killed run leaves ``run_manifest.json`` as ``in_progress`` or ``aborted``.
+    Rerunning the same command continues after the last committed episode.
+    The episode that was in progress when the process stopped is recorded again.
+    """
+    if not output_dir.exists() or not any(output_dir.iterdir()):
+        return False
+    manifest_path = output_dir / "run_manifest.json"
+    if not manifest_path.is_file():
+        dataset_info = output_dir / "dataset" / "meta" / "info.json"
+        if dataset_info.is_file():
+            total = int(json.loads(dataset_info.read_text(encoding="utf-8")).get("total_episodes", 0))
+            if total == 0:
+                return True
+        raise RecipeError(
+            f"Recording output {output_dir} is not empty and has no resumable manifest. "
+            "Use a fresh output_dir."
+        )
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    status = str(raw.get("run_status", ""))
+    if status == "complete":
+        return None
+    if status not in {"in_progress", "aborted"}:
+        raise RecipeError(f"Cannot resume {output_dir}: run_status is {status!r}.")
+    stored_hash = raw.get("recipe_content_hash")
+    if stored_hash != recipe_hash:
+        raise RecipeError(
+            f"Cannot resume {output_dir}: recipe hash {stored_hash} does not match this recipe."
+        )
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -139,10 +173,18 @@ def main(argv: list[str] | None = None) -> int:
         logical_indices = range(logical_range[0], logical_range[1])
 
     recipe_hash = recipe_content_hash_from_json_path(args.recipe)
+    resume = _resume_decision(Path(recipe.recording.output_dir), recipe_hash)
+    if resume is None:
+        print(
+            f"Recording already complete at {recipe.recording.output_dir}. Nothing to do.",
+            flush=True,
+        )
+        return 0
     writer = RunDatasetWriter(
         recipe,
         logical_range=logical_range,
         recipe_content_hash=recipe_hash,
+        resume=resume,
     )
     results = run_drop_datagen_matrix(
         recipe,

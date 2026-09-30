@@ -126,6 +126,7 @@ class SmolVLADatagenAdapter:
             "post_grasp_delay_steps": recipe.smolvla.post_grasp_delay_steps,
             "post_drop_dwell_steps": dwell_steps,
             "post_drop_mode": manifest.post_drop_mode.value,
+            "held_out_object_names": tuple(getattr(recipe, "held_out_object_names", ())),
             "min_drop_distance_from_basket_m": recipe.smolvla.min_drop_distance_from_basket_m,
             "object_name": request.object_name,
             "basket_name": recipe.basket_name,

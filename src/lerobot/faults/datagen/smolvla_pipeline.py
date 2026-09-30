@@ -215,6 +215,7 @@ def run_pipeline(
     task_description: str | None = None,
     record_dataset: bool = False,
     dataset_fps: int | None = None,
+    held_out_object_names: tuple[str, ...] = (),
 ) -> dict:
     """Run SmolVLA nominal and drop-recovery in LIBERO with optional dataset logging."""
     os.environ.setdefault("MUJOCO_GL", "egl")
@@ -427,8 +428,9 @@ def run_pipeline(
         soup_offset_applied = False
         soup_offset_requested: list[float] | None = None
         if shared_layout is not None:
-            from lerobot.faults.datagen.scene import apply_serializable_layout
+            from lerobot.faults.datagen.scene import apply_serializable_layout, hide_scene_objects
 
+            hide_scene_objects(rs, held_out_object_names)
             apply_serializable_layout(rs, shared_layout)
             soup_offset_applied = True
             soup_offset_requested = None
@@ -447,6 +449,9 @@ def run_pipeline(
             )
             if layout is None:
                 raise RuntimeError("shared layout sampling failed")
+            from lerobot.faults.datagen.scene import hide_scene_objects
+
+            hide_scene_objects(rs, held_out_object_names)
             apply_object_layout(rs, layout)
             shared_layout = layout_to_serializable(layout)
             soup_offset_applied = True

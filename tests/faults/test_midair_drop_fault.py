@@ -616,6 +616,22 @@ def test_notify_dones_clears_recovery_state():
     assert not inj._states[0].recovery_active
 
 
+def test_post_step_state_survives_notify_dones():
+    inj = MidAirDropFault(_cfg(), num_envs=1)
+    inj._states[0].triggered = True
+    inj._states[0].recovery_active = False
+    inj._states[0].drop_injection_step = False
+    inj._states[0].falling = False
+    mask_before = inj.loss_mask_for_env(0)
+    inj.notify_dones(np.array([True]))
+    assert inj._states[0].finished
+    assert not inj._states[0].triggered
+    assert inj.post_step_state(0).triggered is True
+    assert inj.loss_mask_for_env(0) == mask_before
+    inj.reset(env_ids=[0])
+    assert inj.post_step_state(0).triggered is False
+
+
 @patch("lerobot.faults.recovery.midair_drop.get_object_linear_velocity")
 @patch("lerobot.faults.recovery.midair_drop.get_place_destination")
 @patch("lerobot.faults.recovery.midair_drop.midair_drop")

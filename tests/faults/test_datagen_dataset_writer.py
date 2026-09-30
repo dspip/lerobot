@@ -379,6 +379,57 @@ def test_post_step_logging_contract_documented() -> None:
     assert "POST env.step()" in POST_STEP_LOGGING_CONTRACT
 
 
+def test_log_post_step_attempt_index_after_terminal_done() -> None:
+    """Terminal notify_dones must not wipe post-drop dwell labels on the last frame."""
+    from lerobot.faults.datagen.recording_views import build_datagen_frame_labels
+
+    logger = _RecordingLogger(Path("/tmp/unused"))
+    session = DatagenEpisodeSession(
+        manifest=paired_episode_seed_manifests(_recipe_at(Path("/tmp")), logical_episode_index=0)[0],
+        dataset_root=Path("/tmp"),
+        repo_id="test/repo",
+        logger=logger,
+        policy_fps=10,
+    )
+    cfg = FaultInjectionConfig(enabled=True, type="midair_drop", probability=0.0, t_min=0, t_max=1)
+    fault = make_midair_drop_fault(cfg, num_envs=1)
+    assert fault is not None
+
+    class _Env:
+        last_executed_action = np.ones(7, dtype=np.float32)
+
+        def __init__(self, fault_inject: Any) -> None:
+            self.fault = fault_inject
+
+        def loss_mask(self, env_idx: int = 0) -> float:
+            return self.fault.loss_mask_for_env(env_idx)
+
+        def failure_annotation(self, env_idx: int = 0) -> dict[str, Any]:
+            return default_failure_frame()
+
+    fault._states[0].triggered = True
+    fault._states[0].falling = False
+    fault._states[0].drop_injection_step = False
+    session.last_tick_triggered = True
+    fault.notify_dones(np.array([True]))
+
+    env = _Env(fault)
+    log_post_step_to_session(
+        session,
+        env=env,
+        post_step_observation={"observation.state": np.zeros(8)},
+        executed_action=np.zeros(7),
+        task="pick up can and place in basket",
+        phase="smolvla_post_drop",
+        is_drop_episode=True,
+        sim_step=42,
+        observation_to_frame=lambda obs: _minimal_processed_frame(),
+    )
+    snap = session.recording_views[0].segments._episode_snapshots[-1]
+    assert snap.attempt_index == 1
+    assert snap.tick == 42
+
+
 def test_log_post_step_routes_through_session_log_step() -> None:
     logger = _RecordingLogger(Path("/tmp/unused"))
     session = DatagenEpisodeSession(

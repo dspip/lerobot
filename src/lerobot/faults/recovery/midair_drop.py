@@ -159,6 +159,7 @@ class MidAirDropFault:
         seed = 0 if config.seed is None else int(config.seed)
         self._rng = np.random.default_rng(seed)
         self._states = [_EnvDropState() for _ in range(num_envs)]
+        self._terminal_states: list[_EnvDropState | None] = [None for _ in range(num_envs)]
 
     @property
     def enabled(self) -> bool:
@@ -208,6 +209,7 @@ class MidAirDropFault:
                 elif i < len(episode_ids):
                     ep_id = episode_ids[i]
             self._states[i] = _EnvDropState(episode_id=ep_id)
+            self._terminal_states[i] = None
 
     def notify_dones(self, dones: np.ndarray) -> None:
         """Clear recovery state for finished environments."""
@@ -216,8 +218,19 @@ class MidAirDropFault:
             raise ValueError(f"dones must have shape ({self.num_envs},), got {dones.shape}.")
         for i, done in enumerate(dones):
             if done:
+                self._terminal_states[i] = self._states[i]
                 ep_id = self._states[i].episode_id
                 self._states[i] = _EnvDropState(episode_id=ep_id, finished=True)
+
+    def post_step_state(self, env_idx: int) -> _EnvDropState:
+        """Return fault state as seen by post-step logging on the step that just completed."""
+        if env_idx < 0 or env_idx >= self.num_envs:
+            raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
+        state = self._states[env_idx]
+        terminal = self._terminal_states[env_idx]
+        if state.finished and terminal is not None:
+            return terminal
+        return state
 
     def apply(
         self,
@@ -960,7 +973,12 @@ class MidAirDropFault:
         """Return ``loss_mask`` for the step that just completed."""
         if env_idx < 0 or env_idx >= self.num_envs:
             raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
-        state = self._states[env_idx]
+        state = self.post_step_state(env_idx)
+        # SmolVLA-after-drop episodes stay masked for the whole post-release
+        # tail, including dwell and any later motion. IK modes unmask when
+        # recovery_active starts.
+        if state.triggered and self.config.post_drop_mode == "immediate_smolvla":
+            return 0.0
         post_drop_dwell = state.triggered and not state.recovery_active and not state.drop_injection_step
         return loss_mask_from_fault(
             triggered=state.triggered,

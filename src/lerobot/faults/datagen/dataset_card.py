@@ -68,6 +68,7 @@ _COLUMN_LINES: tuple[str, ...] = (
     "tick_index — control tick index (label / privileged).",
     "drop_release — pulse: object release this interval (label / privileged).",
     "drop_event — mid-air drop active (label / privileged).",
+    "drop_window — short drop sub-episode: 2 frames at 10 fps before release, the fall, and 2 frames after (label / privileged).",
     "attempt_index — grasp attempt index (label / privileged).",
     "is_failure — failure flag (label / privileged).",
     "ever_held_midair — object held mid-air (label / privileged).",

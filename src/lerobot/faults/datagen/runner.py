@@ -113,12 +113,26 @@ def run_drop_datagen_matrix(
     active_session: DatagenEpisodeSession | None = None
     run_started = False
     try:
+        completed = writer.completed_variant_keys()
         for logical_index in logical_episode_indices:
-            writer.mark_run_started()
-            run_started = True
             manifests = paired_episode_seed_manifests(recipe, logical_episode_index=int(logical_index))
             if not manifests:
                 raise DropDatagenRunnerError(f"No manifests for logical episode index {logical_index}")
+            manifests = tuple(
+                manifest
+                for manifest in manifests
+                if (
+                    int(logical_index),
+                    manifest.controller.value,
+                    manifest.post_drop_mode.value,
+                    bool(manifest.drop),
+                )
+                not in completed
+            )
+            if not manifests:
+                continue
+            writer.mark_run_started()
+            run_started = True
             object_name = select_episode_object_round_robin(int(logical_index), recipe.object_names)
             episode_task_id = official_task_id(object_name)
             if episode_task_id not in init_state_count_by_task:

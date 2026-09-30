@@ -28,12 +28,18 @@ __all__ = [
     "master_dataset_directory",
     "master_dataset_repo_id",
     "mujoco_sim_time_s",
+    "DROP_WINDOW_PAD_FRAMES",
+    "drop_window_bounds",
     "offer_tick_to_views",
     "should_log_view_tick",
+    "tick_in_drop_window",
     "tick_index_at_or_after_frame",
 ]
 
 PULSE_ANNOTATION_KEYS: frozenset[str] = frozenset({"failure_onset", "drop_release"})
+
+# Pad around the fall, measured in frames of the 10 fps dataset view.
+DROP_WINDOW_PAD_FRAMES = 2
 
 
 def master_dataset_directory(dataset_root: Any) -> Any:
@@ -97,6 +103,7 @@ def build_datagen_frame_labels(
         "tick_index": np.array([int(tick)], dtype=np.int64),
         "drop_release": np.array([drop_release], dtype=bool),
         "drop_event": np.array([drop_event], dtype=bool),
+        "drop_window": np.array([False], dtype=bool),
         "attempt_index": np.array([int(attempt_index)], dtype=np.int64),
         "_object_z": object_z,
     }
@@ -108,6 +115,47 @@ def tick_index_at_or_after_frame(tick: int, *, stride: int) -> int:
     if tick % step == 0:
         return tick // step
     return (tick // step) + 1
+
+
+def drop_window_bounds(
+    snapshots: list[Any],
+    *,
+    pad_frames: int = DROP_WINDOW_PAD_FRAMES,
+    dataset_stride: int,
+) -> tuple[int, int] | None:
+    """Control-tick inclusive bounds for the short drop label.
+
+    The pad is ``pad_frames`` of the 10 fps view (``dataset_stride`` control ticks
+    per stored frame). The window is the fall plus that pad before the release
+    and after the last falling tick. ``None`` when the episode never released.
+    """
+    release_tick: int | None = None
+    landing_tick: int | None = None
+    last_event_tick: int | None = None
+    prev_drop_event = False
+    for snap in snapshots:
+        tick = int(snap.tick)
+        if bool(snap.drop_release) and release_tick is None:
+            release_tick = tick
+        if bool(snap.drop_event):
+            last_event_tick = tick
+        if prev_drop_event and not bool(snap.drop_event) and landing_tick is None:
+            landing_tick = tick
+        prev_drop_event = bool(snap.drop_event)
+    if release_tick is None:
+        return None
+    pad_ticks = int(pad_frames) * max(int(dataset_stride), 1)
+    fall_end = landing_tick if landing_tick is not None else last_event_tick
+    if fall_end is None:
+        fall_end = release_tick
+    return release_tick - pad_ticks, fall_end + pad_ticks
+
+
+def tick_in_drop_window(tick: int, bounds: tuple[int, int] | None) -> bool:
+    """Return whether a logged control tick falls inside ``bounds``."""
+    if bounds is None:
+        return False
+    return int(bounds[0]) <= int(tick) <= int(bounds[1])
 
 
 @dataclass

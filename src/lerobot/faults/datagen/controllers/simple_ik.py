@@ -42,7 +42,7 @@ from lerobot.faults.datagen.recipe import (
     legacy_drop_recipe,
 )
 from lerobot.faults.datagen.runtime import stabilize_carry_action
-from lerobot.faults.datagen.scene import apply_serializable_layout
+from lerobot.faults.datagen.scene import apply_serializable_layout, hide_scene_objects
 from lerobot.faults.datagen.task_label import read_libero_task_description
 from lerobot.faults.recovery.midair_drop import MidAirDropFault
 from lerobot.faults.recovery.planner import CARRY_PHASES, SimpleIKRecoveryPlanner
@@ -349,7 +349,7 @@ def run_simple_ik_episode_loop(
         step_out = env.step(action)
         observation = step_out[0] if isinstance(step_out, tuple) and step_out else None
         last_observation = observation
-        state = fault._states[0]
+        state = fault.post_step_state(0)
         if on_post_step is not None:
             on_post_step(step, planner.phase_name)
         is_drop_episode = paired_plan is None or paired_plan.drop_decision.drop
@@ -375,7 +375,6 @@ def run_simple_ik_episode_loop(
                 object_name=object_name,
             )
 
-        state = fault._states[0]
         if dropped:
             dwell_before_recovery = int(state.dwell_steps_completed)
 
@@ -403,7 +402,7 @@ def run_simple_ik_episode_loop(
             ):
                 in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
                 return SimpleIKEpisodeFacts(
-                    bool(in_basket),
+                    bool(in_basket or success_now),
                     "smolvla_post_drop_finished",
                     _drop_trigger_payload(decision, path_trigger),
                     trigger_pose,
@@ -456,7 +455,7 @@ def run_simple_ik_episode_loop(
         ):
             in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
             return SimpleIKEpisodeFacts(
-                bool(in_basket),
+                bool(in_basket or success_now),
                 "smolvla_post_drop_finished",
                 _drop_trigger_payload(decision, path_trigger),
                 trigger_pose,
@@ -554,7 +553,6 @@ class SimpleIKDatagenAdapter:
         os.environ.setdefault("MUJOCO_GL", "egl")
         from lerobot.envs.configs import LiberoEnv
         from lerobot.faults.config import FaultInjectionConfig
-
         from lerobot.faults.datagen.libero_object_tasks import official_task_id
 
         recipe = request.recipe
@@ -604,6 +602,7 @@ class SimpleIKDatagenAdapter:
             libero_env.init_state_id = int(plan.init_state_id)
             env.reset(seed=plan.episode_seed)
             rs_env = get_robosuite_env(env, 0)
+            hide_scene_objects(rs_env, tuple(getattr(recipe, "held_out_object_names", ())))
             apply_serializable_layout(rs_env, request.shared_layout)
             drop_rng = np.random.default_rng(plan.drop_seed)
             fault = env.fault

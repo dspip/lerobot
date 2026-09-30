@@ -45,12 +45,18 @@ def _sample_layout_poses(
     placement: Any,
     target_object_name: str,
     rng: np.random.Generator,
+    exclude_names: tuple[str, ...] = (),
 ) -> dict[str, ObjectLayoutPose] | None:
-    names = movable_object_names(
-        rs_env,
-        basket_name=basket_name,
-        required_object_name=target_object_name,
-    )
+    excluded = set(exclude_names)
+    names = [
+        name
+        for name in movable_object_names(
+            rs_env,
+            basket_name=basket_name,
+            required_object_name=target_object_name,
+        )
+        if name not in excluded
+    ]
     reset = {name: get_object_pose(rs_env, name) for name in names}
     basket_xy = get_place_destination(
         rs_env,
@@ -97,7 +103,87 @@ def sample_object_layout(
         placement=recipe.placement,
         target_object_name=object_name,
         rng=rng,
+        exclude_names=tuple(getattr(recipe, "held_out_object_names", ())),
     )
+
+
+_HIDE_POSITION = np.array([3.0, 3.0, -1.0], dtype=np.float64)
+
+
+def _subtree_body_ids(model: Any, root_id: int) -> list[int]:
+    """Return ``root_id`` and every body that hangs under it."""
+    ids = [int(root_id)]
+    parent = np.asarray(model.body_parentid)
+    for body_id in range(int(model.nbody)):
+        cursor = int(body_id)
+        seen: set[int] = set()
+        while cursor > 0 and cursor not in seen:
+            if cursor == int(root_id):
+                ids.append(int(body_id))
+                break
+            seen.add(cursor)
+            cursor = int(parent[cursor])
+    return ids
+
+
+def _resolve_body_id(rs_env: Any, object_name: str) -> int | None:
+    sim = rs_env.sim
+    root = None
+    try:
+        obj = rs_env.get_object(object_name)
+        root = getattr(obj, "root_body", None)
+    except Exception:
+        return None
+    candidates = [object_name]
+    if isinstance(root, str) and root:
+        candidates.insert(0, root)
+    if not object_name.endswith("_main"):
+        candidates.append(f"{object_name}_main")
+    for name in candidates:
+        try:
+            return int(sim.model.body_name2id(name))
+        except Exception:
+            continue
+    return None
+
+
+def hide_scene_objects(rs_env: Any, object_names: tuple[str, ...] | list[str]) -> None:
+    """Make objects invisible and non-colliding, then park them off the table.
+
+    Official BDDL files are not edited. Objects that are not in this scene are
+    skipped. Recording calls this after layout so held-out objects never appear
+    in saved frames.
+    """
+    if not object_names:
+        return
+    sim = rs_env.sim
+    model = sim.model
+    for object_name in object_names:
+        body_id = _resolve_body_id(rs_env, object_name)
+        if body_id is None:
+            continue
+        subtree = set(_subtree_body_ids(model, body_id))
+        updated = 0
+        for geom_id, geom_body in enumerate(np.asarray(model.geom_bodyid)):
+            if int(geom_body) not in subtree:
+                continue
+            model.geom_rgba[geom_id, 3] = 0.0
+            model.geom_contype[geom_id] = 0
+            model.geom_conaffinity[geom_id] = 0
+            updated += 1
+        moved = False
+        try:
+            set_object_pose(
+                rs_env,
+                object_name,
+                pos=_HIDE_POSITION,
+                settle_steps=0,
+            )
+            moved = True
+        except Exception:
+            moved = False
+        if updated == 0 and not moved:
+            raise RuntimeError(f"could not hide held-out object {object_name!r}")
 
 
 def apply_object_layout(rs_env: Any, layout: dict[str, ObjectLayoutPose]) -> None:

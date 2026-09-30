@@ -83,6 +83,7 @@ DATAGEN_FRAME_LABEL_FEATURES: dict[str, dict[str, Any]] = {
     "tick_index": {"dtype": "int64", "shape": (1,), "names": None},
     "drop_release": {"dtype": "bool", "shape": (1,), "names": None},
     "drop_event": {"dtype": "bool", "shape": (1,), "names": None},
+    "drop_window": {"dtype": "bool", "shape": (1,), "names": None},
     "attempt_index": {"dtype": "int64", "shape": (1,), "names": None},
 }
 
@@ -106,6 +107,7 @@ def default_failure_frame() -> dict[str, np.ndarray]:
         "tick_index": np.array([0], dtype=np.int64),
         "drop_release": np.array([False]),
         "drop_event": np.array([False]),
+        "drop_window": np.array([False]),
         "attempt_index": np.array([0], dtype=np.int64),
     }
 

@@ -135,12 +135,15 @@ class FaultRecoveryDatasetLogger:
 
     ``loss_mask`` semantics (per frame, float32 scalar in shape ``(1,)``):
 
-    - ``1.0`` — nominal VLA policy steps and all recovery planner steps
-    - ``0.0`` — only the mid-air drop injection step (a single frame when drop
-      and recovery start on the same env step; recovery frames remain ``1.0``)
+    - ``1.0`` — nominal carry, including the frames just before a drop, and
+      IK recovery after it starts
+    - ``0.0`` — the fall and the post-drop dwell, until IK recovery starts.
+      ``immediate_smolvla`` stays ``0.0`` from the release through the end
+      of the episode
 
-    Downstream fine-tuning can mask loss on the injection frame while still
-    learning from nominal and recovery segments.
+    ``drop_window`` is a separate short label (pad around the fall). It is not
+    this mask. Downstream fine-tuning should multiply the loss by ``loss_mask``
+    so the dwell is not imitated.
     """
 
     def __init__(
@@ -256,6 +259,19 @@ class FaultRecoveryDatasetLogger:
         self.dataset.add_frame(frame)
         key = 1.0 if mask_val >= 0.5 else 0.0
         self._loss_mask_counts[key] = self._loss_mask_counts.get(key, 0) + 1
+
+    def set_open_episode_bool_column(self, key: str, values: list[bool]) -> None:
+        """Overwrite one boolean column on the episode buffer before it is saved."""
+        writer = getattr(self.dataset, "writer", None)
+        buffer = None if writer is None else getattr(writer, "episode_buffer", None)
+        if buffer is None:
+            raise RuntimeError(f"cannot set {key}: episode buffer is not open")
+        size = int(buffer.get("size", 0))
+        if size != len(values):
+            raise RuntimeError(f"cannot set {key}: expected {size} frames, got {len(values)}")
+        if key not in buffer:
+            raise KeyError(f"episode buffer has no column {key!r}")
+        buffer[key] = [np.array([bool(value)], dtype=bool) for value in values]
 
     def dataset_episode_index_on_commit(self) -> int:
         """Index the next :meth:`end_episode` will assign in the LeRobot dataset."""

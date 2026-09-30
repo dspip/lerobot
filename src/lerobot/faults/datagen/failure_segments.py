@@ -269,6 +269,18 @@ class FailureSegmentsWriter:
     def discard_episode(self) -> None:
         self.reset_episode_snapshots()
 
+    def load_existing(self) -> None:
+        """Replace in-memory rows with the parquet already on disk, if any."""
+        path = Path(self.dataset_root) / FAILURE_SEGMENTS_REL_PATH
+        if not path.is_file():
+            return
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise ImportError("failure_segments load requires pyarrow") from exc
+        table = pq.read_table(path)
+        self.rows = [FailureSegmentRow(**row) for row in table.to_pylist()]
+
     def finalize(self) -> Path | None:
         if not self.rows:
             return None
