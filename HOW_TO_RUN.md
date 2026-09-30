@@ -5,7 +5,7 @@ Linux + NVIDIA GPU. Run every command from the repository root.
 ## Setup (once)
 
 ```bash
-uv sync --locked --extra libero --extra smolvla
+uv sync --locked
 export MUJOCO_GL=egl
 ```
 

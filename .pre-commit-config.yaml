@@ -65,13 +65,6 @@ repos:
         name: Format Markdown with Prettier
         types_or: [markdown, mdx]
         args: [--prose-wrap=preserve]
-        # Jinja2 model-card templates use a .md extension but contain {% ... %} /
-        # {{ ... }} tags that prettier's Markdown formatter mangles (e.g. table loops).
-        #
-        # docs/source/api/ holds the generated API reference. Its `[[autodoc]]` blocks restrict output
-        # to an indented `- member` list, which prettier reads as a lazy paragraph continuation and
-        # joins onto one line — silently turning a member list into part of the directive.
-        exclude: ^(src/lerobot/templates/.*\.md|docs/source/api/.*\.mdx)$
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
@@ -99,7 +92,7 @@ repos:
         args: [--config-file=pyproject.toml]
         pass_filenames: false
         types_or: [python, pyi, toml]
-        files: ^(src/lerobot/|scripts/|utils/|conftest\.py$|setup\.py$|pyproject\.toml$)
+        files: ^(src/fault_system/|packages/lerobot_env_libero_overlay/|scripts/|pyproject\.toml$)
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2

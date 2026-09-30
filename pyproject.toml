@@ -76,52 +76,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "E402", "D104"]
-# E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
-"src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
-
-# D (pydocstyle) is enabled globally, but only holds for code that has been converted to the docstring
-# standard in docs/source/writing_docstrings.mdx. Every module below is still on the old style; each entry
-# is deleted as that module is converted, and this block can be removed once it is empty.
-#
-# Not part of the API reference and not planned for conversion: tests, examples, benchmarks, templates,
-# CI helper scripts and the packaging shim.
 "tests/**" = ["D"]
 "examples/**" = ["D"]
-"benchmarks/**" = ["D"]
 "scripts/**" = ["D"]
-"setup.py" = ["D"]
-"src/lerobot/templates/**" = ["D"]
-# Vendored from transformers; keeps its upstream docstring style so syncs stay clean.
-"src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
-# Awaiting conversion, one PR per module.
-"src/lerobot/annotations/**" = ["D"]
-"src/lerobot/async_inference/**" = ["D"]
-"src/lerobot/cameras/**" = ["D"]
-"src/lerobot/common/**" = ["D"]
-"src/lerobot/configs/**" = ["D"]
-"src/lerobot/data_processing/**" = ["D"]
-"src/lerobot/datasets/**" = ["D"]
-"src/lerobot/distributed/**" = ["D"]
-"src/lerobot/envs/**" = ["D"]
-"src/lerobot/jobs/**" = ["D"]
-"src/lerobot/model/**" = ["D"]
-"src/lerobot/motors/**" = ["D"]
-"src/lerobot/optim/**" = ["D"]
-"src/lerobot/policies/**" = ["D"]
-"src/lerobot/processor/**" = ["D"]
-"src/lerobot/rewards/**" = ["D"]
-"src/lerobot/rl/**" = ["D"]
-"src/lerobot/robots/**" = ["D"]
-"src/lerobot/rollout/**" = ["D"]
-"src/lerobot/scripts/**" = ["D"]
-"src/lerobot/teleoperators/**" = ["D"]
-"src/lerobot/transforms/**" = ["D"]
-"src/lerobot/transport/**" = ["D"]
-"src/lerobot/utils/**" = ["D"]
-"src/lerobot/lerobot_types.py" = ["D"]
-# Package root: two one-line docstring fixes land with the docstring PR.
-"src/lerobot/__init__.py" = ["D"]
-"src/lerobot/__version__.py" = ["D"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot", "fault_system", "lerobot_env_libero_overlay"]
@@ -137,11 +94,7 @@ line-ending = "auto"
 docstring-code-format = true
 
 [tool.bandit]
-exclude_dirs = [
-    "tests",
-    "benchmarks",
-    "src/lerobot/datasets/push_dataset_to_hub",
-]
+exclude_dirs = ["tests"]
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
@@ -185,20 +138,13 @@ fail-under = 52
 output-format = "term-missing"
 color = true
 paths = ["src/fault_system", "packages/lerobot_env_libero_overlay/src"]
-exclude = ["src/lerobot/policies/molmoact2/molmoact2_hf_model"]
-
-[tool.pytest.ini_options]
-markers = [
-    "multigpu: distributed tests needing 2-4 GPUs (CI: docker_publish.yml lane)",
-    "multigpu_heavy: 8-GPU sweeps and soak tests; never run in CI",
-]
 
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
 # Paths the hook checks as a whole (pass_filenames: false); keep its `files` pattern in sync.
-files = ["src/fault_system", "packages/lerobot_env_libero_overlay/src", "scripts", "conftest.py"]
+files = ["src/fault_system", "packages/lerobot_env_libero_overlay/src", "scripts"]
 exclude = ['_pb2(_grpc)?\.py$']
 exclude_gitignore = true
 warn_redundant_casts = true
@@ -217,13 +163,3 @@ enable_error_code = [
     "truthy-iterable",
     "unused-awaitable",
 ]
-# Next candidates, each needing a fix PR first (error counts as of 2026-09):
-# warn_unreachable = true          # 40: dead code, mostly unannotated `self.x = None` attributes
-# strict_equality_for_none = true  # 40: keep None guards on config fields, `--field=null` yields None
-# check_untyped_defs = true        # 195: most valuable; decide first how Optional dataset metadata is accessed
-
-# One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
-# molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
-[[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
-ignore_errors = true
