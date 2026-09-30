@@ -17,13 +17,14 @@ Upstream plugin discovery only loads packages named `lerobot_robot_`, `lerobot_c
 
 ## Do not extend these hooks
 
-These files already carry a small integration seam. Bugfixes that must touch them stay minimal. Do not add new fields, branches, or fork-only behavior:
+Fault flags and success-only recording belong on `lerobot-eval-faults` (`src/lerobot/faults/eval_cli.py`). Do not add them back to `EvalPipelineConfig` or `EvalConfig`.
 
-- `src/lerobot/configs/eval.py` — `fault`
-- `src/lerobot/configs/default.py` — `recording_success_only`
-- `src/lerobot/scripts/lerobot_eval.py` — env wrap and eval recording
-- `src/lerobot/datasets/lerobot_dataset.py` and `dataset_writer.py` — `episode_metadata`
-- `src/lerobot/envs/configs.py` and `envs/libero.py` — `overlay`, headless renderer
+These upstream files still carry a small seam. Do not add new fields or fork-only branches. The three items marked upstream are library gaps to send to Hugging Face, not more fork features:
+
+- `src/lerobot/scripts/lerobot_eval.py` — `features_map` when recording eval episodes (upstream). Failure columns are off unless `annotate_failures=True`, which only `lerobot-eval-faults` sets.
+- `src/lerobot/datasets/lerobot_dataset.py` and `dataset_writer.py` — `save_episode(..., episode_metadata=)` (upstream)
+- `src/lerobot/envs/libero.py` — `disable_gui_renderer` before the first reset (upstream). `overlay=` is fork-only; do not grow it.
+- `src/lerobot/envs/configs.py` — `LiberoEnv.overlay` (fork-only; do not grow it)
 
 ```python
 # Bad: another fork flag on the upstream eval config
@@ -31,8 +32,7 @@ class EvalPipelineConfig:
     fault: FaultInjectionConfig
     my_new_mode: bool = False
 
-# Good: new behavior in the faults package, called from the existing wrap
-# src/lerobot/faults/...
+# Good: new fault behavior in src/lerobot/faults/, invoked by lerobot-eval-faults
 ```
 
 Do not vendor a second LeRobot tree, and do not convert this repo into a submodule, to avoid editing those files. That does not remove the seam.

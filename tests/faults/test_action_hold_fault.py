@@ -274,9 +274,14 @@ def test_make_fault_injector_none_when_disabled():
 def test_eval_pipeline_default_fault_disabled():
     from lerobot.configs.eval import EvalPipelineConfig
     from lerobot.envs.configs import LiberoEnv
+    from lerobot.faults.eval_cli import FaultEvalConfig, FaultEvalPipelineConfig
 
-    cfg = EvalPipelineConfig(env=LiberoEnv(task="libero_object", task_ids=[0]))
+    stock = EvalPipelineConfig(env=LiberoEnv(task="libero_object", task_ids=[0]))
+    assert not hasattr(stock, "fault")
+    cfg = FaultEvalPipelineConfig(env=LiberoEnv(task="libero_object", task_ids=[0]))
+    assert isinstance(cfg.eval, FaultEvalConfig)
     assert cfg.fault.enabled is False
+    assert cfg.eval.recording_success_only is False
     assert make_fault_injector(cfg.fault, num_envs=1) is None
 
 

@@ -57,7 +57,7 @@ Keep the single quotes around the camera mapping. Task `0` is Alphabet Soup.
 ### Action hold
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-faults \
   --policy.path="$CHECKPOINT" \
   --env.type=libero \
   --env.task=libero_object \
@@ -76,7 +76,7 @@ Hold starts at step **55** for **8** steps. Other types (one per run): `action_d
 ### Mid-air drop + IK recovery
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-faults \
   --policy.path="$CHECKPOINT" \
   --env.type=libero \
   --env.task=libero_object \

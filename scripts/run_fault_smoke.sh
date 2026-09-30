@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A/B smoke using stock lerobot-eval + in-tree fault injection.
+# A/B smoke. Baseline uses stock lerobot-eval. Fault modes use lerobot-eval-faults.
 # Requires: uv sync, LeRobot + LIBERO extras, CUDA for SmolVLA.
 # Does NOT cover midair_drop — use examples/faults/run_drop_datagen.py.
 set -euo pipefail
@@ -12,6 +12,7 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 
 LEROBOT_EVAL=(uv run lerobot-eval)
+LEROBOT_EVAL_FAULTS=(uv run lerobot-eval-faults)
 
 COMMON=(
   --policy.path=lerobot/smolvla_libero
@@ -32,13 +33,12 @@ COMMON=(
 case "$MODE" in
   baseline)
     "${LEROBOT_EVAL[@]}" \
-      --fault.enabled=false \
       "${COMMON[@]}" \
       --output_dir=outputs/eval/fault_smoke_baseline \
       --job_name=fault_smoke_baseline
     ;;
   injected)
-    "${LEROBOT_EVAL[@]}" \
+    "${LEROBOT_EVAL_FAULTS[@]}" \
       --fault.enabled=true \
       --fault.type=action_hold \
       --fault.trigger_step=20 \
@@ -51,7 +51,7 @@ case "$MODE" in
       --job_name=fault_smoke_injected
     ;;
   delay)
-    "${LEROBOT_EVAL[@]}" \
+    "${LEROBOT_EVAL_FAULTS[@]}" \
       --fault.enabled=true \
       --fault.type=action_delay \
       --fault.delay_steps=3 \
@@ -61,7 +61,7 @@ case "$MODE" in
       --job_name=fault_smoke_delay
     ;;
   jitter)
-    "${LEROBOT_EVAL[@]}" \
+    "${LEROBOT_EVAL_FAULTS[@]}" \
       --fault.enabled=true \
       --fault.type=action_jitter \
       --fault.noise_std=0.35 \
@@ -72,7 +72,7 @@ case "$MODE" in
       --job_name=fault_smoke_jitter
     ;;
   sensor)
-    "${LEROBOT_EVAL[@]}" \
+    "${LEROBOT_EVAL_FAULTS[@]}" \
       --fault.enabled=true \
       --fault.type=sensor_dropout \
       --fault.trigger_step=20 \

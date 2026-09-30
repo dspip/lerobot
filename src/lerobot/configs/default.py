@@ -120,15 +120,10 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
-    # If true, discard episode buffers that never reported success. Requires recording=true.
-    # Failed attempts are not written; n_episodes is still the number of attempts, not kept successes.
-    recording_success_only: bool = False
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
-        if self.recording_success_only and not self.recording:
-            raise ValueError("eval.recording_success_only requires eval.recording=true.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

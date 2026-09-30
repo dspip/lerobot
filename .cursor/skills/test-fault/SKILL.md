@@ -78,7 +78,7 @@ bash scripts/run_fault_smoke.sh injected   # action_hold
 ## Eval CLI smoke (any fault type)
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-faults \
   --policy.path=lerobot/smolvla_libero \
   --env.type=libero \
   --env.task=libero_object \

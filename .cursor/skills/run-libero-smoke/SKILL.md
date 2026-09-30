@@ -31,8 +31,8 @@ bash scripts/run_fault_smoke.sh jitter
 bash scripts/run_fault_smoke.sh sensor
 ```
 
-Uses stock **`lerobot-eval`** with nested **`--fault.*`** flags (draccus). There is
-no `lerobot-faults` CLI in this repo.
+Uses **`lerobot-eval-faults`** with nested **`--fault.*`** flags (draccus).
+Stock `lerobot-eval` does not accept `--fault.*`. Baseline smoke uses stock `lerobot-eval`.
 
 ## Validation
 

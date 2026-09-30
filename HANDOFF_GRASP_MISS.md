@@ -255,7 +255,7 @@ Follow [`.cursor/skills/add-fault/SKILL.md`](./.cursor/skills/add-fault/SKILL.md
 
 `enabled=False` by default.
 
-CLI: `lerobot-eval --fault.enabled=true --fault.type=grasp_miss ...` (draccus). No sidecar CLI.
+CLI: `lerobot-eval-faults --fault.enabled=true --fault.type=grasp_miss ...` (draccus on `FaultEvalPipelineConfig`).
 
 ---
 

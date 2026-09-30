@@ -49,8 +49,8 @@ Shared helpers:
    `FaultEventLogger`.
 4. **Factory** — register type and constructor in `src/lerobot/faults/factory.py`.
 5. **Exports** — `src/lerobot/faults/__init__.py` (and subpackage `__init__.py` if needed).
-6. **CLI** — flags are automatic via draccus on `EvalPipelineConfig.fault`; use
-   `lerobot-eval --fault.<field>=<value>`. **Do not** add a sidecar CLI.
+6. **CLI** — flags are automatic via draccus on `FaultEvalPipelineConfig.fault`; use
+   `lerobot-eval-faults --fault.<field>=<value>`. Do not add `--fault.*` back onto stock `lerobot-eval`.
 7. **Wrapper dispatch** — extend `maybe_wrap_env` in `wrappers.py` (sim/recovery need their
    own wrapper class). **Do not** patch `lerobot_eval.py` again.
 8. **Tests** — `tests/faults/test_<name>_fault.py`, mock sim where possible; no GPU/LIBERO
@@ -62,7 +62,7 @@ Shared helpers:
 ## CLI example
 
 ```bash
-uv run lerobot-eval \
+uv run lerobot-eval-faults \
   --policy.path=lerobot/smolvla_libero \
   --env.type=libero \
   --env.task=libero_object \

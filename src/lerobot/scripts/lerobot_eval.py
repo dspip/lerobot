@@ -84,7 +84,6 @@ from lerobot.envs import (
     preprocess_observation,
 )
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
-from lerobot.faults import maybe_wrap_env_tree, resolve_fault_log_path
 from lerobot.faults.annotation import (
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
@@ -134,6 +133,7 @@ def _index_nested_obs(raw_obs: dict, path: list[str], env_idx: int) -> Any:
 def _env_features_to_dataset_features(
     env_features: dict[str, PolicyFeature],
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
     features: dict[str, dict[str, Any]] = {}
@@ -147,7 +147,8 @@ def _env_features_to_dataset_features(
     features["next.reward"] = {"dtype": "float32", "shape": (1,), "names": None}
     features["next.success"] = {"dtype": "bool", "shape": (1,), "names": None}
     features["next.done"] = {"dtype": "bool", "shape": (1,), "names": None}
-    features.update(FAILURE_ANNOTATION_FEATURES)
+    if annotate_failures:
+        features.update(FAILURE_ANNOTATION_FEATURES)
     return features
 
 
@@ -162,6 +163,7 @@ def _build_raw_frame(
     env_features: dict,
     info: dict | None = None,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
 ) -> dict:
     """Build a dataset frame from raw env observations for one env index.
 
@@ -200,7 +202,8 @@ def _build_raw_frame(
     frame["next.reward"] = np.atleast_1d(np.float32(reward))
     frame["next.success"] = np.atleast_1d(np.bool_(success))
     frame["next.done"] = np.atleast_1d(np.bool_(done))
-    frame.update(failure_frame_from_info(info, env_idx) if info is not None else default_failure_frame())
+    if annotate_failures:
+        frame.update(failure_frame_from_info(info, env_idx) if info is not None else default_failure_frame())
     frame["task"] = task
     return frame
 
@@ -211,9 +214,10 @@ def create_eval_recording_datasets(
     env_features: dict,
     recording_repo_id: str | None = None,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
 ) -> list[LeRobotDataset]:
     """Create one write-mode dataset per vec-env slot. Call once per eval, not per batch."""
-    features = _env_features_to_dataset_features(env_features, features_map)
+    features = _env_features_to_dataset_features(env_features, features_map, annotate_failures)
     fps = env.unwrapped.metadata.get("render_fps", 30)
     multi_env = env.num_envs > 1
     base_repo_id = recording_repo_id or "eval_recording"
@@ -250,6 +254,7 @@ def rollout(
     recording_datasets: list[LeRobotDataset] | None = None,
     recording_success_only: bool = False,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
@@ -306,7 +311,7 @@ def rollout(
     task_desc = ""
     if recording_datasets is None and recording_dir is not None and env_features is not None:
         recording_datasets = create_eval_recording_datasets(
-            recording_dir, env, env_features, recording_repo_id, features_map
+            recording_dir, env, env_features, recording_repo_id, features_map, annotate_failures
         )
         own_recording = True
     if recording_datasets is not None:
@@ -433,6 +438,7 @@ def rollout(
                         env_features,
                         info=info,
                         features_map=features_map,
+                        annotate_failures=annotate_failures,
                     )
                     recording_datasets[env_idx].add_frame(frame)
                     if terminated[env_idx] or truncated[env_idx]:
@@ -522,6 +528,7 @@ def eval_policy(
     recording_private: bool = False,
     recording_success_only: bool = False,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
     save_predicted_video: bool = False,
 ) -> dict:
     """
@@ -612,7 +619,7 @@ def eval_policy(
     recording_datasets: list[LeRobotDataset] | None = None
     if recording_dir is not None and env_features is not None:
         recording_datasets = create_eval_recording_datasets(
-            recording_dir, env, env_features, recording_repo_id, features_map
+            recording_dir, env, env_features, recording_repo_id, features_map, annotate_failures
         )
 
     # we dont want progress bar when we use slurm, since it clutters the logs
@@ -649,6 +656,7 @@ def eval_policy(
             recording_datasets=recording_datasets,
             recording_success_only=recording_success_only,
             features_map=features_map,
+            annotate_failures=annotate_failures,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
         )
 
@@ -861,6 +869,19 @@ def _compile_episode_data(
 
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig) -> None:
+    device = prepare_eval(cfg)
+    logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+        trust_remote_code=cfg.trust_remote_code,
+    )
+    run_eval_on_envs(cfg, envs, device)
+
+
+def prepare_eval(cfg: EvalPipelineConfig) -> torch.device:
+    """Validate an eval config, select the torch device, and seed the process."""
     logging.info(pformat(asdict(cfg)))
 
     if cfg.policy is None:
@@ -874,7 +895,6 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         # EvalPipelineConfig.__post_init__ always assigns a default output_dir.
         raise ValueError("EvalPipelineConfig.output_dir is not set.")
 
-    # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
@@ -882,27 +902,20 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+    return device
 
-    logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
-    envs = make_env(
-        cfg.env,
-        n_envs=cfg.eval.batch_size,
-        use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code,
-    )
 
-    fault_cfg = cfg.fault
-    if fault_cfg.enabled:
-        if cfg.env.max_parallel_tasks > 1:
-            raise ValueError(
-                "Fault injection currently requires --env.max_parallel_tasks=1 so "
-                "fault event logs stay consistent across tasks."
-            )
-        fault_cfg.log_path = resolve_fault_log_path(fault_cfg.log_path, cfg.output_dir)
-        fault_cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
-        fault_cfg.log_path.write_text("", encoding="utf-8")
-    envs = maybe_wrap_env_tree(envs, fault_cfg)
-
+def run_eval_on_envs(
+    cfg: EvalPipelineConfig,
+    envs: dict,
+    device: torch.device,
+    *,
+    recording_success_only: bool = False,
+    annotate_failures: bool = False,
+) -> None:
+    """Run policy eval on an already-built env tree and write ``eval_info.json``."""
+    if cfg.policy is None or cfg.output_dir is None:
+        raise ValueError("prepare_eval() must run before run_eval_on_envs().")
     logging.info("Making policy.")
 
     policy = make_policy(
@@ -951,7 +964,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             features_map=cfg.env.features_map if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
-            recording_success_only=cfg.eval.recording_success_only,
+            recording_success_only=recording_success_only,
+            annotate_failures=annotate_failures,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -1010,6 +1024,7 @@ def eval_one(
     recording_private: bool = False,
     recording_success_only: bool = False,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -1033,6 +1048,7 @@ def eval_one(
         recording_private=recording_private,
         recording_success_only=recording_success_only,
         features_map=features_map,
+        annotate_failures=annotate_failures,
     )
 
     per_episode = task_result["per_episode"]
@@ -1066,6 +1082,7 @@ def run_one(
     recording_private: bool = False,
     recording_success_only: bool = False,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -1102,6 +1119,7 @@ def run_one(
         recording_private=recording_private,
         recording_success_only=recording_success_only,
         features_map=features_map,
+        annotate_failures=annotate_failures,
     )
 
     if max_episodes_rendered > 0:
@@ -1136,6 +1154,7 @@ def eval_policy_all(
     recording_private: bool = False,
     recording_success_only: bool = False,
     features_map: dict[str, str] | None = None,
+    annotate_failures: bool = False,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
@@ -1201,6 +1220,7 @@ def eval_policy_all(
         recording_private=recording_private,
         recording_success_only=recording_success_only,
         features_map=features_map,
+        annotate_failures=annotate_failures,
     )
 
     # Set the shared policy's mode before launching any workers. Restoring it

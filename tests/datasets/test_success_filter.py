@@ -18,18 +18,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lerobot.configs.default import EvalConfig
 from lerobot.datasets.success_filter import (
     filter_successful_episodes,
     finish_eval_recorded_episode,
     list_successful_episode_indices,
 )
+from lerobot.faults.eval_cli import FaultEvalConfig
 from lerobot.utils.constants import SUCCESS
 
 
 def test_eval_config_success_only_requires_recording():
     with pytest.raises(ValueError, match="recording_success_only"):
-        EvalConfig(recording_success_only=True, n_episodes=1, batch_size=1)
+        FaultEvalConfig(recording_success_only=True, n_episodes=1, batch_size=1)
 
 
 def test_list_successful_episode_indices(tmp_path):
