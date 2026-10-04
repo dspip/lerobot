@@ -221,14 +221,9 @@ def run_pipeline(
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba_cache"))
 
-    from lerobot.configs.policies import PreTrainedConfig
-    from lerobot.envs.configs import LiberoEnv
-    from lerobot.envs.factory import make_env, make_env_pre_post_processors
-    from lerobot.envs.utils import preprocess_observation
-    from lerobot.policies.factory import make_policy, make_pre_post_processors
-    from lerobot.utils.constants import ACTION
-    from lerobot.utils.random_utils import set_seed
     from fault_system.config import FaultInjectionConfig
+    from fault_system.datagen.smolvla_resources import load_smolvla_policy_resources
+    from fault_system.models.smolvla import SmolVLAActionSource
     from fault_system.recovery.dataset_logger import FaultRecoveryDatasetLogger
     from fault_system.recovery.fps import (
         DEFAULT_LIBERO_CONTROL_FREQ,
@@ -261,6 +256,10 @@ def run_pipeline(
         unwrap_libero_env,
     )
     from fault_system.wrappers import DropRecoveryEnvWrapper
+    from lerobot.envs.configs import LiberoEnv
+    from lerobot.envs.factory import make_env
+    from lerobot.envs.utils import preprocess_observation
+    from lerobot.utils.random_utils import set_seed
 
     if episode_kind not in ("drop", "nominal"):
         raise ValueError(f"episode_kind must be 'drop' or 'nominal' (got {episode_kind!r})")
@@ -300,32 +299,13 @@ def run_pipeline(
         },
     )
 
-    if policy_resources is not None:
-        policy_cfg = policy_resources.policy_cfg
-        policy = policy_resources.policy
-        preprocessor = policy_resources.preprocessor
-        postprocessor = policy_resources.postprocessor
-        env_preprocessor = policy_resources.env_preprocessor
-        env_postprocessor = policy_resources.env_postprocessor
-    else:
-        policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
-        policy_cfg.pretrained_path = policy_path
-        policy_cfg.device = device
-        if hasattr(policy_cfg, "empty_cameras"):
-            policy_cfg.empty_cameras = 1
-        policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy_cfg,
-            pretrained_path=policy_path,
-            preprocessor_overrides={"device_processor": {"device": device}},
-            postprocessor_overrides={"device_processor": {"device": device}},
+    if policy_resources is None:
+        policy_resources = load_smolvla_policy_resources(
+            policy_path=policy_path,
+            device=device,
+            task=task,
+            task_id=int(task_id),
         )
-        env_preprocessor, env_postprocessor = make_env_pre_post_processors(
-            env_cfg=env_cfg,
-            policy_cfg=policy_cfg,
-        )
-    policy.eval()
-    policy.reset()  # required by SmolVLA action-chunk queue (matches lerobot_eval.rollout)
 
     from lerobot_env_libero_overlay.gym_env import install_headless_libero_renderer
 
@@ -333,6 +313,8 @@ def run_pipeline(
     envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
     vec = next(iter(envs[task].values()))
     log_task = task_description or task
+    action_source = SmolVLAActionSource(policy_resources, task=log_task)
+    action_source.reset()
     delay_rng = np.random.default_rng(var_seed)
     delay_steps = (
         int(post_grasp_delay_steps)
@@ -641,33 +623,29 @@ def run_pipeline(
                 banner = f"PHASE: VLA (SmolVLA) [{g}]"
                 color = (30, 90, 200)
 
-            obs_dict = preprocess_observation(observation)
-            if task_description is not None:
-                obs_dict["task"] = [task_description]
-            else:
+            step_task = task_description
+            if step_task is None:
                 try:
-                    obs_dict["task"] = list(env.call("task_description"))
+                    descriptions = list(env.call("task_description"))
+                    if descriptions:
+                        step_task = str(descriptions[0])
                 except Exception:
                     try:
-                        obs_dict["task"] = list(env.call("task"))
+                        descriptions = list(env.call("task"))
+                        if descriptions:
+                            step_task = str(descriptions[0])
                     except Exception:
-                        obs_dict["task"] = [log_task]
-            obs_dict = env_preprocessor(obs_dict)
-            obs_dict = preprocessor(obs_dict)
-            with torch.inference_mode():
-                action = policy.select_action(obs_dict)
-            action = postprocessor(action)
-            action_transition = env_postprocessor({ACTION: action})
-            action = action_transition[ACTION]
-            action_numpy = np.asarray(action.to("cpu").numpy(), dtype=np.float32)
-            if action_numpy.ndim == 1:
-                action_numpy = action_numpy[None, ...]
+                        step_task = log_task
+            action_numpy = np.asarray(
+                action_source.act(observation, task=step_task),
+                dtype=np.float32,
+            ).reshape(1, 7)
 
             pose_before = get_object_pose(rs, object_name)["pos"].astype(float).copy()
             observation, reward, terminated, truncated, info = env.step(action_numpy)
 
             if is_drop_episode and hasattr(env, "consume_policy_reset") and env.consume_policy_reset(0):
-                policy.reset()
+                action_source.reset()
                 print(
                     "[pipeline] policy.reset() once after drop (reset_then_ik)",
                     flush=True,

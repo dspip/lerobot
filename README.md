@@ -46,7 +46,8 @@ flowchart LR
 
 ```text
 src/fault_system/          faults, wrappers, eval CLI, recording, datagen
-  action/  observation/  sim/  recovery/  datagen/
+  action/  observation/  sim/  recovery/  datagen/  models/
+  README.md              model ↔ fault wrapper ↔ LIBERO, with inputs and outputs
 packages/lerobot_env_libero_overlay/   LIBERO scene plugin
 tests/faults/              unit tests (mocked sim)
 scripts/run_fault_smoke.sh one-episode SmolVLA smoke

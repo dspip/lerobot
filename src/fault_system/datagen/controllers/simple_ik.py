@@ -23,7 +23,6 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.envs.factory import make_env
 from fault_system.datagen.drop_timing import DropDecision, keepout_m
 from fault_system.datagen.episode import EpisodeRequest, EpisodeResult
 from fault_system.datagen.episode_preview import EpisodePreview
@@ -64,6 +63,7 @@ from fault_system.sim.libero import (
     unwrap_libero_env,
 )
 from fault_system.wrappers import DropRecoveryEnvWrapper
+from lerobot.envs.factory import make_env
 
 MAX_PLAN_STEPS = 800
 POST_RECOVERY_SETTLE_STEPS = 40
@@ -151,7 +151,11 @@ def run_simple_ik_episode_loop(
     post_drop_action_provider: Any | None = None,
     post_drop_mode: str | None = None,
 ) -> SimpleIKEpisodeFacts:
-    """Drive one SimpleIK episode with path-based drop timing and optional recording."""
+    """Drive one SimpleIK episode with path-based drop timing and optional recording.
+
+    ``post_drop_action_provider`` is an ``ActionSource``. After a drop the loop
+    calls ``reset`` once, then ``act`` for each later tick.
+    """
     if episode_session is not None and task is None:
         task = read_libero_task_description(env)
     keepout = keepout_m(
@@ -191,7 +195,7 @@ def run_simple_ik_episode_loop(
                     post_drop_action_provider.reset()
                     provider_reset_done = True
                 action = np.asarray(
-                    post_drop_action_provider.select_action(last_observation),
+                    post_drop_action_provider.act(last_observation, task=task),
                     dtype=np.float32,
                 ).reshape(1, 7)
             else:
@@ -395,10 +399,7 @@ def run_simple_ik_episode_loop(
                     trigger_pose=trigger_pose,
                     success=success_now,
                 )
-            if (
-                dropped
-                and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value
-            ):
+            if dropped and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value:
                 in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
                 return SimpleIKEpisodeFacts(
                     bool(in_basket or success_now),
@@ -550,9 +551,9 @@ class SimpleIKDatagenAdapter:
     def run_episode(self, request: EpisodeRequest) -> EpisodeResult:
         """Build a LIBERO env, run the IK loop, and return an ``EpisodeResult``."""
         os.environ.setdefault("MUJOCO_GL", "egl")
-        from lerobot.envs.configs import LiberoEnv
         from fault_system.config import FaultInjectionConfig
         from fault_system.datagen.libero_object_tasks import official_task_id
+        from lerobot.envs.configs import LiberoEnv
 
         recipe = request.recipe
         manifest = request.manifest
@@ -638,16 +639,15 @@ class SimpleIKDatagenAdapter:
                 PostDropMode.RESET_THEN_IK,
                 PostDropMode.IMMEDIATE_SMOLVLA,
             }:
-                from fault_system.datagen.smolvla_action_provider import SmolVLAActionProvider
-                from fault_system.datagen.smolvla_resources import load_smolvla_policy_resources
+                from fault_system.models.smolvla import SmolVLAActionSource
 
-                resources = load_smolvla_policy_resources(
+                post_drop_provider = SmolVLAActionSource.from_pretrained(
                     policy_path=recipe.smolvla.policy_path,
                     device=request.device,
-                    task=recipe.task,
+                    env_task=recipe.task,
                     task_id=episode_task_id,
+                    task=task or "",
                 )
-                post_drop_provider = SmolVLAActionProvider(resources, task=task)
             facts = run_simple_ik_episode_loop(
                 env,
                 rs_env,
