@@ -35,67 +35,111 @@ Keep this shell open so `$CHECKPOINT` and `MUJOCO_GL` stay set.
 
 ## Copy-paste eval
 
-These flags are required for `lerobot/smolvla_libero`: LIBERO cameras are `image` / `image2`, that Hub policy expects `camera1` / `camera2` plus a padded camera. One episode, one env, so the first run is a smoke test (library defaults are 50 episodes and a large auto batch).
+Run baseline first. If that episode never grasps, the drop runs will not inject either.
+
+`scripts/run_fault_smoke.sh` covers baseline and action faults only. Mid-air drop is the commands below.
+
+Every command below shares the same scene: `libero_object` task `0` (Alphabet Soup, `alphabet_soup_1`, basket `basket_1`), one episode. Keep the single quotes around the camera mapping. The Hub checkpoint wants `camera1` / `camera2` and a padded `camera3`; LIBERO’s two cameras are named `agentview_image` and `robot0_eye_in_hand_image`.
+
+Leave these off. They are already the default, or they follow from `--eval.n_episodes=1`:
+
+| You might add | Why it is already set |
+| --- | --- |
+| `--policy.device=cuda` | checkpoint `config.json` sets `cuda` |
+| `--seed=1000` | eval default |
+| `--env.control_mode=relative` | LIBERO default |
+| `--env.max_parallel_tasks=1` | LIBERO default; faults reject a higher value |
+| `--eval.batch_size=1` | one episode forces batch size 1 |
+| `--eval.use_async_envs=false` | one env stays synchronous |
+| `--fault.object_name` / `--fault.basket_name` | `alphabet_soup_1` / `basket_1` |
+| `--fault.probability=1` / `--fault.seed=42` / `--fault.t_min=10` | fault defaults |
+| `--fault.post_drop_dwell_steps=0` | fault default. A value above 0 waits, then starts IK even in `immediate_smolvla` |
+| `--fault.post_drop_mode=immediate_ik` | this is the drop default: IK recovery after landing |
+
+If `config.json` lists `observation.images.image` (not `camera1`), remove `--policy.empty_cameras=1` and the camera-mapping line only.
 
 ### Baseline (no fault)
 
 ```bash
 uv run lerobot-eval \
   --policy.path="$CHECKPOINT" \
+  --policy.empty_cameras=1 \
   --env.type=libero \
   --env.task=libero_object \
   --env.task_ids="[0]" \
   --eval.n_episodes=1 \
-  --eval.batch_size=1 \
-  --eval.use_async_envs=false \
-  --policy.empty_cameras=1 \
+  --output_dir=outputs/eval/smolvla_baseline \
   '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
 ```
 
-Keep the single quotes around the camera mapping. Task `0` is Alphabet Soup.
+Pass: `outputs/eval/smolvla_baseline/eval_info.json` exists, and that folder has no `fault_events.jsonl`. `overall.pc_success` is the LIBERO task result (0 or 100 for one episode).
 
 ### Action hold
 
 ```bash
 uv run lerobot-eval-faults \
   --policy.path="$CHECKPOINT" \
+  --policy.empty_cameras=1 \
   --env.type=libero \
   --env.task=libero_object \
   --env.task_ids="[0]" \
   --eval.n_episodes=1 \
-  --eval.batch_size=1 \
-  --eval.use_async_envs=false \
-  --policy.empty_cameras=1 \
+  --output_dir=outputs/eval/smolvla_hold \
   '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
   --fault.enabled=true \
   --fault.type=action_hold
 ```
 
-Hold starts at step **55** for **8** steps. Other types (one per run): `action_delay`, `action_jitter`, `sensor_dropout`, `visual_occlusion`, `visual_blur`, `brightness_drop`, `obs_latency`.
+Hold starts at step **55** for **8** steps. Other types (one per run, same command, change `--fault.type`): `action_delay`, `action_jitter`, `sensor_dropout`, `visual_occlusion`, `visual_blur`, `brightness_drop`, `obs_latency`.
 
-### Mid-air drop + IK recovery
+### Mid-carry drop, no recovery
+
+The gripper opens when the can is **0.34–0.38 m** from the basket (the recipe’s `mid` band). After it lands, SmolVLA keeps control. IK does not start.
+
+`--fault.t_max=400` is required. The default window ends at step 30, which is before most grasps.
 
 ```bash
 uv run lerobot-eval-faults \
   --policy.path="$CHECKPOINT" \
+  --policy.empty_cameras=1 \
   --env.type=libero \
   --env.task=libero_object \
   --env.task_ids="[0]" \
   --eval.n_episodes=1 \
-  --eval.batch_size=1 \
-  --eval.use_async_envs=false \
-  --policy.empty_cameras=1 \
+  --output_dir=outputs/eval/smolvla_drop_norecovery \
   '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
   --fault.enabled=true \
   --fault.type=midair_drop \
-  --fault.t_max=400
+  --fault.t_max=400 \
+  --fault.drop_xy_band_min=0.34 \
+  --fault.drop_xy_band_max=0.38 \
+  --fault.post_drop_mode=immediate_smolvla
 ```
 
-`--fault.t_max=400` is required so a late grasp can still drop (library window is 10–30). Object `alphabet_soup_1`, basket `basket_1`.
+Pass: `fault_events.jsonl` has `"status": "triggered"`, `"drop_trigger_reason": "xy_band"`, `"post_drop_mode": "immediate_smolvla"`, and no `"status": "recovery_started"`.
 
-A real inject writes `"event": "midair_drop"` in `fault_events.jsonl`. Task success is LIBERO success in `eval_info.json`, not “the drop fired.”
+### Mid-carry drop, with IK recovery
 
-If `config.json` lists `observation.images.image` (not `camera1`), remove `--policy.empty_cameras=1` and the `--env.camera_name_mapping=...` line only.
+Same drop. Omit `post_drop_mode`: the default `immediate_ik` starts the planner after the can lands. Seat-into-basket assist stays on.
+
+```bash
+uv run lerobot-eval-faults \
+  --policy.path="$CHECKPOINT" \
+  --policy.empty_cameras=1 \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.task_ids="[0]" \
+  --eval.n_episodes=1 \
+  --output_dir=outputs/eval/smolvla_drop_recovery \
+  '--env.camera_name_mapping={"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}' \
+  --fault.enabled=true \
+  --fault.type=midair_drop \
+  --fault.t_max=400 \
+  --fault.drop_xy_band_min=0.34 \
+  --fault.drop_xy_band_max=0.38
+```
+
+Pass: the log has both `"status": "triggered"` and `"status": "recovery_started"`. `pc_success` on this run can come from the IK planner. On the no-recovery run it can come only from SmolVLA. Compare the two videos, not just the two success rates.
 
 ### Manual keyboard drop + recovery
 
@@ -140,10 +184,11 @@ Click the Tk window to focus it. Press `d` while the object is grasped, then `r`
 
 | What you want | Flag | Otherwise |
 | --- | --- | --- |
-| More episodes | `--eval.n_episodes=10` | smoke uses `1` |
-| Fixed output folder | `--output_dir=outputs/eval/my_run` | `outputs/eval/<timestamp>_<job>` |
-| Reproducible seed | `--seed=1000` | `1000` |
-| Carry ~1 s before drop | `--fault.post_grasp_delay_steps=20` | drop as soon as lifted (`0`) |
+| Drop as soon as the can is lifted, anywhere ≥ 0.18 m from the basket | omit both `--fault.drop_xy_band_*` flags | the commands above use the mid band 0.34–0.38 m |
+| Other carry bands | lift `0.48–0.52`, early `0.42–0.46`, late `0.30–0.33` | mid `0.34–0.38` |
+| More episodes | `--eval.n_episodes=10` | `1` |
+| Whole `libero_object` suite | omit `--env.task_ids` | task `0` only. Also set `--fault.object_name` to that task’s object |
+| Another suite | `--env.task=libero_spatial` (or `libero_goal`, `libero_10`) | `libero_object`. Default if you omit `--env.task` is `libero_10` |
 | No seat-into-basket assist | `--fault.seat_assist_enabled=false` | `true` |
 | Action-hold timing | `--fault.trigger_step=20 --fault.duration=8` | `55` / `8` |
 | Delay / jitter | `--fault.delay_steps=3` / `--fault.noise_std=0.05` | `3` / `0.05` |
@@ -183,5 +228,7 @@ Defaults: `--threshold 0.5`, `--steps 120`, output `reports/xy60_verify/head_rec
 
 - **Missing `camera1` / `camera2` / `camera3`** — you omitted the Hub camera flags. Put them back.
 - **Missing `image` / `image2`** — this checkpoint is not Hub SmolVLA-LIBERO. Drop `empty_cameras` and `camera_name_mapping`.
-- **Empty `fault_events.jsonl` on mid-air drop** — no grasp+lift before `t_max`. Watch the video.
+- **Empty `fault_events.jsonl` on mid-air drop** — the can was never grasped inside the XY band before step 400. Watch the baseline video. Other bands are in the optional-flags table.
+- **`recovery_started` on the no-recovery run** — `post_drop_mode` is not `immediate_smolvla`, or `post_drop_dwell_steps` is above 0.
+- **No `recovery_started` on the recovery run** — look for `"status": "fall_aborted"`. The can never settled, so IK does not start.
 - **EGL / CUDA** — `nvidia-smi`, keep `MUJOCO_GL=egl`.
