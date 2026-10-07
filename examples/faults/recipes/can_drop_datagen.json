@@ -102,7 +102,7 @@
     },
     {
       "controller": "simple_ik",
-      "post_drop_mode": "immediate_smolvla",
+      "post_drop_mode": "immediate_policy",
       "drop": true,
       "weight": 1
     }

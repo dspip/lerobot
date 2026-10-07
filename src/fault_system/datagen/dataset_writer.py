@@ -110,7 +110,7 @@ def evaluate_datagen_keep(request: EpisodeRequest, result: EpisodeResult) -> tup
         if result.success:
             return True, "nominal_placement_success"
         return False, result.outcome or "nominal_failed"
-    if mode is PostDropMode.IMMEDIATE_SMOLVLA:
+    if mode is PostDropMode.IMMEDIATE_POLICY:
         if result.outcome in {
             "no_eligible_path",
             "nominal_completed_without_drop",

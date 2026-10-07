@@ -118,7 +118,7 @@ def test_success_and_drop_recipes_match_the_episode_table() -> None:
         ("continue_then_ik", True, 80),
         ("reset_then_ik", True, 80),
         ("immediate_ik", False, 80),
-        ("immediate_smolvla", True, 80),
+        ("immediate_policy", True, 80),
     ]
     success_counts = Counter(
         select_episode_object_round_robin(index, success.object_names) for index in range(400)
@@ -202,15 +202,15 @@ def test_hide_scene_objects_clears_collision_and_skips_missing() -> None:
     moved.assert_called_once()
 
 
-def test_immediate_smolvla_loss_mask_stays_off_after_recovery_starts() -> None:
+def test_immediate_policy_loss_mask_stays_off_after_recovery_starts() -> None:
     from tests.faults.test_midair_drop_fault import _cfg
 
-    smolvla = MidAirDropFault(_cfg(post_drop_mode="immediate_smolvla"), num_envs=1)
-    state = smolvla._states[0]
+    policy_only = MidAirDropFault(_cfg(post_drop_mode="immediate_policy"), num_envs=1)
+    state = policy_only._states[0]
     state.triggered = True
     state.recovery_active = True
     state.drop_injection_step = False
-    assert smolvla.loss_mask_for_env(0) == 0.0
+    assert policy_only.loss_mask_for_env(0) == 0.0
 
     ik = MidAirDropFault(_cfg(post_drop_mode="immediate_ik"), num_envs=1)
     ik_state = ik._states[0]

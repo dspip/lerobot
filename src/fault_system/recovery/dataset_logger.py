@@ -139,7 +139,7 @@ class FaultRecoveryDatasetLogger:
     - ``1.0`` — nominal carry, including the frames just before a drop, and
       IK recovery after it starts
     - ``0.0`` — the fall and the post-drop dwell, until IK recovery starts.
-      ``immediate_smolvla`` stays ``0.0`` from the release through the end
+      ``immediate_policy`` stays ``0.0`` from the release through the end
       of the episode
 
     ``drop_window`` is a separate short label (pad around the fall). It is not

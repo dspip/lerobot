@@ -59,7 +59,7 @@ Recorded success set (2026-09-30): **385 kept / 15 rejected**. Per-object kept: 
 | `immediate_ik` | true | 10 |
 | `continue_then_ik` | true | 10 |
 | `reset_then_ik` | true | 10 |
-| `immediate_smolvla` | true | 10 |
+| `immediate_policy` | true | 10 |
 | `immediate_ik` | false | 10 |
 
 This set is **not recorded yet**.

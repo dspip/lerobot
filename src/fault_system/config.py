@@ -38,7 +38,14 @@ _WINDOW_PHYSICAL_TYPES = frozenset({"object_slip", "eef_bump", "midair_drop"})
 _SIM_INJECT_TYPES = frozenset({"object_slip", "eef_bump"})
 _RECOVERY_TYPES = frozenset({"midair_drop"})
 
-POST_DROP_MODES = ("immediate_ik", "continue_then_ik", "reset_then_ik", "immediate_smolvla")
+POST_DROP_MODES = ("immediate_ik", "continue_then_ik", "reset_then_ik", "immediate_policy")
+# Recipes and flags written before the rename. Stored and logged as immediate_policy.
+_POST_DROP_MODE_ALIASES = {"immediate_smolvla": "immediate_policy"}
+
+
+def normalize_post_drop_mode(value: str) -> str:
+    """Map a post-drop mode, including the old ``immediate_smolvla`` name."""
+    return _POST_DROP_MODE_ALIASES.get(value, value)
 
 
 @dataclass
@@ -142,11 +149,13 @@ class FaultInjectionConfig:
     min_object_z: float = 0.12
     # midair_drop: env control steps to pass VLA after drop before starting IK (0 = immediate).
     post_drop_dwell_steps: int = 0
-    # midair_drop: continue VLA, reset-then-VLA, or immediate IK when dwell is 0.
+    # midair_drop: who acts after the object lands. immediate_policy keeps the
+    # loaded policy in control. The *_ik modes start the scripted planner.
     post_drop_mode: str = "immediate_ik"
 
     def __post_init__(self) -> None:
         """Normalize path fields and run ``validate()``."""
+        self.post_drop_mode = normalize_post_drop_mode(self.post_drop_mode)
         if isinstance(self.log_path, str):
             self.log_path = Path(self.log_path)
         if isinstance(self.diag_dir, str):

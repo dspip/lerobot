@@ -53,7 +53,7 @@ Leave these off. They are already the default, or they follow from `--eval.n_epi
 | `--eval.use_async_envs=false` | one env stays synchronous |
 | `--fault.object_name` / `--fault.basket_name` | `alphabet_soup_1` / `basket_1` |
 | `--fault.probability=1` / `--fault.seed=42` / `--fault.t_min=10` | fault defaults |
-| `--fault.post_drop_dwell_steps=0` | fault default. A value above 0 waits, then starts IK even in `immediate_smolvla` |
+| `--fault.post_drop_dwell_steps=0` | fault default. A value above 0 waits, then starts IK even in `immediate_policy` |
 | `--fault.post_drop_mode=immediate_ik` | this is the drop default: IK recovery after landing |
 
 If `config.json` lists `observation.images.image` (not `camera1`), remove `--policy.empty_cameras=1` and the camera-mapping line only.
@@ -113,10 +113,10 @@ uv run lerobot-eval-faults \
   --fault.t_max=400 \
   --fault.drop_xy_band_min=0.34 \
   --fault.drop_xy_band_max=0.38 \
-  --fault.post_drop_mode=immediate_smolvla
+  --fault.post_drop_mode=immediate_policy
 ```
 
-Pass: `fault_events.jsonl` has `"status": "triggered"`, `"drop_trigger_reason": "xy_band"`, `"post_drop_mode": "immediate_smolvla"`, and no `"status": "recovery_started"`.
+Pass: `fault_events.jsonl` has `"status": "triggered"`, `"drop_trigger_reason": "xy_band"`, `"post_drop_mode": "immediate_policy"`, and no `"status": "recovery_started"`.
 
 ### Mid-carry drop, with IK recovery
 
@@ -229,6 +229,6 @@ Defaults: `--threshold 0.5`, `--steps 120`, output `reports/xy60_verify/head_rec
 - **Missing `camera1` / `camera2` / `camera3`** — you omitted the Hub camera flags. Put them back.
 - **Missing `image` / `image2`** — this checkpoint is not Hub SmolVLA-LIBERO. Drop `empty_cameras` and `camera_name_mapping`.
 - **Empty `fault_events.jsonl` on mid-air drop** — the can was never grasped inside the XY band before step 400. Watch the baseline video. Other bands are in the optional-flags table.
-- **`recovery_started` on the no-recovery run** — `post_drop_mode` is not `immediate_smolvla`, or `post_drop_dwell_steps` is above 0.
+- **`recovery_started` on the no-recovery run** — `post_drop_mode` is not `immediate_policy`, or `post_drop_dwell_steps` is above 0.
 - **No `recovery_started` on the recovery run** — look for `"status": "fall_aborted"`. The can never settled, so IK does not start.
 - **EGL / CUDA** — `nvidia-smi`, keep `MUJOCO_GL=egl`.

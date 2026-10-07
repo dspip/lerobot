@@ -25,6 +25,8 @@ from typing import Any
 
 import numpy as np
 
+from fault_system.config import normalize_post_drop_mode
+
 _LAYOUT_SEED_TAG = 0x4C41594F
 _DROP_SEED_TAG = 0x44524F50
 _CONTROLLER_SEED_TAG = 0x4354524C
@@ -118,7 +120,7 @@ class PostDropMode(StrEnum):
     IMMEDIATE_IK = "immediate_ik"
     CONTINUE_THEN_IK = "continue_then_ik"
     RESET_THEN_IK = "reset_then_ik"
-    IMMEDIATE_SMOLVLA = "immediate_smolvla"
+    IMMEDIATE_POLICY = "immediate_policy"
 
 
 _ALLOWED_CONTROLLER_MODES: frozenset[tuple[DatagenController, PostDropMode]] = frozenset(
@@ -126,7 +128,7 @@ _ALLOWED_CONTROLLER_MODES: frozenset[tuple[DatagenController, PostDropMode]] = f
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK),
         (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK),
         (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK),
-        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA),
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_POLICY),
         (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK),
         (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK),
         (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK),
@@ -137,7 +139,7 @@ _CONTROLLER_MODE_TAGS: dict[tuple[DatagenController, PostDropMode], int] = {
     (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK): 1,
     (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK): 2,
     (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK): 3,
-    (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA): 4,
+    (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_POLICY): 4,
     (DatagenController.SMOLVLA, PostDropMode.IMMEDIATE_IK): 5,
     (DatagenController.SMOLVLA, PostDropMode.CONTINUE_THEN_IK): 6,
     (DatagenController.SMOLVLA, PostDropMode.RESET_THEN_IK): 7,
@@ -367,6 +369,7 @@ def _parse_controller(value: object, *, section: str, strict: bool) -> DatagenCo
 
 def _parse_post_drop_mode(value: object, *, section: str, strict: bool) -> PostDropMode:
     text = _require_json_str(value, field=f"{section}.post_drop_mode") if strict else str(value).strip()
+    text = normalize_post_drop_mode(text)
     try:
         return PostDropMode(text)
     except ValueError as exc:
@@ -468,7 +471,7 @@ def effective_post_drop_dwell_steps(
     mode: PostDropMode,
 ) -> int:
     """Return configured dwell steps for ``mode`` (zero for immediate IK)."""
-    if mode is PostDropMode.IMMEDIATE_IK or mode is PostDropMode.IMMEDIATE_SMOLVLA:
+    if mode is PostDropMode.IMMEDIATE_IK or mode is PostDropMode.IMMEDIATE_POLICY:
         return 0
     return int(recipe.post_drop.dwell_steps)
 

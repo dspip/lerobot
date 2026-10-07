@@ -91,7 +91,7 @@ def _valid_unified_recipe(**overrides: object) -> dict[str, object]:
             {"controller": "simple_ik", "post_drop_mode": "continue_then_ik", "drop": True, "weight": 1},
             {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "weight": 1},
             {"controller": "simple_ik", "post_drop_mode": "immediate_ik", "drop": False, "weight": 1},
-            {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "weight": 1},
+            {"controller": "simple_ik", "post_drop_mode": "immediate_policy", "drop": True, "weight": 1},
         ],
     }
     recipe.update(overrides)
@@ -174,7 +174,7 @@ def test_expand_matrix_stable_order_and_episode_count() -> None:
         (DatagenController.SIMPLE_IK, PostDropMode.CONTINUE_THEN_IK, True),
         (DatagenController.SIMPLE_IK, PostDropMode.RESET_THEN_IK, True),
         (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_IK, False),
-        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_SMOLVLA, True),
+        (DatagenController.SIMPLE_IK, PostDropMode.IMMEDIATE_POLICY, True),
     ]
     for triple in expected_triple:
         assert triples.count(triple) == 20
@@ -182,19 +182,35 @@ def test_expand_matrix_stable_order_and_episode_count() -> None:
     assert [r.episode_index for r in runs[:5]] == [0, 1, 2, 3, 4]
 
 
-def test_accepts_simple_ik_reset_then_ik_and_immediate_smolvla(tmp_path: Path) -> None:
+def test_old_immediate_smolvla_name_loads_as_immediate_policy(tmp_path: Path) -> None:
+    from fault_system.config import FaultInjectionConfig
+
+    path = tmp_path / "recipe.json"
+    payload = _valid_unified_recipe()
+    payload["experiment_matrix"] = [
+        {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "weight": 1},
+    ]
+    payload["recording"]["episodes"] = 1
+    _write_recipe(path, payload)
+    recipe = load_drop_datagen_recipe(path)
+    assert recipe.experiment_matrix[0].post_drop_mode is PostDropMode.IMMEDIATE_POLICY
+    cfg = FaultInjectionConfig(enabled=True, type="midair_drop", post_drop_mode="immediate_smolvla")
+    assert cfg.post_drop_mode == "immediate_policy"
+
+
+def test_accepts_simple_ik_reset_then_ik_and_immediate_policy(tmp_path: Path) -> None:
     path = tmp_path / "recipe.json"
     payload = _valid_unified_recipe()
     payload["experiment_matrix"] = [
         {"controller": "simple_ik", "post_drop_mode": "reset_then_ik", "drop": True, "weight": 1},
-        {"controller": "simple_ik", "post_drop_mode": "immediate_smolvla", "drop": True, "weight": 1},
+        {"controller": "simple_ik", "post_drop_mode": "immediate_policy", "drop": True, "weight": 1},
     ]
     payload["recording"]["episodes"] = 2
     _write_recipe(path, payload)
     recipe = load_drop_datagen_recipe(path)
     assert [v.post_drop_mode for v in recipe.experiment_matrix] == [
         PostDropMode.RESET_THEN_IK,
-        PostDropMode.IMMEDIATE_SMOLVLA,
+        PostDropMode.IMMEDIATE_POLICY,
     ]
     assert all(v.controller is DatagenController.SIMPLE_IK for v in recipe.experiment_matrix)
 
@@ -222,7 +238,7 @@ def test_effective_dwell_steps() -> None:
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.IMMEDIATE_IK) == 0
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.CONTINUE_THEN_IK) == 80
     assert effective_post_drop_dwell_steps(recipe, PostDropMode.RESET_THEN_IK) == 80
-    assert effective_post_drop_dwell_steps(recipe, PostDropMode.IMMEDIATE_SMOLVLA) == 0
+    assert effective_post_drop_dwell_steps(recipe, PostDropMode.IMMEDIATE_POLICY) == 0
 
 
 def test_paired_seed_manifests_share_layout_and_drop(tmp_path: Path) -> None:
@@ -443,7 +459,7 @@ def test_can_drop_recipe_has_use_stock_layout_false() -> None:
     assert recipe.smolvla.use_stock_layout is False
     assert [v.drop for v in recipe.experiment_matrix] == [True, True, True, False, True]
     assert recipe.experiment_matrix[2].post_drop_mode is PostDropMode.RESET_THEN_IK
-    assert recipe.experiment_matrix[4].post_drop_mode is PostDropMode.IMMEDIATE_SMOLVLA
+    assert recipe.experiment_matrix[4].post_drop_mode is PostDropMode.IMMEDIATE_POLICY
 
 
 def test_smolvla_rejects_non_bool_use_stock_layout(tmp_path: Path) -> None:

@@ -546,7 +546,7 @@ class MidAirDropFault:
             state.suppress_grasp_skip = True
             if self.config.post_drop_mode == "reset_then_ik":
                 state.policy_reset_requested = True
-        elif self.config.post_drop_mode == "immediate_smolvla":
+        elif self.config.post_drop_mode == "immediate_policy":
             state.awaiting_manual_recovery = True
 
     def trigger_manual_drop(self, env: gym.Env | VectorEnv, env_idx: int, *, reason: str = "manual") -> bool:
@@ -962,10 +962,10 @@ class MidAirDropFault:
         if env_idx < 0 or env_idx >= self.num_envs:
             raise IndexError(f"env_idx={env_idx} out of range for num_envs={self.num_envs}.")
         state = self.post_step_state(env_idx)
-        # SmolVLA-after-drop episodes stay masked for the whole post-release
-        # tail, including dwell and any later motion. IK modes unmask when
+        # immediate_policy stays masked for the whole post-release tail,
+        # including dwell and any later motion. IK modes unmask when
         # recovery_active starts.
-        if state.triggered and self.config.post_drop_mode == "immediate_smolvla":
+        if state.triggered and self.config.post_drop_mode == "immediate_policy":
             return 0.0
         post_drop_dwell = state.triggered and not state.recovery_active and not state.drop_injection_step
         return loss_mask_from_fault(

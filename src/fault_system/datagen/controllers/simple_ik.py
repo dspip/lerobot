@@ -399,7 +399,7 @@ def run_simple_ik_episode_loop(
                     trigger_pose=trigger_pose,
                     success=success_now,
                 )
-            if dropped and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value:
+            if dropped and post_drop_mode == PostDropMode.IMMEDIATE_POLICY.value:
                 in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
                 return SimpleIKEpisodeFacts(
                     bool(in_basket or success_now),
@@ -450,7 +450,7 @@ def run_simple_ik_episode_loop(
             )
         if (
             dropped
-            and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value
+            and post_drop_mode == PostDropMode.IMMEDIATE_POLICY.value
             and (done or state.awaiting_manual_recovery and step == max_steps - 1)
         ):
             in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
@@ -483,7 +483,7 @@ def run_simple_ik_episode_loop(
             trigger_pose=trigger_pose,
         )
 
-    if dropped and post_drop_mode == PostDropMode.IMMEDIATE_SMOLVLA.value:
+    if dropped and post_drop_mode == PostDropMode.IMMEDIATE_POLICY.value:
         in_basket = is_object_in_basket(rs_env, object_name, basket_name=basket_name, z_max=0.14)
         return SimpleIKEpisodeFacts(
             bool(in_basket),
@@ -637,7 +637,7 @@ class SimpleIKDatagenAdapter:
             post_drop_provider = None
             if manifest.post_drop_mode in {
                 PostDropMode.RESET_THEN_IK,
-                PostDropMode.IMMEDIATE_SMOLVLA,
+                PostDropMode.IMMEDIATE_POLICY,
             }:
                 from fault_system.models.smolvla import SmolVLAActionSource
 

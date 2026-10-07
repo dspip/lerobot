@@ -62,7 +62,7 @@ Rerun the same `run_drop_datagen.py` command to resume. Completed variant keys (
 - **1** on a normal carry, including the 2 frames before release (still a normal hold).
 - **0** from release through the post-drop wait (fall + dwell) so the policy does not learn the freeze.
 - **1** again when IK recovery is active (`recovery_active`).
-- **`immediate_smolvla`:** **0** from release through the **rest of the episode**, even if IK later starts.
+- **`immediate_policy`:** **0** from release through the **rest of the episode**, even if IK later starts.
 - **No-drop episodes:** **1** on every frame.
 
 `loss_mask_from_fault` zeroes injection and dwell. `MidAirDropFault.loss_mask_for_env` adds the SmolVLA rule.
@@ -98,7 +98,7 @@ Each **logical episode index** runs **five** rows with the same layout, motion p
 | `immediate_ik` | true |
 | `continue_then_ik` | true |
 | `reset_then_ik` | true |
-| `immediate_smolvla` | true |
+| `immediate_policy` | true |
 | `immediate_ik` | false |
 
 The success recipe is only the no-drop row.

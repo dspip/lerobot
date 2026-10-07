@@ -84,7 +84,7 @@ If `config.json` lists `observation.images.camera1` instead (the public `lerobot
 
 ### 5. Drop-and-recovery eval
 
-`libero_object` task `0` is alphabet soup (`alphabet_soup_1`) and basket `basket_1`. The gripper opens once, while the can is grasped, between steps 10 and 400, and 0.34–0.38 m from the basket. After it lands, **the same policy stays in control**. The IK planner does not start. `immediate_smolvla` is that mode's name; it does not load SmolVLA weights.
+`libero_object` task `0` is alphabet soup (`alphabet_soup_1`) and basket `basket_1`. The gripper opens once, while the can is grasped, between steps 10 and 400, and 0.34–0.38 m from the basket. After it lands, **the same policy stays in control**. The flag for that is `--fault.post_drop_mode=immediate_policy`. It works for Pi0, Pi0.5, SmolVLA, or any other loaded policy. The IK planner does not start.
 
 `--eval.batch_size=1` and `--eval.use_async_envs=false` are required. The drop wrapper has no per-env simulator handle inside an async vector env. `--fault.t_max=400` is required. The default window ends at step 30, which is before most grasps.
 
@@ -103,7 +103,7 @@ uv run lerobot-eval-faults \
   --fault.t_max=400 \
   --fault.drop_xy_band_min=0.34 \
   --fault.drop_xy_band_max=0.38 \
-  --fault.post_drop_mode=immediate_smolvla \
+  --fault.post_drop_mode=immediate_policy \
   --fault.object_name=alphabet_soup_1 \
   --fault.basket_name=basket_1
 ```
@@ -118,7 +118,7 @@ outputs/eval/pi0_drop_policy/videos/
 outputs/eval/pi0_drop_policy/fault_events.jsonl
 ```
 
-`eval_info.json` → `overall.pc_success` is the LIBERO task success rate. `fault_events.jsonl` should contain one `"status": "triggered"` line per drop, with `"drop_trigger_reason": "xy_band"` and `"post_drop_mode": "immediate_smolvla"`. It should not contain `"status": "recovery_started"` — that line means the IK planner took over. An empty log means the can was never grasped inside the XY band before step 400.
+`eval_info.json` → `overall.pc_success` is the LIBERO task success rate. `fault_events.jsonl` should contain one `"status": "triggered"` line per drop, with `"drop_trigger_reason": "xy_band"` and `"post_drop_mode": "immediate_policy"`. It should not contain `"status": "recovery_started"` — that line means the IK planner took over. An empty log means the can was never grasped inside the XY band before step 400.
 
 ## How a fault eval runs
 
@@ -151,7 +151,7 @@ On a mid-air drop the wrapper sits on that same path:
 
 1. The policy outputs an action. The simulator steps.
 2. When the can is grasped, high enough, inside the time window, and inside the XY band, the wrapper opens the gripper. The can falls. During the fall the wrapper holds the arm and ignores the policy action.
-3. After the can lands, `immediate_smolvla` hands control back to the policy. The IK planner is not started, and the seat-into-basket assist does not run.
+3. After the can lands, `immediate_policy` hands control back to the policy. The IK planner is not started, and the seat-into-basket assist does not run.
 4. The policy's later actions are what try to pick the can up again. The eval writes `eval_info.json`, a video, and `fault_events.jsonl`.
 
 `immediate_ik` (the default if you omit `--fault.post_drop_mode`) is the other choice: after landing, the scripted planner takes over and `fault_events.jsonl` records `"status": "recovery_started"`. Use that only when you want to measure the planner, not the checkpoint.
@@ -193,7 +193,7 @@ uv run lerobot-eval-faults \
   --env.camera_name_mapping='{"agentview_image": "camera1", "robot0_eye_in_hand_image": "camera2"}'
 ```
 
-Mid-air drop, policy keeps control (the [Quick Start](#5-drop-and-recovery-eval) command). Verified with `lerobot/smolvla_libero` for one episode: the log had `"status": "triggered"`, `"drop_trigger_reason": "xy_band"`, `"post_drop_mode": "immediate_smolvla"`, and no `"recovery_started"`. The same run needs the SmolVLA camera flags above; a Pi0 checkpoint on `image` / `image2` does not. Task success on stock SmolVLA was 0/1 — that checkpoint was not trained to recover. A Pi0 run is still required to measure her checkpoint.
+Mid-air drop, policy keeps control (the [Quick Start](#5-drop-and-recovery-eval) command). Verified with `lerobot/smolvla_libero` for one episode: the log had `"status": "triggered"`, `"drop_trigger_reason": "xy_band"`, `"post_drop_mode": "immediate_policy"`, and no `"recovery_started"`. The same run needs the SmolVLA camera flags above; a Pi0 checkpoint on `image` / `image2` does not. Task success on stock SmolVLA was 0/1 — that checkpoint was not trained to recover. A Pi0 run is still required to measure her checkpoint.
 
 ```bash
 uv run lerobot-eval-faults \
@@ -210,7 +210,7 @@ uv run lerobot-eval-faults \
   --fault.t_max=400 \
   --fault.drop_xy_band_min=0.34 \
   --fault.drop_xy_band_max=0.38 \
-  --fault.post_drop_mode=immediate_smolvla \
+  --fault.post_drop_mode=immediate_policy \
   --fault.object_name=alphabet_soup_1 \
   --fault.basket_name=basket_1
 ```
