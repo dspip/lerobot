@@ -113,7 +113,7 @@ Fall after release is typically **2–4 frames** at 10 fps (`drop_event`). `drop
 - Filter imitation loss with **`loss_mask`**. Do not use `is_failure` as that filter.
 - For a short “this is the drop” label, use **`drop_window`**, not `is_failure` and not the whole dwell.
 - `attempt_index == 0` is approach + carry (+ fall if any). `attempt_index == 1` is after landing (recovery).
-- Language comes from the dataset `task` / `task_index` (per-object LIBERO instruction). Use `instruction_mode="dataset_task"` if the loader has that switch.
+- Language comes from the dataset `task` string. `task_index` is the official LIBERO-Object scene id (butter is 6, tomato sauce is 5), the same number as `failure_segments.parquet` `task_id`. The task table always lists all ten scenes, including held-out tomato sauce and orange juice, so a later episode cannot reuse those numbers. Use `instruction_mode="dataset_task"` if the loader has that switch.
 
 ## Sharding and audit
 

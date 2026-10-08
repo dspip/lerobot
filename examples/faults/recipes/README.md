@@ -35,7 +35,7 @@ Both recipes:
 - Control at 20 Hz. One dataset: `dataset/` at **10 fps** by default. Pass `--fps 20` to store that one dataset at 20 fps instead. There is no second `dataset_20hz/` copy.
 - Eight pick targets, round-robin: `alphabet_soup_1`, `cream_cheese_1`, `salad_dressing_1`, `bbq_sauce_1`, `ketchup_1`, `butter_1`, `milk_1`, `chocolate_pudding_1`.
 - Held out of this recording: `tomato_sauce_1`, `orange_juice_1`. They are not pick targets. At record time they are hidden and parked off the table so they do not stay in the frames. Official LIBERO tasks 5 and 9 stay on disk for later eval; they are not recorded here.
-- Sidecar `dataset/meta/failure_segments.parquet` stores the episode's real `object_name` and `task_id`.
+- `dataset/meta/tasks.parquet` `task_index` is the official LIBERO-Object scene id (butter is 6, not the order the sentence was first saved). The table lists all ten scenes, including held-out tomato sauce (5) and orange juice (9). Sidecar `dataset/meta/failure_segments.parquet` stores the same `task_id` plus `object_name`.
 
 ### `libero_object_success.json`
 

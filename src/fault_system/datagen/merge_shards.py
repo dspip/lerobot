@@ -24,8 +24,6 @@ from typing import Any
 
 import pandas as pd
 
-from lerobot.datasets.aggregate import aggregate_datasets
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from fault_system.datagen.dataset_card import (
     DatasetCardStats,
     MatrixRowCount,
@@ -43,6 +41,9 @@ from fault_system.datagen.manifest import (
     write_run_manifest_atomic,
 )
 from fault_system.datagen.shard_range import logical_range_from_manifest_raw, ranges_overlap
+from fault_system.datagen.task_index import align_official_task_indices
+from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 __all__ = ["MergeShardsError", "build_splits", "merge_drop_datagen_shards"]
 
@@ -379,6 +380,7 @@ def merge_drop_datagen_shards(
             roots=roots,
             aggr_root=view_out,
         )
+        align_official_task_indices(view_out)
         seg_df = _concat_failure_segments(shard_dirs, view, episode_offsets)
         if not seg_df.empty:
             seg_path = view_out / FAILURE_SEGMENTS_REL_PATH

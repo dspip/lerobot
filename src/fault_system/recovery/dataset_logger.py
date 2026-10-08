@@ -14,6 +14,7 @@ from fault_system.annotation import (
     FAILURE_ANNOTATION_FEATURES,
     default_failure_frame,
 )
+from fault_system.datagen.task_index import ensure_official_libero_task_indices
 from fault_system.episode_metadata import save_episode_adding_metadata
 from fault_system.recovery.fps import assert_dataset_fps, resolve_target_fps
 
@@ -199,6 +200,7 @@ class FaultRecoveryDatasetLogger:
                 image_writer_threads=1,
             )
         assert_dataset_fps(self.dataset.fps, self.policy_fps)
+        ensure_official_libero_task_indices(self.dataset)
 
         self._episode_open = False
         self._loss_mask_counts: dict[float, int] = {0.0: 0, 1.0: 0}
